@@ -1,0 +1,38 @@
+name: Windows MSVC Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+            submodules: recursive
+                
+      - name: Clone vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git vcpkg
+
+      - name: Bootstrap vcpkg
+        run: .\vcpkg\bootstrap-vcpkg.bat
+        
+      - name: Install Dependencies
+        run: .\vcpkg\vcpkg.exe install --triplet x64-windows
+                  
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build solution
+        run: msbuild msvc/numetron_tests.sln /p:Configuration=Release
+
+      - name: Run tests
+        run: |
+          cd msvc/vs/x64/Release
+          $env:PATH += ";${{ github.workspace }}\vcpkg_installed\x64-windows\bin"
+          .\numetron_tests.exe

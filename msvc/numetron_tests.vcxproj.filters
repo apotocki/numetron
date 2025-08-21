@@ -1,0 +1,96 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="numetron">
+      <UniqueIdentifier>{68bd3990-82a5-4610-899c-5b7542b91195}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="tests">
+      <UniqueIdentifier>{0743de61-ca3b-43bf-9135-a118a9326e8f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="numetron\config">
+      <UniqueIdentifier>{508da99c-58db-4a80-8a36-c8b05916688c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="numetron\detail">
+      <UniqueIdentifier>{53b3e146-9f61-49f9-b0c8-2d11d67e1dd5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="examples">
+      <UniqueIdentifier>{41850645-fcb1-4d26-987e-2418844899bc}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\include\numetron\arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\basic_decimal.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\basic_integer.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\ct.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\decimal_arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\decimal_view.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\integer_view.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\integer_view_arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limbs_from_decimal_string.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limbs_from_integral.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limbs_from_string.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limbs_to_string.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\config\cmath.hpp">
+      <Filter>numetron\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\tests\test_common.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\small_array.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\hash.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\scope_exit.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\tests\basic_decimal_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\basic_integer_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\mp_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\number_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\tests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\ct_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>
