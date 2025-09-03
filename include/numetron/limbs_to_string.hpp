@@ -20,7 +20,6 @@ requires(!std::is_const_v<LimbT>)
 OutputIteratorT bc_get_str(std::span<LimbT> limbs, int base, std::string_view alphabet, OutputIteratorT oi)
 {
     using namespace numetron::arithmetic;
-    namespace mpa = numetron::arithmetic;
     using ct::W;
 
     assert(!limbs.empty());
@@ -37,7 +36,7 @@ OutputIteratorT bc_get_str(std::span<LimbT> limbs, int base, std::string_view al
             //constexpr uint64_t l = 1 + consteval_log2<LimbT, limb_bit_count>(max_dec_base);
             //constexpr uint32_t shift = limb_bit_count - l;
 
-            auto [frac, r] = mpa::udivby1<LimbT, max_dec_base, true>(limbs);
+            auto [frac, r] = limb_arithmetic::udivby1<LimbT, max_dec_base, true>(limbs);
             frac += 1;
 
             limbs = std::span{ limbs.data(), limbs.size() - (limbs.back() == 0) };
@@ -93,7 +92,7 @@ OutputIteratorT bc_get_str(std::span<LimbT> limbs, int base, std::string_view al
         auto [big_base_inverted, dummy] = udiv2by1<LimbT>(u1, 0, big_base);
 
         while (limbs.size() > 1) {
-            LimbT r = mpa::udivby1<LimbT>(limbs, big_base, big_base_inverted, l);
+            LimbT r = limb_arithmetic::udivby1<LimbT>(limbs, big_base, big_base_inverted, l);
             LimbT frac;
             udiv2by1<LimbT>(frac, r, r << shift, 0, big_base << shift, big_base_inverted);
             frac += 1;

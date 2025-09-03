@@ -2,4 +2,7 @@
 /x64
 /Release
 /Debug
+/*VTune*
+/*.log
+/numetron
 /numetron_tests

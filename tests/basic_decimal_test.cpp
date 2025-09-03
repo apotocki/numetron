@@ -18,7 +18,7 @@ void basic_decimal_test0()
     using dec_t = basic_decimal<uint64_t, 1, 8>;
     using mdec_t = basic_decimal<uint8_t, 1, 2>;
 
-    mdec_t d0{ "9.00000000990000000000001"sv };
+    //mdec_t d0{ "9.00000000990000000000001"sv };
 
     //std::cout << mdec_t::storage_type::sig_limb_count_bits << "\n";
     //using biv_t = basic_integer_view<uint64_t>;

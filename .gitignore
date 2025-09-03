@@ -1,4 +1,5 @@
 /vcpkg_installed
 /vcpkg
+/build
 /build.cmd
 /build.sh

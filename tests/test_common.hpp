@@ -21,10 +21,16 @@
 #define CHECK_GE(lhs, rhs) EXPECT_GE((lhs), (rhs))
 #define CHECK_GT(lhs, rhs) EXPECT_GT((lhs), (rhs))
 
+#define NUMETRON_NO30 true
+#define NUMETRON_TEST_COUNT 16// (16 * 256)//16//(48*5000) //16// (48*5000)
+#define NUMETRON_USZCOND(sz) (((sz) & 3) == 3)
 namespace numetron {
 
 void basic_integer_test0();
 void basic_decimal_test0();
 void ct_test();
+
+void mul_test();
+void mpn_mul_test();
 
 }

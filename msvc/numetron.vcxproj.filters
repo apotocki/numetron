@@ -1,0 +1,57 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="asm">
+      <UniqueIdentifier>{71cfdfc5-9634-4f73-895d-e49454d9bc5f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="asm\x86_64">
+      <UniqueIdentifier>{7fc2e645-5f66-49c2-af82-386066b98e82}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="asm\x86_64\alderlake">
+      <UniqueIdentifier>{08302abd-828d-4dd0-bf45-410adba9a5f2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="asm\x86_64\core2">
+      <UniqueIdentifier>{22571dc2-dc55-4c06-8514-868d5ee35c77}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="asm\x86_64\k8">
+      <UniqueIdentifier>{f15c4d68-c64a-4964-8847-1536935af526}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="..\src\arch\x86_64\k8\mul_basecase.asm">
+      <Filter>asm\x86_64\k8</Filter>
+    </MASM>
+    <MASM Include="..\src\arch\x86_64\core2\mul_basecase.asm">
+      <Filter>asm\x86_64\core2</Filter>
+    </MASM>
+    <MASM Include="..\src\arch\x86_64\detect_platform.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
+    <MASM Include="..\src\arch\x86_64\detect_mul_basecase.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
+    <MASM Include="..\src\arch\x86_64\alderlake\mul_basecase.asm">
+      <Filter>asm\x86_64\alderlake</Filter>
+    </MASM>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\src\arch\x86_64\alderlake\mul_basecase.s">
+      <Filter>asm\x86_64\alderlake</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\core2\mul_basecase.s">
+      <Filter>asm\x86_64\core2</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\k8\mul_basecase.s">
+      <Filter>asm\x86_64\k8</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\detect_platform.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\detect_mul_basecase.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\README.md">
+      <Filter>asm</Filter>
+    </None>
+  </ItemGroup>
+</Project>

@@ -122,8 +122,6 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
 std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr>
 to_limbs(std::basic_string_view<CharT> & str, unsigned int base, int sign, AllocatorT && alloc, MapperT const& alphabet_mapper) noexcept
 {
-    using namespace numetron::arithmetic;
-    
     using result_t = std::tuple<LimbT*, size_t, size_t, int>;
     constexpr size_t limb_bit_count = std::numeric_limits<LimbT>::digits;
 
@@ -180,7 +178,7 @@ to_limbs(std::basic_string_view<CharT> & str, unsigned int base, int sign, Alloc
         } else {
             //size_t digits_per_limb = (size_t)(std::log((std::numeric_limits<LimbT>::max)()) / std::log((double)base));
             size_t digits_per_limb = (size_t)(double(limb_bit_count) / std::log2((double)base));
-            LimbT big_base = ipow<LimbT>(base, digits_per_limb);
+            LimbT big_base = arithmetic::ipow<LimbT>(base, digits_per_limb);
 
             LimbT limb = get_digit(pc);
             if (limb >= base) { // can't parse a digit
@@ -219,8 +217,8 @@ to_limbs(std::basic_string_view<CharT> & str, unsigned int base, int sign, Alloc
                     limb = limb * base + tmp;
                 }
                 if (std::get<1>(result)) {
-                    LimbT mpr = pack_sz == digits_per_limb - 1 ? big_base : ipow<LimbT>(base, pack_sz + 1);
-                    limb = umul1(std::span{ std::get<0>(result), std::get<1>(result) }, mpr, limb);
+                    LimbT mpr = pack_sz == digits_per_limb - 1 ? big_base : arithmetic::ipow<LimbT>(base, pack_sz + 1);
+                    limb = limb_arithmetic::umul1_inplace(std::get<0>(result), std::get<0>(result) + std::get<1>(result), mpr, limb);
                 }
                 if (limb) {
                     *(std::get<0>(result) + std::get<1>(result)) = limb;

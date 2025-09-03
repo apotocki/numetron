@@ -286,7 +286,7 @@ struct add_appender<AccumT, limbs<T, largs...>, limbs<T, rargs...>>
 {
     using left_limbs_t = limbs<T, largs...>;
     using right_limbs_t = limbs<T, rargs...>;
-    static constexpr auto result_pair_t = arithmetic::uadd1c(front<left_limbs_t>, front<right_limbs_t>, AccumT::second_type::value);
+    static constexpr auto result_pair_t = arithmetic::uadd1(front<left_limbs_t>, front<right_limbs_t>, AccumT::second_type::value);
     using accum_t = push_back<typename AccumT::first_type, result_pair_t.second>;
     using c_t = std::integral_constant<T, result_pair_t.first>;
     using type = typename add_appender<std::pair<accum_t, c_t>, pop_front<left_limbs_t>, pop_front<right_limbs_t>>::type;
@@ -396,7 +396,7 @@ struct mul1_appender<AccumT, limbs<T, args...>, V>
     
     static constexpr auto mul_pair_t = arithmetic::umul1(front<left_limbs_t>, V);
     static constexpr auto add_pair_t = arithmetic::uadd1(mul_pair_t.second, AccumT::second_type::value);
-    static constexpr auto c_pair_t = arithmetic::uadd1(mul_pair_t.first, add_pair_t.first);
+    static constexpr auto c_pair_t = arithmetic::uadd1(mul_pair_t.first, (T)add_pair_t.first);
     static_assert(!c_pair_t.first);
     using accum_t = push_back<typename AccumT::first_type, add_pair_t.second>;
     using c_t = std::integral_constant<T, c_pair_t.second>;

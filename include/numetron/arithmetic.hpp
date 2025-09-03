@@ -10,6 +10,35 @@
 #include <utility>
 #include <cassert>
 
+#ifdef _MSC_VER
+#   include <intrin.h>
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+#   include <immintrin.h>
+//#   pragma GCC target ("bmi2,tune=skylake")
+#endif
+
+#if defined(_MSC_VER) && defined(_M_X64) && defined(__AVX2__) && !defined(__BMI2__)
+#   define __BMI2__
+#endif
+
+#ifdef _MSC_VER
+#   ifdef _M_X64
+#       if defined(__BMI2__)
+#           pragma intrinsic(_mulx_u64)
+#           define NUMETRON_mul64 _mulx_u64
+#           pragma intrinsic(_addcarryx_u64)
+#           define NUMETRON_addcarry64 _addcarryx_u64
+#       else
+#           pragma intrinsic(_umul128)
+#           define NUMETRON_mul64 _umul128
+#           pragma intrinsic(_addcarry_u64)
+#           define NUMETRON_addcarry64 _addcarry_u64
+#       endif
+#   endif
+#endif
+
 namespace numetron {
 
 template <int Bits> struct uint_t
@@ -167,24 +196,227 @@ inline constexpr int ucmp1(T a, T b) noexcept
 };
 
 template <std::unsigned_integral T>
-inline constexpr std::pair<T, T> uadd1(T a, T b) noexcept
+inline constexpr T uincx(T a, unsigned char& c) noexcept
 {
-    T nextc = 0;
+    c = !++a;
+    return a;
+}
+
+
+
+template <std::unsigned_integral T>
+inline constexpr T uadd1ca(T a, T b, T& ca) noexcept
+{
+    if constexpr (sizeof(T) == 8) if (!std::is_constant_evaluated()) {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+        ca += NUMETRON_addcarry64(0, a, b, &a);
+        return a;
+#endif
+#if defined(__clang__) && defined(__aarch64__)
+        ca += __builtin_uaddl_overflow(a, b, &a);
+        return a;
+    }
+#endif
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+        __asm__(
+            "addq %[b], %[a]\n\t"  // a += b
+            "adcq $0, %[ca]\n\t"
+            : "=&r" (a), "=&rm" (ca)
+            : [a] "0"(a), [b] "rm" (b), [ca] "1" (ca)
+            : "cc"
+        );
+        return a;
+#endif
+    }
     T r = a + b;
-    if (r < a) ++nextc;
-    return { nextc, r };
+    ca += (r < a);
+    return r;
+}
+
+template <std::unsigned_integral T>
+inline constexpr std::pair<unsigned char, T> uadd1(T a, T b) noexcept
+{
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+    constexpr int bsz = std::numeric_limits<T>::digits;
+    if (!std::is_constant_evaluated()) {
+        if constexpr (bsz == 64) {
+            unsigned char carry = NUMETRON_addcarry64(0, a, b, &a);
+            return { carry, a };
+        }
+    }
+#endif
+#if defined(__clang__) && defined(__aarch64__)
+    constexpr int bsz = std::numeric_limits<T>::digits;
+    if (!std::is_constant_evaluated()) {
+        if constexpr (bsz == 64) {
+            unsigned char carry = __builtin_uaddl_overflow(a, b, &a);
+            return { carry, a };
+        }
+    }
+#endif
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            unsigned char carry_out;
+            __asm__(
+                "addq %3, %0\n\t"  // a += b
+                "setc %1"      // carry_out = carry flag
+                : "=&r" (a), "=&qm" (carry_out)
+                : "0"(a), "rm" (b)
+                : "cc"
+            );
+            return { carry_out, a };
+        }
+    }
+#endif
+    // Fallback implementation for constexpr and other compilers
+    T r = a + b;
+    return { (r < a), r };
 };
 
 template <std::unsigned_integral T>
-inline constexpr std::pair<T, T> uadd1c(T a, T b, T c) noexcept
+inline constexpr std::pair<T, T> uadd1(T a, T b, T c) noexcept
 {
-    T nextc = 0;
+//#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+//    constexpr int bsz = std::numeric_limits<T>::digits;
+//    if (!std::is_constant_evaluated()) {
+//        if constexpr (bsz == 64) {
+//            T carry = NUMETRON_addcarry64(0, a, b, &a);
+//            carry += NUMETRON_addcarry64(0, a, c, &a);
+//            return { carry, a };
+//        }
+//    }
+//#endif
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__aarch64__))
+    constexpr int bsz = std::numeric_limits<T>::digits;
+    if (!std::is_constant_evaluated()) {
+        if constexpr (bsz == 64) {
+            unsigned char carry = __builtin_uaddl_overflow(a, b, &a);
+            carry += __builtin_uaddl_overflow(a, c, &a);
+            return { carry, a };
+        }
+    }
+#endif
+    unsigned char nextc = 0;
     T r0 = a + b;
     if (r0 < a) ++nextc;
     T r = r0 + c;
     if (r < r0) ++nextc;
     return { nextc, r };
 }
+
+template <std::unsigned_integral T>
+inline constexpr T uadd1c(T a, T b, unsigned char & c) noexcept
+{
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            c = NUMETRON_addcarry64(c, a, b, &a);
+            return a;
+        }
+    }
+#endif
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            __asm__(
+                "addb $0xFF, %4\n\t"
+                "adcq %3, %0\n\t"  // a += b
+                "setc %1"      // carry_out = carry flag
+                : "=&r" (a), "=&qm" (c)
+                : "0"(a), "rm" (b), "1" (c)
+                : "cc"
+            );
+            return a;
+        }
+    }
+#endif
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__aarch64__) || defined(__arm64__))
+    // For ARM64, both GCC and Clang can use overflow builtins efficiently
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            T result;
+            unsigned char carry1 = __builtin_add_overflow(a, b, &result);
+            c = __builtin_add_overflow(result, (T)c, &result) | carry1;
+            return result;
+        }
+    }
+#endif
+    // Fallback implementation for constexpr and other compilers
+    T r0 = a + b;
+    unsigned char nextc = r0 < a;
+    T r = r0 + c;
+    c = (r < r0) | nextc;
+    return r;
+}
+
+template <std::unsigned_integral T>
+inline constexpr T uadd1cca(T a, T b, unsigned char c, T& ca) noexcept
+{
+//#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+//    constexpr int bsz = std::numeric_limits<T>::digits;
+//    if (!std::is_constant_evaluated()) {
+//        if constexpr (bsz == 64) {
+//            ca += NUMETRON_addcarry64(c, a, b, &a);
+//            return a;
+//        }
+//    }
+//#endif
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            __asm__(
+                "addb $0xFF, %[c]\n\t"
+                "adcq %[b], %[a]\n\t"  // a += b
+                "adcq $0, %[ca]\n\t"
+                : "=&r" (a), "=&rm" (ca)
+                : [a] "0"(a), [b] "rm" (b), [c] "qm" (c), [ca] "1" (ca)
+                : "cc"
+            );
+            return a;
+        }
+    }
+#endif
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__aarch64__) || defined(__arm64__))
+// For ARM64, both GCC and Clang can use overflow builtins efficiently
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            T result;
+            unsigned char carry1 = __builtin_add_overflow(a, b, &result);
+            ca += (__builtin_add_overflow(result, (T)c, &result) | carry1);
+            return result;
+        }
+    }
+#endif
+    T r = uadd1c(a, b, c);
+    ca += c;
+    return r;
+}
+
+template <std::unsigned_integral T>
+inline constexpr T uadd1c2(T a, T b, T c, unsigned char & cl0, unsigned char& cl1) noexcept
+{
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    if (!std::is_constant_evaluated()) {
+        if constexpr (std::numeric_limits<T>::digits == 64) {
+            __asm__(
+                "addb $0xFF, %1\n\t" //cl0 -> c flag
+                "adcq %4, %0\n\t"   // a += b + cl0
+                "setc %1\n\t"       // c2 = carry flag
+                "addb $0xFF, %2\n\t" // cl1 -> c flag
+                "adcq %5, %0\n\t"   // a += c + cl1
+                "setc %2"      // carry_out = carry flag
+                : "=&r" (a), "=&rm" (cl0), "=&rm" (cl1)
+                : "0"(a), "rm" (b), "rm" (c), "1" (cl0), "2" (cl1)
+                : "cc"
+            );
+            return a;
+        }
+    }
+#endif
+    return uadd1c(uadd1c(a, b, cl0), c, cl1);
+}
+
 
 template <std::unsigned_integral T>
 inline constexpr std::pair<T, T> usub1(T a, T b) noexcept
@@ -221,6 +453,25 @@ template <std::unsigned_integral T>
 inline constexpr auto umul1(T u, T v) noexcept -> std::pair<T, T>
 {
     constexpr int bsz = std::numeric_limits<T>::digits;
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+    if (!std::is_constant_evaluated()) {
+        if constexpr (bsz == 64) {
+            unsigned __int64 high;
+            //unsigned __int64 low = _umul128(u, v, &high);
+            unsigned __int64 low = NUMETRON_mul64(u, v, &high);
+            return { (T)high, (T)low };
+        } 
+    }
+#endif
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__aarch64__))
+    if (!std::is_constant_evaluated()) {
+        if constexpr (bsz == 64) {
+            __extension__ typedef unsigned __int128 uint128;
+            uint128 r = (uint128)u * (uint128)v;
+            return { (T)(r >> 64), (T)r };
+        } 
+    }
+#endif
     if constexpr (std::is_void_v<typename uint_t<bsz * 2>::least>) {
         constexpr int hbsz = std::numeric_limits<T>::digits / 2;
         constexpr T lmask = ((T)1 << hbsz) - 1;
@@ -250,6 +501,48 @@ inline constexpr auto umul1(T u, T v) noexcept -> std::pair<T, T>
         h_t r = ((h_t)u) * ((h_t)v);
         return { (T)(r >> bsz), (T)(r & lmask) };
     }
+}
+
+template <std::unsigned_integral T>
+inline constexpr T umul4add(T const* u, T v, T* r, unsigned char& cov, T& h0, T& h1, T& l1, T& h2, T& l2) noexcept
+{
+    if constexpr (sizeof(T) == 8) if (!std::is_constant_evaluated()) {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+    unsigned __int64 h3;
+    unsigned __int64 l3 = NUMETRON_mul64(v, *u, &h3);
+
+    unsigned char c = NUMETRON_addcarry64(0, h0, l1, &l1);
+    c = NUMETRON_addcarry64(c, h1, l2, &l2);
+    c = NUMETRON_addcarry64(c, h2, l3, &l3);
+
+    unsigned __int64 l0 = NUMETRON_mul64(v, *(u + 1), &h0);
+
+    cov = NUMETRON_addcarry64(cov, *r, l1, r);
+    cov = NUMETRON_addcarry64(cov, *(r + 1), l2, (r + 1));
+    cov = NUMETRON_addcarry64(cov, *(r + 2), l3, (r + 2));
+
+    l1 = NUMETRON_mul64(v, *(u + 2), &h1);
+    l2 = NUMETRON_mul64(v, *(u + 3), &h2);
+    h0 += NUMETRON_addcarry64(c, h3, l0, &l0);
+    cov = NUMETRON_addcarry64(cov, *(r + 3), l0, &l0);
+    return l0;
+#endif
+    }
+    auto [h3, l3] = arithmetic::umul1(*u, v);
+    l1 = arithmetic::uadd1ca(h0, l1, h1);
+    l2 = arithmetic::uadd1ca(h1, l2, h2);
+    l3 = arithmetic::uadd1ca(h2, l3, h3);
+
+    *r = arithmetic::uadd1c(*r, l1, cov);
+    *(r + 1) = arithmetic::uadd1c(*(r + 1), l2, cov);
+    *(r + 2) = arithmetic::uadd1c(*(r + 2), l3, cov);
+
+    auto [h0_, l0] = arithmetic::umul1(*(u + 1), v);
+    h0 = h0_;
+    std::tie(h1, l1) = arithmetic::umul1(*(u + 2), v);
+    std::tie(h2, l2) = arithmetic::umul1(*(u + 3), v);
+    l0 = arithmetic::uadd1ca(h3, l0, h0);
+    return arithmetic::uadd1c(*(r + 3), l0, cov);
 }
 
 // Niels Möller and Torbjörn Granlund,

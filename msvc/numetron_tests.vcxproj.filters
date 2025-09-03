@@ -16,6 +16,9 @@
     <Filter Include="examples">
       <UniqueIdentifier>{41850645-fcb1-4d26-987e-2418844899bc}</UniqueIdentifier>
     </Filter>
+    <Filter Include="tools">
+      <UniqueIdentifier>{325e5afd-3cd5-452e-8e82-5d3b25f7272e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\numetron\arithmetic.hpp">
@@ -72,6 +75,9 @@
     <ClInclude Include="..\include\numetron\detail\scope_exit.hpp">
       <Filter>numetron\detail</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\base_case.hpp">
+      <Filter>numetron\config</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\tests\basic_decimal_test.cpp">
@@ -92,5 +98,14 @@
     <ClCompile Include="..\tests\ct_test.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="..\tests\mul_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\mpn_mul_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\arch\README.md" />
   </ItemGroup>
 </Project>

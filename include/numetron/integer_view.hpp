@@ -111,6 +111,7 @@ class basic_integer_view
     using ctl_type = detail::integer_view_ctl<uintptr_t>; // to ensure the same size as a pointer size
     static_assert(sizeof(LimbT) <= 8); // because we reserve only 6 bits for 'skip_bits' in ctl_type
     static constexpr size_t inplace_max_size = (std::max)(sizeof(LimbT), sizeof(const_limb_t*)) / sizeof(LimbT);
+    static constexpr LimbT no_mask = (std::numeric_limits<LimbT>::max)();
 
     union {
         const_limb_t* limbs_;
@@ -126,6 +127,15 @@ class basic_integer_view
         : ctl_{ std::move(ctl) }
     {
         std::copy(limbs, limbs + inplace_max_size, inplace_value_);
+    }
+
+public: // temporary, to do: make private
+    // only for non-inplace values
+    inline LimbT last_significand_limb_mask() const noexcept
+    {
+        return ctl_.skip_bits
+            ? (LimbT{ 1 } << (std::numeric_limits<LimbT>::digits - ctl_.skip_bits)) - 1
+            : no_mask;
     }
 
 public:
@@ -162,11 +172,20 @@ public:
         : limbs_{ rhs.limbs_ }, ctl_{ rhs.ctl_ }
     {}
 
+    inline std::tuple<std::span<const LimbT>, LimbT, int> decompose() const noexcept
+    {
+        if (is_inplace()) {
+            return { std::span{ inplace_value_, size() }, no_mask, ctl_.sign() };
+        } else {
+            return { std::span{ limbs_, size() }, last_significand_limb_mask(), ctl_.sign() };
+        }
+    }
+
     inline const_limb_t* data() const noexcept { return is_inplace() ? inplace_value_ : limbs_; }
     
     inline size_t size() const noexcept { return ctl_.size; }
 
-    explicit operator bool() const noexcept
+    inline explicit operator bool() const noexcept
     {
         size_t sz = size();
         if (!sz) return false;
@@ -192,10 +211,10 @@ public:
     inline std::pair<LimbT, std::span<const LimbT>> limbs() const noexcept
     {
         if (is_inplace()) {
-            return { 0, std::span{inplace_value_, size()} };
+            return { 0, std::span{ inplace_value_, size() } };
         } else {
             if (!ctl_.skip_bits) {
-                return { 0, std::span{limbs_, size() } };
+                return { 0, std::span{ limbs_, size() } };
             }
             if (!size()) [[unlikely]] return { 0, {} };
             return { limbs_[size() - 1] & last_significand_limb_mask(), std::span{limbs_, size() - 1 } };
@@ -204,12 +223,7 @@ public:
 
     inline size_t most_significant_skipping_bits() const noexcept { return ctl_.skip_bits; }
 
-    inline LimbT last_significand_limb_mask() const noexcept
-    {
-        return ctl_.skip_bits
-            ? (LimbT{ 1 } << (std::numeric_limits<LimbT>::digits - ctl_.skip_bits)) - 1
-            : (std::numeric_limits<LimbT>::max)();
-    }
+
 
     inline LimbT at(size_t index) const noexcept
     {
@@ -333,44 +347,14 @@ public:
 
     [[nodiscard]] friend bool operator ==(basic_integer_view lhs, basic_integer_view rhs) noexcept
     {
-        int lsgn = lhs.sgn(), rsgn = rhs.sgn();
-        if (!lsgn) return !rsgn;
-        if (!rsgn) return false;
-        if ((lsgn < 0 && rsgn > 0) || (lsgn > 0 && rsgn < 0)) return false;
-
-        size_t lsz = lhs.size();
-        size_t rsz = rhs.size();
-        LimbT const* lb = lhs.data(), * le = lb + lsz;
-        LimbT const* rb = rhs.data(), * re = rb + rsz;
-
-        if (lsz < rsz) {
-            --re;
-            if ( *re & rhs.last_significand_limb_mask() ) return false;
-            for (--rsz; lsz < rsz; --rsz) {
-                if (*--re) return false;
-            }
-        } else if (rsz < lsz) {
-            --le;
-            if ( *le & lhs.last_significand_limb_mask() ) return false;
-            for (--lsz; rsz < lsz; --lsz) {
-                if (*--le) return false;
-            };
-        }
-        if (lb == le) [[unlikely]] return true;
-
-        LimbT llimb = ((le == lb + lsz) && lhs.most_significant_skipping_bits()) ? *--le & lhs.last_significand_limb_mask() : *--le;
-        LimbT rlimb = ((re == rb + rsz) && rhs.most_significant_skipping_bits()) ? *--re & rhs.last_significand_limb_mask() : *--re;
-        if (llimb != rlimb) return false;
-        
-        for (; lb != le;) {
-            if (*--le != *--re) return false;
-        }
-        return true;
+        return limb_arithmetic::equal_decomposed(lhs.decompose(), rhs.decompose());
     }
 
     template <std::integral T>
-    [[nodiscard]] friend bool operator ==(basic_integer_view lhs, T rhs)
+    requires (sizeof(T) <= inplace_max_size * sizeof(LimbT))
+    [[nodiscard]] inline friend bool operator ==(basic_integer_view lhs, T rhs)
     {
+#if 0
         if constexpr (std::is_signed_v<T>) {
             int s = lhs.sgn();
             if (s < 0) {
@@ -381,87 +365,28 @@ public:
                 if (rhs <= 0) return false;
             }
         } else if (lhs.sgn() < 0) return false;
-
-        std::make_unsigned_t<T> rabsval = rhs;
-        if constexpr (std::is_signed_v<T>) {
-            if (rhs < 0) rabsval = ~rabsval + 1;
-        }
-
-        if (lhs.at(0) != static_cast<LimbT>(rabsval)) return false;
-        constexpr auto limbs_to_compare = (sizeof(T) + sizeof(LimbT) - 1) / sizeof(LimbT);
-        size_t lsz = lhs.size();
-        if constexpr (limbs_to_compare > 1) {
-            for (int i = 1; i < limbs_to_compare; ++i) {
-                LimbT l = static_cast<LimbT>(rabsval >> (i * std::numeric_limits<LimbT>::digits));
-                if (l != (lsz > i ? lhs.at(i) : LimbT{ 0 })) return false;
-            }
-        }
-        for (size_t i = lsz - 1; i >= limbs_to_compare; --i) {
-            if (lhs.at(i)) return false;
-        }
-        return true;
+#endif
+        return lhs == basic_integer_view{ rhs };
     }
 
-    [[nodiscard]] friend std::strong_ordering operator <=> (basic_integer_view lhs, basic_integer_view rhs) noexcept
+    [[nodiscard]] inline friend std::strong_ordering operator <=> (basic_integer_view lhs, basic_integer_view rhs) noexcept
     {
-        if (lhs.is_negative() && !rhs.is_negative()) return std::strong_ordering::less;
-        if (!lhs.is_negative() && rhs.is_negative()) return std::strong_ordering::greater;
-        size_t lsz = lhs.size();
-        size_t rsz = rhs.size();
-        
-        LimbT const* lb = lhs.data();
-        LimbT const* le = lb + lsz;
-
-        LimbT const* rb = rhs.data();
-        LimbT const* re = rb + rsz;
-        
-        if (lsz < rsz) {
-            --re;
-            if ((rhs.most_significant_skipping_bits() && (*re & rhs.last_significand_limb_mask())) || (!rhs.most_significant_skipping_bits() && *re)) return !rhs.is_negative() ? std::strong_ordering::less : std::strong_ordering::greater;
-            --rsz;
-            while (lsz < rsz) {
-                --re;
-                if (*re) return !rhs.is_negative() ? std::strong_ordering::less : std::strong_ordering::greater;
-                --rsz;
-            }
-        } else if (rsz < lsz) {
-            --le;
-            if ((lhs.most_significant_skipping_bits() && (*le & lhs.last_significand_limb_mask())) || (!lhs.most_significant_skipping_bits() && *le)) return !lhs.is_negative() ? std::strong_ordering::greater : std::strong_ordering::less;
-            --lsz;
-            while (rsz < lsz) {
-                --le;
-                if (*le) return !lhs.is_negative() ? std::strong_ordering::greater : std::strong_ordering::less;
-                --lsz;
-            };
-        }
-        if (lb == le) [[unlikely]] return std::strong_ordering::equal;
-
-        LimbT llimb = ((le == lb + lsz) && lhs.most_significant_skipping_bits()) ? *--le & lhs.last_significand_limb_mask() : *--le;
-        LimbT rlimb = ((re == rb + rsz) && rhs.most_significant_skipping_bits()) ? *--re & rhs.last_significand_limb_mask() : *--re;
-        if (auto r = llimb <=> rlimb; r != std::strong_ordering::equal) {
-            return (!lhs.is_negative() ? r : (0 <=> r));
-        }
-        for (; lb != le;) {
-            --le; --re;
-            auto r = *le <=> *re;
-            if (r != std::strong_ordering::equal) {
-                return (!lhs.is_negative() ? r : (0 <=> r));
-            }
-        }
-        return std::strong_ordering::equal;
+        int res = limb_arithmetic::compare_decomposed<LimbT>(lhs.decompose(), rhs.decompose());
+        return res < 0 ? std::strong_ordering::less : (res > 0 ? std::strong_ordering::greater : std::strong_ordering::equal);
     }
 
     template <std::integral T>
+    requires (sizeof(T) <= inplace_max_size * sizeof(LimbT))
     [[nodiscard]] friend std::strong_ordering operator <=> (basic_integer_view lhs, T rhs)
     {
-        /*
+#if 0
         if constexpr (std::is_signed_v<T>) {
             if (lhs.sign() < 0 && rhs > 0) return std::strong_ordering::less;
             if (lhs.sign() > 0 && rhs < 0) return std::strong_ordering::greater;
         } else {
             if (lhs.sign() < 0) return std::strong_ordering::less;
         }
-        */
+#endif
         return lhs <=> basic_integer_view{ rhs };
     }
 };

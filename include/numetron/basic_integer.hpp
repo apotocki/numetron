@@ -106,13 +106,13 @@ struct integer_holder : AllocatorT
 
     inline sso_allocator_type sso_allocator() noexcept { return sso_allocator_type{ *this }; }
 
-    explicit integer_holder()
+    inline integer_holder() noexcept
     {
         init_zero();
     }
 
     template <typename AllocT>
-    explicit integer_holder(AllocT&& alloc) : allocator_type{ std::forward<AllocT>(alloc) }
+    inline explicit integer_holder(AllocT&& alloc) noexcept : allocator_type{ std::forward<AllocT>(alloc) }
     {
         init_zero();
     }
@@ -132,13 +132,12 @@ struct integer_holder : AllocatorT
         init(to_limbs<LimbT>(value, sso_allocator()));
     }
 
-    //template <typename AllocT>
-    //integer_holder(std::string_view str, int base, AllocT && alloc)
-    //    : allocator_type{ std::forward<AllocT>(alloc) }
-    //{
-    //    ctl_limb(inplace_limbs_) = 0;
-    //    init(to_limbs<LimbT>(str, base, sso_allocator()));
-    //}
+    template <size_t N2, typename AllocatorT2>
+    explicit integer_holder(integer_holder<LimbT, N2, AllocatorT2>&& rhs)
+        : allocator_type{ std::move(static_cast<AllocatorT2&>(rhs)) }
+    {
+        do_move(rhs);
+    }
 
     template <typename BuilderT, typename AllocT>
     requires(requires{ std::declval<BuilderT const&>()(std::declval<integer_holder&>()); })
@@ -196,7 +195,7 @@ struct integer_holder : AllocatorT
         }
     }
 
-    ~integer_holder()
+    inline ~integer_holder()
     {
         free();
     }
@@ -206,7 +205,7 @@ struct integer_holder : AllocatorT
     {
         inplace_limbs_[N - 1] = in_place_mask;
         if constexpr (N > 1) {
-            inplace_limbs_[0] = 0;
+            *inplace_limbs_ = 0;
         }
     }
 
@@ -250,23 +249,29 @@ struct integer_holder : AllocatorT
         } else { // libsdata is already allocated, but not initialized
             limbsdata = limbs - limbs_data_sizeof_in_limbs;
         }
+        if (!sz) { // normalize zero representation
+            assert(asz);
+            *limbs = 0;
+            ++sz;
+        }
         new (limbsdata) limbs_data{ .allocated_size = static_cast<uint32_t>(asz), .sign = (sign < 0) ? 1u : 0, .size = static_cast<uint32_t>(sz) };
         set_allocated(reinterpret_cast<limbs_data*>(limbsdata));
     }
 
+    // sometimes we know that the value must be inplaced (ForceInplaceV = true)
     template <bool ForceInplaceV>
     void init_copy(LimbT const* rhs_limbs, size_t sz, int sign, LimbT most_significant_limb_mask = no_mask)
     {
         assert(sz);
         if (ForceInplaceV || sz < N || (N == sz && (!(rhs_limbs[sz - 1] & most_significant_limb_mask & ~last_significand_limb_mask)))) {
-            std::copy(rhs_limbs, rhs_limbs + sz, inplace_limbs_);
+            std::memcpy(inplace_limbs_, rhs_limbs, sizeof(LimbT) * sz);
             *(inplace_limbs_ + sz - 1) &= most_significant_limb_mask;
             if (N > sz) ctl_limb(inplace_limbs_) = 0;
             inplaced_set_masks(sz, sign);
         } else {
             LimbT* limbsdata = allocate(sz + limbs_data_sizeof_in_limbs);
             LimbT* limbs = limbsdata + limbs_data_sizeof_in_limbs;
-            std::copy(rhs_limbs, rhs_limbs + sz, limbs);
+            std::memcpy(limbs, rhs_limbs, sizeof(LimbT) * sz);
             limbs[sz - 1] &= most_significant_limb_mask;
             new (limbsdata) limbs_data{ .allocated_size = static_cast<uint32_t>(sz), .sign = (sign < 0) ? 1u : 0, .size = static_cast<uint32_t>(sz) };
             set_allocated(reinterpret_cast<limbs_data*>(limbsdata));
@@ -496,6 +501,24 @@ struct integer_holder : AllocatorT
         set_allocated(rhs_ld);
     }
 
+    // [limbs, high limb mask, sign]
+    [[nodiscard]] inline std::tuple<std::span<const LimbT>, LimbT, int> decompose() const noexcept
+    {
+        LimbT ctl = ctl_limb();
+        if (is_inplaced(ctl)) {
+            int sign = inplaced_is_negative(ctl) ? -1 : 1;
+            if constexpr (N == 1) {
+                return { std::span{ inplace_limbs_, N }, last_significand_limb_mask, sign };
+            } else {
+                auto sz = inplaced_size(ctl);
+                return { std::span{ inplace_limbs_, sz }, sz != N ? no_mask : last_significand_limb_mask, sign };
+            }
+        } else {
+            auto [ldata, limbs] = allocated_data_and_limbs();
+            return { std::span{ limbs, ldata->size }, no_mask, ldata->sign ? -1 : 1 };
+        }
+    }
+
     std::pair<LimbT, std::span<const LimbT>> limbs() const noexcept
     {
         LimbT ctl = ctl_limb();
@@ -585,7 +608,23 @@ struct integer_holder : AllocatorT
         if (rsz < N) {
             integer_holder::ctl_limb(inplace_limbs_) = rctllimb;
         }
-        rctllimb = in_place_mask; // rhs can contain a trash value after this
+        rctllimb = in_place_mask; // rhs can contain a garbage value after this
+    }
+
+    template <size_t N2, typename AllocT>
+    void do_move(integer_holder<LimbT, N2, AllocT>& rhs)
+    {
+        using rhs_t = integer_holder<LimbT, N2, AllocT>;
+        LimbT& rhs_ctl = rhs.ctl_limb();
+        if (!rhs_t::is_inplaced(rhs_ctl)) {
+            limbs_data* ldata = rhs.allocated_data();
+            set_allocated(ldata);
+            rhs_ctl = in_place_mask; // rhs can contain a garbage value after this
+            return;
+        } else {
+            size_t rsz = rhs_t::inplaced_size(rhs_ctl);
+            init_copy<false>(rhs.inplace_limbs_, rsz, rhs_t::inplaced_is_negative(rhs_ctl) ? -1 : 1, rsz < N2 ? rhs_t::no_mask : rhs_t::last_significand_limb_mask);
+        }
     }
 
     inline void free() noexcept
@@ -596,6 +635,15 @@ struct integer_holder : AllocatorT
             deallocate(reinterpret_cast<LimbT*>(ldata), ldata->allocated_size + limbs_data_sizeof_in_limbs);
         }
     }
+};
+
+template <std::unsigned_integral LimbT, size_t N, typename AllocatorT>
+struct integer_holder_configurator
+{
+    static constexpr size_t expected_sizeof = (N * sizeof(LimbT) + sizeof(void*) - 1) & ~size_t(sizeof(void*) - 1); // a multiple of the pointer size
+    static constexpr size_t actualN = expected_sizeof / sizeof(LimbT);
+    using allocator_type = std::allocator_traits<AllocatorT>::template rebind_alloc<LimbT>;
+    using alloc_holder = detail::integer_holder<LimbT, actualN, allocator_type>;
 };
 
 template <std::unsigned_integral LimbT, size_t N, typename AllocatorT>
@@ -624,7 +672,8 @@ std::exception_ptr from_integer_string(integer_holder<LimbT, N, AllocatorT>& dh,
 
     return nullptr;
 }
-}
+
+} // namespace numetron::detail
 
 namespace numetron {
 
@@ -633,10 +682,10 @@ using namespace std::string_view_literals;
 template <std::unsigned_integral LimbT, size_t N = 1, typename AllocatorT = std::allocator<LimbT>>
 class basic_integer
 {
-    static constexpr size_t expected_sizeof = (N * sizeof(LimbT) + sizeof(void*) - 1) & ~size_t(sizeof(void*) - 1); // a multiple of the pointer size
-    static constexpr size_t actualN = expected_sizeof / sizeof(LimbT);
+    using configurator_t = detail::integer_holder_configurator<LimbT, N, AllocatorT>;
+    static constexpr size_t actualN = configurator_t::actualN;
+    using allocator_type = typename configurator_t::allocator_type;
     
-    using allocator_type = std::allocator_traits<AllocatorT>::template rebind_alloc<LimbT>;
     using alloc_traits_t = std::allocator_traits<allocator_type>;
 
     template <std::unsigned_integral LimbT2, size_t N2, typename AllocatorT2>
@@ -646,16 +695,13 @@ class basic_integer
 
     alloc_holder aholder_;
 
-    inline allocator_type& allocator() noexcept { return aholder_; }
-    inline allocator_type const& allocator() const noexcept { return aholder_; }
-
 public:
     basic_integer() = default;
     ~basic_integer() = default;
 
     using storage_type = alloc_holder; // for debug
 
-    explicit basic_integer(AllocatorT const& alloc) : aholder_{ alloc } {}
+    inline explicit basic_integer(AllocatorT const& alloc) : aholder_{ alloc } {}
 
     explicit basic_integer(basic_integer_view<LimbT> const& rhs, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ rhs, alloc }
@@ -684,6 +730,9 @@ public:
         }
     }
 
+    inline allocator_type& allocator() noexcept { return aholder_; }
+    inline allocator_type const& allocator() const noexcept { return aholder_; }
+
     static std::expected<basic_integer, std::exception_ptr> from_string(std::string_view & str, int base = 0, AllocatorT const& alloc = AllocatorT{}) noexcept
     {
         basic_integer result(alloc);
@@ -704,15 +753,25 @@ public:
     {}
 
     template <size_t N2, typename AllocatorT2>
-    basic_integer(basic_integer<LimbT, N2, AllocatorT2> const& rhs)
+    inline basic_integer(basic_integer<LimbT, N2, AllocatorT2> const& rhs)
         : aholder_{ rhs.aholder_ }
     {}
 
-    basic_integer(basic_integer && rhs) noexcept
+    inline basic_integer(basic_integer && rhs) noexcept
+        : aholder_{ std::move(rhs.aholder_) }
+    {}
+
+    template <size_t N2, typename AllocatorT2>
+    inline basic_integer(basic_integer<LimbT, N2, AllocatorT2> && rhs)
         : aholder_{ std::move(rhs.allocator()) }
     {
         aholder_.do_move(rhs.aholder_);
     }
+
+    template <size_t N2, typename AllocatorT2>
+    inline explicit basic_integer(detail::integer_holder<LimbT, N2, AllocatorT2> && rhs)
+        : aholder_{ std::move(rhs) }
+    {}
 
     // BuilderT: (alloc_holder)->void
     template <typename BuilderT>
@@ -846,9 +905,21 @@ public:
     inline LimbT const* raw_data() const noexcept { return aholder_.laundered_data(); }
     inline LimbT * raw_data() noexcept { return aholder_.laundered_data(); }
 
+    // [limbs, high limb mask, sign]
+    [[nodiscard]] inline std::tuple<std::span<const LimbT>, LimbT, int> decompose() const noexcept
+    {
+        return aholder_.decompose();
+    }
+
     inline std::pair<LimbT, std::span<const LimbT>> limbs() const noexcept
     {
         return aholder_.limbs();
+    }
+
+    inline size_t size() const noexcept
+    {
+        auto [hlimb, limbs] = aholder_.limbs();
+        return limbs.size() + !!hlimb;
     }
 
     friend inline void swap(basic_integer & lhs, basic_integer& rhs) noexcept
@@ -880,18 +951,6 @@ public:
         }
         return result;
     }
-
-    //template <typename FunctorT>
-    //decltype(auto) with_view(FunctorT const& ftor) const
-    //{
-    //    return aholder_.with_view(ftor);
-    //}
-
-    //template <typename FunctorT>
-    //decltype(auto) with_view2(FunctorT const& ftor)
-    //{
-    //    return aholder_.with_view2(ftor);
-    //}
 };
 
 
@@ -912,75 +971,85 @@ inline std::basic_ostream<Elem, Traits>& operator <<(std::basic_ostream<Elem, Tr
 }
 
 template <std::unsigned_integral LimbT, size_t LN, size_t RN, typename AllocatorLT, typename AllocatorRT>
-std::strong_ordering operator <=>(basic_integer<LimbT, LN, AllocatorLT> const& lhs, basic_integer<LimbT, RN, AllocatorRT> const& rhs)
+[[nodiscard]] inline std::strong_ordering operator <=>(basic_integer<LimbT, LN, AllocatorLT> const& lhs, basic_integer<LimbT, RN, AllocatorRT> const& rhs)
 {
-    if (lhs.is_negative() && !rhs.is_negative()) return std::strong_ordering::less;
-    if (!lhs.is_negative() && rhs.is_negative()) return std::strong_ordering::greater;
+#if 1
+    int res = limb_arithmetic::compare_decomposed<LimbT>(lhs.decompose(), rhs.decompose());
+    return res < 0 ? std::strong_ordering::less : (res > 0 ? std::strong_ordering::greater : std::strong_ordering::equal);
+#else
+    bool is_lhs_neg = lhs.is_negative();
+    if (is_lhs_neg && !rhs.is_negative()) return std::strong_ordering::less;
+    if (!is_lhs_neg && rhs.is_negative()) return std::strong_ordering::greater;
 
     auto [last_llimb, llimbs] = lhs.limbs();
     auto [last_rlimb, rlimbs] = rhs.limbs();
 
-    // getting significant limb sizes
-    size_t llimbs_sz = llimbs.size(), rlimbs_sz = rlimbs.size();
-    llimbs_sz += last_llimb ? 1 : -std::count(llimbs.rbegin(), llimbs.rend(), 0);
-    rlimbs_sz += last_rlimb ? 1 : -std::count(rlimbs.rbegin(), rlimbs.rend(), 0);
-    
-    if (llimbs_sz < rlimbs_sz) {
-        return lhs.is_negative() ? std::strong_ordering::greater : std::strong_ordering::less;
-    } else if (llimbs_sz > rlimbs_sz) {
-        return lhs.is_negative() ? std::strong_ordering::less : std::strong_ordering::greater;
-    } else if (!llimbs_sz) [[unlikely]] return std::strong_ordering::equal;
-
-    // llimbs_sz == rlimbs_sz != 0 case
-    if (auto res = (last_llimb ? last_llimb : llimbs.back()) <=> (last_rlimb ? last_rlimb : rlimbs.back()); res != std::strong_ordering::equal) {
-        return (lhs.is_negative() ? 0 <=> res : res);
+    if (!last_llimb) {
+        while (!llimbs.empty()) {
+            last_llimb = llimbs.back();
+            llimbs = llimbs.first(llimbs.size() - 1);
+            if (last_llimb) break;
+        }
     }
-    --llimbs_sz;
 
-    if (llimbs_sz) {
-        LimbT const* le = llimbs.data() + llimbs_sz;
-        LimbT const* re = rlimbs.data() + llimbs_sz;
-        do {
+    if (!last_rlimb) {
+        while (!rlimbs.empty()) {
+            last_rlimb = rlimbs.back();
+            rlimbs = rlimbs.first(rlimbs.size() - 1);
+            if (last_rlimb) break;
+        }
+    }
+
+    auto res = last_llimb <=> last_rlimb;
+    for (;;) {
+        if (res != std::strong_ordering::equal) break;
+        res = llimbs.size() <=> rlimbs.size();
+        if (res != std::strong_ordering::equal) break;
+        if (llimbs.empty()) return std::strong_ordering::equal;
+        
+        for (LimbT const* le = &llimbs.back(), *re = &rlimbs.back();;) {
+            if (res = *le <=> *re; res != std::strong_ordering::equal) break;
+            if (le == llimbs.data()) return std::strong_ordering::equal;
             --le; --re;
-            if (auto res = *le <=> *re; res != std::strong_ordering::equal) {
-                return (lhs.is_negative() ? 0 <=> res : res);
-            }
-            --llimbs_sz;
-        } while (llimbs_sz);
+        }
+        break;
     }
-    return std::strong_ordering::equal;
+    return is_lhs_neg ? 0 <=> res : res;
+#endif
 }
 
 template <std::unsigned_integral LimbT, size_t LN, size_t RN, typename AllocatorLT, typename AllocatorRT>
-bool operator ==(basic_integer<LimbT, LN, AllocatorLT> const& lhs, basic_integer<LimbT, RN, AllocatorRT> const& rhs)
+[[nodiscard]] inline bool operator ==(basic_integer<LimbT, LN, AllocatorLT> const& lhs, basic_integer<LimbT, RN, AllocatorRT> const& rhs)
 {
+#if 0
+    return (lhs <=> rhs) == std::strong_ordering::equal;
+#elif 1
+    return limb_arithmetic::equal_decomposed<LimbT>(lhs.decompose(), rhs.decompose());
+#else
     if ((lhs.is_negative() && !rhs.is_negative()) || (!lhs.is_negative() && rhs.is_negative())) return false;
 
     auto [last_llimb, llimbs] = lhs.limbs();
     auto [last_rlimb, rlimbs] = rhs.limbs();
 
-    // getting significant limb sizes
-    size_t llimbs_sz = llimbs.size(), rlimbs_sz = rlimbs.size();
-    llimbs_sz += last_llimb ? 1 : -std::count(llimbs.rbegin(), llimbs.rend(), 0);
-    rlimbs_sz += last_rlimb ? 1 : -std::count(rlimbs.rbegin(), rlimbs.rend(), 0);
-
-    if (llimbs_sz != rlimbs_sz) return false;
-    else if (!llimbs_sz) [[unlikely]] return true;
-
-    // llimbs_sz == rlimbs_sz != 0 case
-    if ((last_llimb ? last_llimb : llimbs.back()) != (last_rlimb ? last_rlimb : rlimbs.back())) return false;
-    --llimbs_sz;
-
-    if (llimbs_sz) {
-        LimbT const* le = llimbs.data() + llimbs_sz;
-        LimbT const* re = rlimbs.data() + llimbs_sz;
-        do {
-            --le; --re;
-            if (*le != *re) return false;
-            --llimbs_sz;
-        } while (llimbs_sz);
+    if (!last_llimb) {
+        while (!llimbs.empty()) {
+            last_llimb = llimbs.back();
+            llimbs = llimbs.first(llimbs.size() - 1);
+            if (last_llimb) break;
+        }
     }
-    return true;
+
+    if (!last_rlimb) {
+        while (!rlimbs.empty()) {
+            last_rlimb = rlimbs.back();
+            rlimbs = rlimbs.first(rlimbs.size() - 1);
+            if (last_rlimb) break;
+        }
+    }
+
+    if (last_llimb != last_rlimb || llimbs.size() != rlimbs.size()) return false;
+    return !std::memcmp(llimbs.data(), rlimbs.data(), llimbs.size() * sizeof(LimbT));
+#endif
 }
 
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT, std::integral RT>
@@ -1044,7 +1113,7 @@ basic_integer<LimbT, N, AllocatorT> basic_integer<LimbT, N, AllocatorT>::div_qr(
 
         std::span<LimbT> q{ get<0>(result), qsz };
         //sh = arithmetic::udiv<LimbT>(sh, sl, { daux, dsz }, { daux_tmp, dsz }, &q.back());
-        sh = arithmetic::udiv<LimbT>(sh, sl, dh, dl, &q.back(), std::allocator<LimbT>{});
+        sh = limb_arithmetic::udiv<LimbT>(sh, sl, dh, dl, &q.back(), std::allocator<LimbT>{});
         std::get<1>(result) = qsz - (q.back() ? 0 : 1);
 
         qih.init(result); // numetron::div_qr<LimbT>(sh, sl, sgn(), divider, qih.sso_allocator()));
@@ -1119,15 +1188,27 @@ inline integer operator""_bi()
 
 // #################### operator +
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
+inline basic_integer<LimbT, LN, AllocatorLT> operator+ (basic_integer<LimbT, LN, AllocatorLT> const& l, limb_arithmetic::composition<LimbT> const& rv)
+{
+    typename detail::integer_holder_configurator<LimbT, LN + 1, AllocatorLT>::alloc_holder aux_holder{ l.allocator() };
+    aux_holder.init(limb_arithmetic::add(l.decompose(), rv, aux_holder.sso_allocator()));
+    return basic_integer<LimbT, LN, AllocatorLT>{ std::move(aux_holder) };
+}
+
+template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator+ (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer_view<LimbT> rv)
 {
-    return l.build_new([lv = (basic_integer_view<LimbT>)l, rv](auto& ih) { ih.init(add(lv, rv, ih.sso_allocator())); });
+    return l + rv.decompose();
 }
 
 template <std::unsigned_integral LimbT, size_t LN, size_t RN, typename AllocatorLT, typename AllocatorRT>
-inline basic_integer<LimbT, LN, AllocatorLT> operator+ (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer<LimbT, RN, AllocatorRT> const& r)
+inline auto operator+ (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer<LimbT, RN, AllocatorRT> const& r)
 {
-    return l + (basic_integer_view<LimbT>)r;
+    if constexpr (LN >= RN) {
+        return l + r.decompose();
+    } else {
+        return r + l.decompose();
+    }
 }
 
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT, std::integral TermT>
@@ -1148,24 +1229,30 @@ inline basic_integer<LimbT, LN, AllocatorLT> operator+ (TermT l, basic_integer<L
 
 // #################### operator -
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
+inline basic_integer<LimbT, LN, AllocatorLT> operator- (basic_integer<LimbT, LN, AllocatorLT> const& l, limb_arithmetic::composition<LimbT> const& rv)
+{
+    return l + limb_arithmetic::composition<LimbT>{ get<0>(rv), get<1>(rv), -get<2>(rv) };
+}
+
+template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator- (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer_view<LimbT> rv)
 {
-    return l.build_new([lv = (basic_integer_view<LimbT>)l, rv](auto& ih) { ih.init(sub(lv, rv, ih.sso_allocator())); });
+    return l - rv.decompose();
 }
 
 template <std::unsigned_integral LimbT, size_t LN, size_t RN, typename AllocatorLT, typename AllocatorRT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator- (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer<LimbT, RN, AllocatorRT> const& r)
 {
-    return l - (basic_integer_view<LimbT>)r;
+    return l - r.decompose();
 }
 
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT, std::integral TermT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator- (basic_integer<LimbT, LN, AllocatorLT> const& l, TermT r)
 {
     if constexpr (sizeof(TermT) <= sizeof(LimbT)) {
-        return l - basic_integer_view<LimbT>{ r };
+        return l - basic_integer_view<LimbT>{ r }.decompose();
     } else {
-        return l - basic_integer<LimbT, 1 + sizeof(TermT) / sizeof(LimbT), AllocatorLT>{ r };
+        return l - basic_integer<LimbT, 1 + sizeof(TermT) / sizeof(LimbT), AllocatorLT>{ r }.decompose();
     }
 }
 
@@ -1231,24 +1318,38 @@ inline basic_integer<LimbT, LN, AllocatorLT> operator& (TermT l, basic_integer<L
 
 // #################### operator *
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
-inline basic_integer<LimbT, LN, AllocatorLT> operator* (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer_view<LimbT> rv)
+inline basic_integer<LimbT, LN, AllocatorLT> operator* (basic_integer<LimbT, LN, AllocatorLT> const& l, limb_arithmetic::composition<LimbT> const& rv)
 {
-    return l.build_new([lv = (basic_integer_view<LimbT>)l, rv](auto& ih) { ih.init(mul(lv, rv, ih.sso_allocator())); });
+    if (l.size() <= LN && get<0>(rv).size() <= LN) {
+        typename detail::integer_holder_configurator<LimbT, 2 * LN, AllocatorLT>::alloc_holder aux_holder{ l.allocator() };
+        aux_holder.init(limb_arithmetic::mul(l.decompose(), rv, aux_holder.sso_allocator()));
+        return basic_integer<LimbT, LN, AllocatorLT>{ std::move(aux_holder) };
+    } else {
+        typename detail::integer_holder_configurator<LimbT, LN, AllocatorLT>::alloc_holder aux_holder{ l.allocator() };
+        aux_holder.init(limb_arithmetic::mul(l.decompose(), rv, aux_holder.sso_allocator()));
+        return basic_integer<LimbT, LN, AllocatorLT>{ std::move(aux_holder) };
+    }
+}
+
+template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
+inline basic_integer<LimbT, LN, AllocatorLT> operator* (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer_view<LimbT> r)
+{
+    return l * r.decompose();
 }
 
 template <std::unsigned_integral LimbT, size_t LN, size_t RN, typename AllocatorLT, typename AllocatorRT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator* (basic_integer<LimbT, LN, AllocatorLT> const& l, basic_integer<LimbT, RN, AllocatorRT> const& r)
 {
-    return l * (basic_integer_view<LimbT>)r;
+    return l * r.decompose();
 }
 
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT, std::integral MultiplierT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator* (basic_integer<LimbT, LN, AllocatorLT> const& l, MultiplierT r)
 {
     if constexpr (sizeof(MultiplierT) <= sizeof(LimbT)) {
-        return l * basic_integer_view<LimbT>{ r };
+        return l * basic_integer_view<LimbT>{ r }.decompose();
     } else {
-        return l * basic_integer<LimbT, 1 + sizeof(MultiplierT) / sizeof(LimbT), AllocatorLT>{ r };
+        return l * basic_integer<LimbT, 1 + sizeof(MultiplierT) / sizeof(LimbT), AllocatorLT>{ r }.decompose();
     }
 }
 
@@ -1256,9 +1357,9 @@ template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT, std::in
 inline basic_integer<LimbT, LN, AllocatorLT> operator* (MultiplierT l, basic_integer<LimbT, LN, AllocatorLT> const& r)
 {
     if constexpr (sizeof(MultiplierT) <= sizeof(LimbT)) {
-        return r * basic_integer_view<LimbT>{ l };
+        return r * basic_integer_view<LimbT>{ l }.decompose();
     } else {
-        return r * basic_integer<LimbT, 1 + sizeof(MultiplierT) / sizeof(LimbT), AllocatorLT>{ l };
+        return r * basic_integer<LimbT, 1 + sizeof(MultiplierT) / sizeof(LimbT), AllocatorLT>{ l }.decompose();
     }
 }
 
