@@ -9,6 +9,7 @@
 #include <utility>
 
 #ifndef NUMETRON_ERROR_REPORTING
+#include <iostream>
 #define NUMETRON_ERROR_REPORTING(msg) \
     std::cerr << "Error: " << msg << std::endl;
 #endif

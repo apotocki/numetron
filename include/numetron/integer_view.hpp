@@ -466,7 +466,7 @@ inline size_t hash_value(basic_integer_view<LimbT> const& v) noexcept
     
     LimbT l = *e & v.last_significand_limb_mask();
     if (l) [[likely]] {
-        hash_combine(seed, l);
+        detail::hash_combine(seed, l);
     } else {
         for (;;) {
             if (b == e) return seed; // holds 0
@@ -476,10 +476,23 @@ inline size_t hash_value(basic_integer_view<LimbT> const& v) noexcept
     }
 
     for (; b != e; ++b) {
-        hash_combine(seed, *b);
+        detail::hash_combine(seed, *b);
     }
-    hash_combine(seed, v.sgn());
+    detail::hash_combine(seed, v.sgn());
     return seed;
 }
+
+}
+
+namespace std {
+
+template <std::unsigned_integral LimbT>
+struct hash<numetron::basic_integer_view<LimbT>>
+{
+    inline std::size_t operator()(numetron::basic_integer_view<LimbT> const& obj) const noexcept
+    {
+        return numetron::hash_value(obj);
+    }
+};
 
 }

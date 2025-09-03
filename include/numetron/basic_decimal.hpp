@@ -436,10 +436,10 @@ struct decimal_holder : AllocatorT
         }
         LimbT const* limbs = s.data();
         size_t sz = s.size();
-        LimbT last_limb_mask = s.last_limb_mask();
+        LimbT last_limb_mask = s.last_significand_limb_mask();
         if (can_be_inplaced(limbs, sz, last_limb_mask & ~last_significand_limb_mask, exponent)) {
             memcpy(inplace_limbs_, limbs, sz * sizeof(LimbT));
-            inplace_limbs_[sz - 1] &= s.last_limb_mask();
+            inplace_limbs_[sz - 1] &= s.last_significand_limb_mask();
             return inplaced_set_masks(sz, s.sgn(), (int64_t)exponent);
         } else { // need allocate
             size_t exp_alloc_sz = exponent.template is_fit<int64_t>() ? 0 : exponent.size();
