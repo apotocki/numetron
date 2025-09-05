@@ -1352,7 +1352,7 @@ inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT cons
 #if defined(NUMETRON_PLATFORM_AUTODETECT)
     std::call_once(mul_basecase_init_flag, []() {
         uint64_t platform_descriptor = numetron_detect_platform();
-        std::cout << "PLATFROM: " << std::hex << "0x" << platform_descriptor << std::dec << std::endl;
+        //std::cout << "PLATFROM: " << std::hex << "0x" << platform_descriptor << std::dec << std::endl;
         __mul_basecase_ptr = detect_mul_basecase(platform_descriptor);
         if (!__mul_basecase_ptr) 
             __mul_basecase_ptr = &fallback_mul_basecase<LimbT>;
@@ -1584,7 +1584,7 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
     LimbT const* lb = llimbs.data(), * le = lb + llimbs.size();
     LimbT const* rb = rlimbs.data(), * re = rb + rlimbs.size();
     LimbT* rese;
-    if (lmask == std::numeric_limits<LimbT>::max() && rmask == std::numeric_limits<LimbT>::max()) {
+    if (lmask == (std::numeric_limits<LimbT>::max)() && rmask == (std::numeric_limits<LimbT>::max)()) {
         if (cmpres > 0) {
             rese = umul<LimbT>(lb, le, rb, re, get<0>(result));
         } else {

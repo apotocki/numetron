@@ -158,13 +158,13 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
     size_t ralloc = 0, balloc = 0;
     for (;;) {
         if (n & 1) {
-            result = mul(base, rview, alloc);
+            result = limb_arithmetic::mul(base.decompose(), rview.decompose(), alloc);
             if (ralloc) { alloc_traits_t::deallocate(alloc, const_cast<LimbT*>(rview.data()), ralloc); }
             rview = basic_integer_view<LimbT>{ std::span{get<0>(result), get<1>(result)}, get<3>(result) }; ralloc = get<2>(result);
         }
         n >>= 1;
         if (!n) break;
-        auto [limbs, sz, rsz, sign] = mul(base, base, alloc);
+        auto [limbs, sz, rsz, sign] = limb_arithmetic::mul(base.decompose(), base.decompose(), alloc);
         if (balloc) { alloc_traits_t::deallocate(alloc, const_cast<LimbT*>(base.data()), balloc); }
         base = basic_integer_view<LimbT>{ std::span{limbs, sz}, sign }; balloc = rsz;
     }
