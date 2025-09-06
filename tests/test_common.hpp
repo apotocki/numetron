@@ -23,7 +23,7 @@
 
 #define NUMETRON_NO30 true
 #define NUMETRON_TEST_COUNT 16// (16 * 256)//16//(48*5000) //16// (48*5000)
-#define NUMETRON_USZCOND(sz) (((sz) & 3) == 3)
+#define NUMETRON_USZCOND(sz) (((sz) & 3) == 2)
 namespace numetron {
 
 void basic_integer_test0();

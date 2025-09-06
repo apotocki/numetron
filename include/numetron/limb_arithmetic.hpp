@@ -36,8 +36,6 @@ inline std::once_flag mul_basecase_init_flag;
 extern "C" uint64_t numetron_detect_platform();
 extern "C" detect_mul_basecase_type detect_mul_basecase(uint64_t);
 inline void (*__mul_basecase_ptr)(uint64_t*, const uint64_t*, size_t, const uint64_t*, size_t) = nullptr;
-//extern "C" void __alderlake_mul_basecase(uint64_t* rp, const uint64_t* up, size_t un, uint64_t const* vp, uint64_t vn);
-//extern "C" void __k8_mul_basecase(uint64_t* rp, const uint64_t* up, size_t un, uint64_t const* vp, uint64_t vn);
 #define NUMETRON_mul_basecase __mul_basecase_ptr
 #endif
 
@@ -631,139 +629,18 @@ inline LimbT umul1_inplace(UIteratorT ub, UIteratorT ue, LimbT v, LimbT cl = 0) 
     return cl;
 }
 
-template <std::unsigned_integral LimbT, typename UIteratorT, typename RIteratorT>
-inline LimbT umul1S4(UIteratorT ub, UIteratorT ue, LimbT v, RIteratorT& r) noexcept
-{
-    assert(!(2 & (ue - ub)));
-    // unrolled first iteration
-    auto [h, r0] = arithmetic::umul1(*ub, v);
-    auto [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-    auto [h2, l2] = arithmetic::umul1(*(ub + 2), v);
-    auto [rcl, l3] = arithmetic::umul1(*(ub + 3), v);
-
-    *r = r0;
-    *(r + 1) = arithmetic::uadd1ca(l1, h, h1);
-    *(r + 2) = arithmetic::uadd1ca(l2, h1, h2);
-    auto[c, r3] = arithmetic::uadd1(l3, h2);
-    *(r + 3) = r3;
-    
-    r += 4;
-    ub += 4;
-
-    // remaining iterations
-    while (ub != ue) {
-        auto [h, l] = arithmetic::umul1(*ub, v);
-        auto [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-        auto [h2, l2] = arithmetic::umul1(*(ub + 2), v);
-        auto [h3, l3] = arithmetic::umul1(*(ub + 3), v);
-        *r = arithmetic::uadd1cca(l, rcl, c, h); c = 0;
-        *(r + 1) = arithmetic::uadd1ca(l1, h, h1);
-        *(r + 2) = arithmetic::uadd1ca(l2, h1, h2);
-        *(r + 3) = arithmetic::uadd1ca(l3, h2, h3);
-        rcl = h3;
-        ub += 4;
-        r += 4;
-    }
-    return rcl + c;
-}
-
-template <std::unsigned_integral LimbT,  typename UIteratorT, typename RIteratorT>
-inline LimbT umul1S2(UIteratorT ub, UIteratorT ue, LimbT v, RIteratorT& r) noexcept
-{
-    assert(!(1&(ue - ub)));
-    // unrolled first iteration
-    auto [r1c, r0] = arithmetic::umul1(*ub, v);
-    auto [rcl, r1_0] = arithmetic::umul1(*(ub + 1), v);
-    auto [c, r1] = arithmetic::uadd1(r1_0, r1c);
-    *r = r0; ++r;
-    *r = r1; ++r;
-
-    // remaining iterations
-    while ((ub+=2) != ue) {
-        auto [h, l] = arithmetic::umul1(*ub, v);
-        auto [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-        *r = arithmetic::uadd1c(l, rcl, c); ++r;
-        *r = arithmetic::uadd1c(l1, h, c); ++r;
-        rcl = h1;
-    }
-    return rcl + c;
-}
-
-#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
-template <std::unsigned_integral LimbT>
-requires(sizeof(LimbT) == 8)
-inline LimbT umul1S2(LimbT const* ub, LimbT const* ue, LimbT v, LimbT*& r) noexcept
-{
-    assert(!(1 & (ue - ub)));
-    // BMI2 path: use mulx (rdx is implicit source)
-
-    LimbT rcl;
-    LimbT l, l1, h, h1; // temporaries
-    unsigned char c; // carry (temporary)
-
-    __asm__(
-        "mov  %[v],  %%rdx\n\t"   // rdx = v (implicit for mulx)
-
-        // Unrolled first pair:
-        "mulx (%[ub]), %[l], %[h]\n\t"      // [h, l] = arithmetic::umul1(*ub, v);
-        "mulx 8(%[ub]), %[l1], %[rcl]\n\t"   // [rcl, l1] = arithmetic::umul1(*(ub + 1), v);
-
-        "mov  %[l], (%[r])\n\t"               // *r = l;
-
-        "add  %[h], %[l1]\n\t"             // l1 = l1 + h
-        "mov  %[l1], 8(%[r])\n\t"            // *(r+1) = r1
-        "setc %b[c]\n\t"                        // c = carry
-
-        "add  $16, %[r]\n\t" //"lea 16(%[r]) %[r]\n\t" // r  += 2 //  "add  $16, %[r]\n\t"
-        "add  $16, %[ub]\n\t" //"lea 16(%[ub]) %[ub]\n\t" // ub += 2 // "add  $16, %[ub]\n\t"
-        
-        // If done, skip loop
-        "cmp  %[ub], %[ue]\n\t"
-        "je   .Lexit%=\n\t"
-
-        ".Lnext%=:\n\t"
-        
-        "mulx (%[ub]), %[l], %[h]\n\t"      // [h, l] = arithmetic::umul1(*ub, v);
-        "mulx 8(%[ub]), %[l1], %[h1]\n\t"   // [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-        
-        "add $0xFF, %[c]\n\t"
-        "adcq %[rcl], %[l]\n\t" // arithmetic::uadd1c(l, rcl, c) ->l
-        "adcq %[h], %[l1]\n\t"  //arithmetic::uadd1c(l1, h, c) -> l1
-        "setc %b[c]\n\t"
-        "mov  %[h1], %[rcl]\n\t"
-
-        "mov  %[l], (%[r])\n\t"
-        "mov  %[l1], 8(%[r])\n\t"
-
-        "add  $16, %[r]\n\t"
-        "add  $16, %[ub]\n\t"
-        "cmp  %[ub], %[ue]\n\t"
-        "jne  .Lnext%=\n\t"
-        
-        ".Lexit%=:\n\t"
-        "add $0xFF, %[c]\n\t"
-        "adc $0, %[rcl]\n\t"
-        
-        : "=&r"(ub), "=&r"(r), [c] "=&qm" (c), [rcl]"=&r"(rcl), [l]"=&r"(l), [h]"=&r"(h), [l1]"=&r"(l1), [h1]"=&r"(h1)
-        : [ub] "0"(ub), [ue] "r"(ue), [v]"r"(v), [r]"1"(r)
-        : "rdx", "cc", "memory"
-    );
-    return rcl;
-}
-#endif
-
 // (rh, r[u.size()]) <- [u] * v; returns rh
 template <std::unsigned_integral LimbT, typename UIteratorT, typename RIteratorT>
 inline LimbT umul1(UIteratorT ub, UIteratorT ue, LimbT v, RIteratorT& r) noexcept
 {
     assert(ub != ue);
-    // unrolled first iteration
+    // unroll first iteration
     auto [h, l] = arithmetic::umul1(*ub, v);
     *r = l; ++r;
-    // unrolled second iteration
     
     if (++ub == ue) return h;
     
+    // unroll second iteration
     auto [h1, l1] = arithmetic::umul1(*ub, v);
     *r = arithmetic::uadd1ca(l1, h, h1);
     ++r;
@@ -776,218 +653,6 @@ inline LimbT umul1(UIteratorT ub, UIteratorT ue, LimbT v, RIteratorT& r) noexcep
         h1 = h;
     }
     return h1;
-}
-
-template <std::unsigned_integral LimbT, typename UIteratorT, typename ResultIteratorT>
-inline LimbT umul1_addS2(UIteratorT ub, UIteratorT ue, LimbT v, ResultIteratorT& r, LimbT climb, unsigned char c) noexcept
-{
-    assert(ue != ub);
-    assert(!(1 & (ue - ub)));
-    unsigned char c2 = 0;
-    do {
-        auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-        auto [h1, l1] = numetron::arithmetic::umul1(*(ub + 1), v);
-        *r = numetron::arithmetic::uadd1c2(l, climb, *r, c, c2);
-        *(r + 1) = numetron::arithmetic::uadd1c2(l1, h, *(r + 1), c, c2);
-        r += 2;
-        climb = h1;
-    } while ((ub += 2) != ue);
-    return climb + c + c2;
-}
-
-//template <std::unsigned_integral LimbT, typename UIteratorT, typename ResultIteratorT>
-//inline LimbT umul1_addS4(UIteratorT ub, UIteratorT ue, LimbT v, ResultIteratorT& r) noexcept
-//{
-//    assert(!(3 & (ue - ub)));
-//    unsigned char c = 0;
-//    auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-//    auto [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-//    auto [h2, l2] = arithmetic::umul1(*(ub + 2), v);
-//    auto [rcl, l3] = arithmetic::umul1(*(ub + 3), v);
-//
-//    auto [c1, r0] = numetron::arithmetic::uadd1(l, *r); *r = r0;
-//    *(r + 1) = numetron::arithmetic::uadd1c2(l1, h, *(r + 1), c, c1);
-//    *(r + 2) = numetron::arithmetic::uadd1c2(l2, h1, *(r + 2), c, c1);
-//    *(r + 3) = numetron::arithmetic::uadd1c2(l3, h2, *(r + 3), c, c1);
-//    r += 4;
-//    ub += 4;
-//    while (ub != ue) {
-//        auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-//        auto [h1, l1] = numetron::arithmetic::umul1(*(ub + 1), v);
-//        auto [h2, l2] = arithmetic::umul1(*(ub + 2), v);
-//        auto [h3, l3] = arithmetic::umul1(*(ub + 3), v);
-//        *r = numetron::arithmetic::uadd1c2(l, rcl, *r, c, c1);
-//        *(r + 1) = numetron::arithmetic::uadd1c2(l1, h, *(r + 1), c, c1);
-//        *(r + 2) = numetron::arithmetic::uadd1c2(l2, h1, *(r + 2), c, c1);
-//        *(r + 3) = numetron::arithmetic::uadd1c2(l3, h2, *(r + 3), c, c1);
-//        r += 4;
-//        rcl = h3;
-//        ub += 4;
-//    }
-//    return rcl + c + c1;
-//}
-
-template <std::unsigned_integral LimbT, typename UIteratorT, typename ResultIteratorT>
-inline LimbT umul1_addS4(UIteratorT ub, UIteratorT ue, LimbT v, ResultIteratorT& r) noexcept
-{
-    assert(!(3 & (ue - ub)));
-    LimbT rcl = 0;
-    unsigned char c = 0;
-    //unsigned char c1 = 0;
-    
-    do {
-        auto [h, l] = arithmetic::umul1(*ub, v);
-        auto [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-        auto [h2, l2] = arithmetic::umul1(*(ub + 2), v);
-        auto [h3, l3] = arithmetic::umul1(*(ub + 3), v);
-
-        auto tmp = numetron::arithmetic::uadd1cca(l, rcl, c, h);
-        auto [c0, r0] = numetron::arithmetic::uadd1(tmp, *r);
-        *r = r0;
-
-        tmp = numetron::arithmetic::uadd1cca(l1, h, c0, h1);
-        auto [c1, r1] = numetron::arithmetic::uadd1(tmp, *(r + 1));
-        *(r + 1) = r1;
-
-        tmp = numetron::arithmetic::uadd1cca(l2, h1, c1, h2);
-        auto [c2, r2] = numetron::arithmetic::uadd1(tmp, *(r + 2));
-        *(r + 2) = r2;
-
-        tmp = numetron::arithmetic::uadd1cca(l3, h2, c2, h3);
-        auto [c3, r3] = numetron::arithmetic::uadd1(tmp, *(r + 3));
-        *(r + 3) = r3;
-
-        rcl = h3;
-        c = c3;
-        r += 4;
-        ub += 4;
-        //*r = numetron::arithmetic::uadd1c2(l, rcl, *r, c, c1);
-        //*(r + 1) = numetron::arithmetic::uadd1c2(l1, h, *(r + 1), c, c1);
-        //*(r + 2) = numetron::arithmetic::uadd1c2(l2, h1, *(r + 2), c, c1);
-        //*(r + 3) = numetron::arithmetic::uadd1c2(l3, h2, *(r + 3), c, c1);
-        //r += 4;
-        //rcl = h3;
-        //ub += 4;
-    } while (ub != ue);
-    //return rcl + c + c1;
-    return rcl + c;
-}
-#if 0
-#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
-template <std::unsigned_integral LimbT>
-requires(sizeof(LimbT) == 8)
-__attribute__((always_inline)) inline LimbT umul1_addS2(LimbT const* ub, LimbT const* ue, LimbT v, LimbT*& r) noexcept
-{
-    assert(!(1 & (ue - ub)));
-    // BMI2 path: use mulx (rdx is implicit source)
-
-    LimbT rcl;
-    LimbT l, l1, h, h1; // temporaries
-    unsigned char c, c1; // carris (temporaries)
-
-    __asm__(
-        "mov  %[v], %%rdx\n\t"   // rdx = v (implicit for mulx)
-
-        // Unrolled first pair:
-        "mulx (%[ub]), %[l], %[h]\n\t"      // [h, l] = arithmetic::umul1(*ub, v);
-        "mulx 8(%[ub]), %[l1], %[rcl]\n\t"   // [rcl, l1] = arithmetic::umul1(*(ub + 1), v);
-
-        "addq  %[l], (%[r])\n\t"            // *r += l;
-
-        "adcq  %[h], %[l1]\n\t"             // l1 += h +(c)
-        "setc %b[c]\n\t"
-        "addq  %[l1], 8(%[r])\n\t"            // *(r+1) += l1
-        "setc %b[c1]\n\t"                        // c = carry
-        
-        "add  $16, %[r]\n\t" //"lea 16(%[r]) %[r]\n\t" // r  += 2 //  "add  $16, %[r]\n\t"
-        "add  $16, %[ub]\n\t" //"lea 16(%[ub]) %[ub]\n\t" // ub += 2 // "add  $16, %[ub]\n\t"
-        
-        // If done, skip loop
-        "cmp  %[ub], %[ue]\n\t"
-        "je   .Lexit%=\n\t"
-
-        ".Lnext%=:\n\t"
-        
-        "mulx (%[ub]), %[l], %[h]\n\t"      // [h, l] = arithmetic::umul1(*ub, v);
-        "mulx 8(%[ub]), %[l1], %[h1]\n\t"   // [h1, l1] = arithmetic::umul1(*(ub + 1), v);
-        
-        "add  $0xFF, %[c]\n\t"
-        "adcq %[rcl], %[l]\n\t" // arithmetic::uadd1c(l, rcl, c) ->l, c
-        "adcq %[h], %[l1]\n\t" // arithmetic::uadd1c(l1, h, c) ->l1, c
-        "setc %b[c]\n\t"
-        "add  $0xFF, %[c1]\n\t"
-        "adcq  %[l], (%[r])\n\t" // *r += l
-        "adcq  %[l1], 8(%[r])\n\t" // *r += l1
-        "setc %b[c1]\n\t"
-        "mov  %[h1], %[rcl]\n\t"
-
-        "add  $16, %[r]\n\t"
-        "add  $16, %[ub]\n\t"
-        "cmp  %[ub], %[ue]\n\t"
-        "jne  .Lnext%=\n\t"
-       
-        ".Lexit%=:\n\t"
-        "add %b[c1], %b[c]\n\t"
-        "movzx %b[c], %[l]\n\t"
-        "addq %[l], %[rcl]\n\t"
-        
-        : "=&r"(ub), "=&r"(r), [c] "=&q" (c), [c1] "=&q" (c1), [rcl]"=&r"(rcl), [l]"=&r"(l), [h]"=&r"(h), [l1]"=&r"(l1), [h1]"=&r"(h1)
-        : [ub] "0"(ub), [ue] "r"(ue), [v]"r"(v), [r]"1"(r)
-        : "rdx", "cc", "memory"
-    );
-    //if constexpr (sizeof(LimbT) == 8) {
-    //    std::cout << "r0: " << std::hex << *(r - 2);
-    //    std::cout << ", r1: " << std::hex << *(r - 1);
-    //    std::cout << ", rcl: " << std::hex << rcl;
-    //    std::cout << ", c: " << (int)c << ", c1: " << (int)c1 << "\n";
-    //}
-    return rcl;
-    //while (ub != ue) {
-    //    auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-    //    auto [h1, l1] = numetron::arithmetic::umul1(*(ub + 1), v);
-    //    *r = numetron::arithmetic::uadd1c2(l, rcl, *r, c, c1);
-    //    *(r + 1) = numetron::arithmetic::uadd1c2(l1, h, *(r + 1), c, c1);
-    //    r += 2;
-    //    rcl = h1;
-    //    ub += 2;
-    //    //std::cout << std::hex << "r0: " << *(r - 2);
-    //    //std::cout << ", r1: " << std::hex << *(r - 1);
-    //    //std::cout << ", rcl: " << std::hex << rcl << "\n";
-    //}
-    //return rcl + c + c1;
-}
-#endif
-#endif
-template <std::unsigned_integral LimbT, typename UIteratorT, typename ResultIteratorT>
-inline LimbT umul1_addS2(UIteratorT ub, UIteratorT ue, LimbT v, ResultIteratorT& r) noexcept
-{
-    assert(!(1 & (ue - ub)));
-    unsigned char c = 0;
-    auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-    auto [rcl, l1] = numetron::arithmetic::umul1(*(ub + 1), v);
-    auto [c1, r0] = numetron::arithmetic::uadd1(l, *r);
-    *r = r0;
-    *(r+1) = numetron::arithmetic::uadd1c2(l1, h, *(r+1), c, c1);
-    r += 2;
-    //if constexpr (sizeof(LimbT) == 8) {
-    //    std::cout << std::hex << "r0: " << *(r - 2);
-    //    std::cout << ", r1: " << std::hex << *(r - 1);
-    //    std::cout << ", rcl: " << std::hex << rcl;
-    //    std::cout << ", c: " << (int) c << ", c1: " << (int) c1 << "\n";
-    //}
-    
-    while ((ub+=2) != ue) {
-        auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-        auto [h1, l1] = numetron::arithmetic::umul1(*(ub+1), v);
-        *r = numetron::arithmetic::uadd1c2(l, rcl, *r, c, c1);
-        *(r + 1) = numetron::arithmetic::uadd1c2(l1,  h, *(r + 1), c, c1);
-        r += 2;
-        rcl = h1;
-        //std::cout << std::hex << "r0: " << *(r - 2);
-        //std::cout << ", r1: " << std::hex << *(r - 1);
-        //std::cout << ", rcl: " << std::hex << rcl << "\n";
-    }
-    return rcl + c + c1;
 }
 
 // (c, p[u.size()]) <- [u] * v + p[u.size()]; returns [c, p + u.size()]
@@ -1010,16 +675,16 @@ inline LimbT umul1_add(UIteratorT ub, UIteratorT ue, LimbT v, ResultIteratorT & 
     return rh;
 #else
     unsigned char cl = 0;
-    auto [previous, l] = numetron::arithmetic::umul1(*ub, v);
-    auto [cl2, current] = numetron::arithmetic::uadd1(l, *r);
+    auto [h0, l0] = numetron::arithmetic::umul1(*ub, v);
+    auto [cl2, current] = numetron::arithmetic::uadd1(l0, *r);
     *r = current; ++r;
     while (++ub != ue) {
         auto [h, l] = numetron::arithmetic::umul1(*ub, v);
-        *r = numetron::arithmetic::uadd1c2(l, *r, previous, cl, cl2);
+        *r = numetron::arithmetic::uadd1c2(l, *r, h0, cl, cl2);
         ++r;
-        previous = h;
+        h0 = h;
     }
-    return previous + cl + cl2;
+    return h0 + cl + cl2;
 #endif
 }
 
@@ -1063,162 +728,16 @@ inline LimbT umul1_add(LimbT uhh, LimbT uh, std::span<const LimbT> ul, LimbT v, 
     return rch;
 }
 
-//template <std::unsigned_integral LimbT>
-//inline void umul(std::span<const LimbT> u, std::span<const LimbT> v, std::span<LimbT> r) noexcept
-//{
-//    if (!u.size() || !v.size()) [[unlikely]] return;
-//
-//    LimbT const* ub = u.data(), * ue = ub + u.size();
-//    LimbT const* vb = v.data(), * ve = vb + v.size();
-//    LimbT* rb = r.data(), * re = rb + r.size();
-//    assert(r.size() >= u.size() + v.size());
-//
-//    // first line
-//    LimbT cl = 0;
-//    do {
-//        auto [h, l] = numetron::arithmetic::umul1(*ub, *vb);
-//        l += cl;
-//        cl = (l < cl) + h;
-//        *rb = l;
-//        ++ub; ++rb;
-//    } while (ub != ue);
-//    if (cl) { *rb++ = cl; }
-//    while (rb != re) { *rb++ = 0; }
-//    rb = r.data() + u.size();
-//
-//    // next lines
-//    for (++vb; vb != ve; ++vb) {
-//        cl = 0;
-//        ub = u.data();
-//        rb -= u.size() - 1;
-//        do {
-//            auto [h, l] = numetron::arithmetic::umul1(*ub, *vb);
-//            auto [h1, l1] = numetron::arithmetic::uadd1c(l, *rb, cl);
-//            cl = h + h1;
-//            *rb = l1;
-//            ++ub; ++rb;
-//        } while (ub != ue);
-//        if (cl) {
-//            *rb = numetron::arithmetic::uadd1(*rb, cl).second;
-//        }
-//    }
-//}
-#if 0
-#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
-template <std::unsigned_integral LimbT>
-requires std::is_same_v<LimbT, uint64_t>
-inline uint64_t* umul(uint64_t const* ub, uint64_t const* ue, uint64_t const* vb, uint64_t const* ve, uint64_t * rb) noexcept
-{
-    __asm_mul_basecase(rb, const_cast<uint64_t*>(ub), (ue - ub), const_cast<uint64_t*>(vb), (ve - vb));
-    return rb + (ue - ub) + (ve - vb);
-}
-#endif
-#endif
-// base case mul: {u} * {v} -> {rb, re}
-// returns re
-#if 0
-template <std::unsigned_integral LimbT, typename ResultIteratorT>
-inline ResultIteratorT umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, ResultIteratorT rb) noexcept
-{
-    assert(ub != ue && vb != ve);
-    //if (ub == ue || vb == ve) [[unlikely]] return r;
-
-    size_t dec_usz = ue - ub - 1;
-
-    // first line
-    
-    if ((dec_usz & 3) == 3) {
-        LimbT rh = umul1S4<LimbT>(ub, ue, *vb, rb);
-        *rb = rh;
-        for (++vb; vb != ve; ++vb) {
-            rb -= dec_usz;
-            rh = umul1_addS4(ub, ue, *vb, rb);
-            *rb = rh;
-        }
-    } else {/*
-        
-        if (dec_usz & 1) {
-        LimbT rh = umul1S2<LimbT>(ub, ue, *vb, rb);
-        *rb = rh;
-        for (++vb; vb != ve; ++vb) {
-            rb -= dec_usz;
-            rh = umul1_addS2(ub, ue, *vb, rb);
-            *rb = rh;
-        }
-    } else {*/
-#if 1
-        LimbT rh = umul1<LimbT>(ub, ue, *vb, rb);
-        *rb = rh;
-        for (++vb; vb != ve; ++vb) {
-            rb -= dec_usz;
-            rh = umul1_add(ub, ue, *vb, rb);
-            *rb = rh;
-        }
-#else
-        LimbT rh = umul1<LimbT>(ub, ue, *vb, rb);
-        *rb = rh;
-        for (++vb; vb != ve; ++vb) {
-            rb -= dec_usz;
-            auto [r1c, r0_0] = numetron::arithmetic::umul1(*ub, *vb);
-            auto [cl, r0] = numetron::arithmetic::uadd1(r0_0, *rb);
-            *rb = r0;
-            rh = umul1_addS2(ub + 1, ue, *vb, ++rb, r1c, cl);
-            *rb = rh;
-        }
-#endif
-    }
-    return rb + 1;
-    // next lines
-    
-    //for (++vb; vb != ve; ++vb) {
-    //    rb -= dec_usz;
-    //    LimbT rh = umul1_add(ub, ue, *vb, rb);
-    //    *rb = rh;
-
-    //    // first iteration unrolled
-    //    //unsigned char cl = 0;
-    //    //auto ub_it = ub;
-    //    //LimbT vb_val = *vb;
-    //    //auto [previous, l] = numetron::arithmetic::umul1(*ub_it, vb_val);
-    //    //auto [cl2, current] = numetron::arithmetic::uadd1(l, *rb);
-    //    //*rb = current; ++rb;
-    //    //while (++ub_it != ue) {
-    //    //    auto [h, l] = numetron::arithmetic::umul1(*ub_it, vb_val);
-    //    //    *rb = numetron::arithmetic::uadd1c2(l, *rb, previous, cl, cl2);
-    //    //    ++rb;
-    //    //    previous = h;
-    //    //}
-    //    //*rb = previous + cl + cl2;
-    //}
-    //return rb + 1;
-}
-#endif
-
-
-
 // base case mul: {u} * {v} -> {rb, re}
 // returns re
 template <std::unsigned_integral LimbT, typename ResultIteratorT>
 inline ResultIteratorT umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, ResultIteratorT r) noexcept
 {
     assert(ub != ue && vb != ve);
-    //if (ub == ue || vb == ve) [[unlikely]] return r;
 
     ResultIteratorT rb = r;
 
     // first line
-#if 0
-    unsigned char cl = 0;
-    LimbT previous = 0;
-    do {
-        auto [h, l] = numetron::arithmetic::umul1(*ub, *vb);
-        auto [nc, current] = numetron::arithmetic::uadd1cl(l, previous, cl);
-        *rb = current; ++rb;
-        cl = nc;
-        previous = h;
-    } while (++ub != ue);
-    *rb = previous + cl;
-#else
     unsigned char cl = 0;
     // unrolled first iteration
     auto [previous, current] = numetron::arithmetic::umul1(*ub, *vb);
@@ -1239,65 +758,8 @@ inline ResultIteratorT umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, L
         }
     }
     *rb = previous + cl;
-#endif
+
     // next lines
-    //for (++vb; vb != ve; ++vb) {
-    //    LimbT cl = 0;
-    //    ub = u.data();
-    //    rb -= u.size() - 1;
-    //    do {
-    //        auto [h, l] = numetron::arithmetic::umul1(*ub, *vb);
-    //        auto [h1, l1] = numetron::arithmetic::uadd1c(l, *rb, cl);
-    //        cl = h + h1;
-    //        *rb = l1;
-    //        ++ub; ++rb;
-    //    } while (ub != ue);
-    //    *rb = cl;
-    //}
-    //return rb + 1;
-
-    //for (++vb; vb != ve; ++vb) {
-    //    cl = 0;
-    //    unsigned char cl2 = 0;
-    //    previous = 0;
-    //    ub = u.data();
-    //    rb -= u.size() - 1;
-    //    do {
-    //        auto [h, l] = numetron::arithmetic::umul1(*ub, *vb);
-    //        //auto [nc, tmp] = numetron::arithmetic::uadd1cl(l, *rb, cl);
-    //        //auto [nc2, current] = numetron::arithmetic::uadd1cl(tmp, previous, cl2);
-    //        //auto [nc, nc2, current] = numetron::arithmetic::uadd1cl2(l, *rb, previous, cl, cl2);
-    //        *rb = numetron::arithmetic::uadd1cl2x(l, *rb, previous, cl, cl2);
-    //        ++rb;
-    //        //*rb = current; ++rb;
-    //        //cl = nc; cl2 = nc2; 
-    //        previous = h;
-    //        ++ub;
-    //    } while (ub != ue);
-    //    *rb = previous + cl + cl2;
-    //}
-    //return rb + 1;
-#if 0
-    for (++vb; vb != ve; ++vb) {
-        cl = 0;
-        ub = u.data();
-        rb -= u.size() - 1;
-
-        // first iteration unrolled
-        auto [previous, l] = numetron::arithmetic::umul1(*ub, *vb);
-        auto [cl2, current] = numetron::arithmetic::uadd1(l, *rb);
-        *rb = current; ++rb; ++ub;
-        while (ub != ue) {
-            auto [h, l] = numetron::arithmetic::umul1(*ub, *vb);
-            *rb = numetron::arithmetic::uadd1cl2x(l, *rb, previous, cl, cl2);
-            ++rb;
-            previous = h;
-            ++ub;
-        } 
-        *rb = previous + cl + cl2;
-    }
-    return rb + 1;
-#else
     size_t dec_usz = ue - ub - 1;
     for (++vb; vb != ve; ++vb) {
         cl = 0;
@@ -1317,59 +779,11 @@ inline ResultIteratorT umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, L
         *rb = previous + cl + cl2;
     }
     return rb + 1;
-
-    //for (++vb; vb != ve; ++vb) {
-    //    ub = u.data();
-    //    rb -= u.size() - 1;
-    //    LimbT vb_val = *vb;
-    //    // first iteration unrolled
-    //    auto [previous, l] = numetron::arithmetic::umul1(*ub, vb_val);
-    //    auto [c, current] = numetron::arithmetic::uadd1(l, *rb);
-    //    *rb = current; ++rb; previous += c;
-    //    while (++ub != ue) {
-    //        auto [h, l] = numetron::arithmetic::umul1(*ub, vb_val);
-    //        auto [c, current] = numetron::arithmetic::uadd1(l, *rb, previous);
-    //        *rb = current; ++rb;
-    //        previous = h + c;
-    //    }
-    //    *rb = previous;
-    //}
-    //return rb + 1;
-#endif
 }
 
+// Perhaps one day, a C++ compiler will be able to optimise this to the same extent as hand-written assembly code.
 template <std::unsigned_integral LimbT>
-void fallback_mul_basecase(LimbT* rb, LimbT const* ub, size_t usz, LimbT const* vb, size_t vsz) noexcept
-{
-    umul<LimbT, LimbT*>(ub, ub + usz, vb, vb + vsz, rb);
-}
-
-#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
-template <std::unsigned_integral LimbT>
-requires (sizeof(LimbT) == 8)
-inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, LimbT* rb) noexcept
-{
-#if defined(NUMETRON_PLATFORM_AUTODETECT)
-    std::call_once(mul_basecase_init_flag, []() {
-        uint64_t platform_descriptor = numetron_detect_platform();
-        //std::cout << "PLATFROM: " << std::hex << "0x" << platform_descriptor << std::dec << std::endl;
-        __mul_basecase_ptr = detect_mul_basecase(platform_descriptor);
-        if (!__mul_basecase_ptr) 
-            __mul_basecase_ptr = &fallback_mul_basecase<LimbT>;
-    });
-    __mul_basecase_ptr(rb, ub, (ue - ub), vb, (ve - vb));
-#else
-    NUMETRON_mul_basecase(rb, ub, (ue - ub), vb, (ve - vb));
-#endif
-    return rb + (ue - ub) + (ve - vb);
-}
-
-#else
-// befor 3586
-//#if defined(_MSC_VER) && defined(_M_X64)
-//#if (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)) && (defined(__x86_64__) || defined(_M_X64))
-template <std::unsigned_integral LimbT>
-inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, LimbT* rb) noexcept
+inline LimbT* umul_basecase_unrolled(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, LimbT* rb) noexcept
 {
     const auto ucnt = ue - ub;
     const auto vcnt = ve - vb;
@@ -1392,17 +806,14 @@ inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT cons
         *(rb + 3) = h11;
         return rb + 4;
     }
-    if ((ucnt & 3) != 3) return umul<LimbT, LimbT*>(ub, ue, vb, ve, rb);
+
+    auto [h0, l0] = arithmetic::umul1(*ub, *vb);
+    auto [h1, l1] = arithmetic::umul1(*(ub + 1), *vb);
+    auto [h2, l2] = arithmetic::umul1(*(ub + 2), *vb);
     
     if (ucnt & 1) {
         if (ucnt & 2) {
-            // .Lb11
-            auto [h0, l0] = arithmetic::umul1(*ub, *vb);
-            auto [h1, l1] = arithmetic::umul1(*(ub + 1), *vb);
-            auto [h2, l2] = arithmetic::umul1(*(ub + 2), *vb);
-            
-            for (auto un = ucnt; un != 3; un -= 4) { // un = 7, 11, 15, ...
-                // .Lmtp3
+            for (auto un = ucnt; un != 3; un -= 4) { // ucnt = 7, 11, 15, ...
                 *rb = l0;
                 auto [h3, l3] = arithmetic::umul1(*(ub + 3), *vb);
                 *(rb + 1) = arithmetic::uadd1ca(h0, l1, h1);
@@ -1414,13 +825,12 @@ inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT cons
                 l0 = arithmetic::uadd1ca(h3, l0, h0);
                 ub += 4; rb += 4; 
             }
-            //.Lmed3:
+
             *rb = l0;
             *(rb + 1) = arithmetic::uadd1ca(h0, l1, h1);
             *(rb + 2) = arithmetic::uadd1ca(h1, l2, h2);
             *(rb + 3) = h2;
             while (++vb != ve) {
-                // .Lout3
                 rb += 4 - ucnt;
                 ub += 3 - ucnt;
                 
@@ -1429,32 +839,201 @@ inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT cons
                 auto [h2, l2] = arithmetic::umul1(*(ub + 2), *vb);
                 auto [cov, l0_] = arithmetic::uadd1(*rb, l0);
 
-                for (auto un = ucnt; un != 3; un -= 4) { // un = 7, 11, 15, ...
-                    //.Ltp3:
+                for (auto un = ucnt; un != 3; un -= 4) { // ucnt = 7, 11, 15, ...
                     *rb = l0_;
                     l0_ = arithmetic::umul4add<LimbT>(ub + 3, *vb, rb + 1, cov, h0, h1, l1, h2, l2);
                     ub += 4; rb += 4;
                 }
-                //.Led3
                 *rb = l0_;
                 l1 = arithmetic::uadd1ca(h0, l1, h1);
-                *(rb + 1) = arithmetic::uadd1c(*(rb + 1), l1, cov); // ov
+                *(rb + 1) = arithmetic::uadd1c(*(rb + 1), l1, cov);
                 l2 = arithmetic::uadd1ca(h1, l2, h2);
-                *(rb + 2) = arithmetic::uadd1c(*(rb + 2), l2, cov); // ov
-                *(rb + 3) = arithmetic::uadd1c(LimbT{0}, h2, cov); // ov
+                *(rb + 2) = arithmetic::uadd1c(*(rb + 2), l2, cov);
+                *(rb + 3) = h2 + cov;
             }
             return rb + 4;
-        }
-    //.Lb01
-    ////////////////// h0=r10, l0=r11, h1=r12, l1=r13, h2=rax, l2=rbx, h3=r8, l3=r9
-    }
-    //.Lbx0
+        } else {
+            // (ucnt = 5, 9, 13, ...)
+            ++ub; --rb;
+            LimbT h3, l3;
+            for (auto un = ucnt;;) {
+                *(rb + 1) = l0;
+                std::tie(h3, l3) = arithmetic::umul1(*(ub + 2), *vb); // h3=r12, l3=r13
+                *(rb + 2) = arithmetic::uadd1ca(h0, l1, h1);
+                std::tie(h0, l0) = arithmetic::umul1(*(ub + 3), *vb);
+                *(rb + 3) = arithmetic::uadd1ca(h1, l2, h2);
+                ub += 4; rb += 4; un -= 4;
+                if (un < 2) break;
+                std::tie(h1, l1) = arithmetic::umul1(*ub, *vb);
+                *rb = arithmetic::uadd1ca(h2, l3, h3);
+                std::tie(h2, l2) = arithmetic::umul1(*(ub + 1), *vb);
+                l0 = arithmetic::uadd1ca(h3, l0, h0);
+            }
+            *(rb) = arithmetic::uadd1ca(h2, l3, h3); // h3 = rbx
+            *(rb + 1) = arithmetic::uadd1ca(h3, l0, h0);
+            *(rb + 2) = h0;
+            while (++vb != ve) {
+                rb += 2 - ucnt;
+                ub += 1 - ucnt;
+                
+                auto [h0, l0] = arithmetic::umul1(*(ub - 1), *vb);
+                auto [h1, l1] = arithmetic::umul1(*ub, *vb);
+                auto [h2, l2] = arithmetic::umul1(*(ub + 1), *vb);
+                auto [cov, l0_] = arithmetic::uadd1(*(rb + 1), l0);
+                for (auto un = ucnt; un != 5; un -= 4) { // (ucnt = 5, 9, 13, ...)
+                    *(rb + 1) = l0_;
+                    l0_ = arithmetic::umul4add<LimbT>(ub + 2, *vb, rb + 2, cov, h0, h1, l1, h2, l2);
+                    ub += 4; rb += 4;
+                }
+                *(rb + 1) = l0_;
 
-    return umul<LimbT, LimbT*>(ub, ue, vb, ve, rb);
-    //return rb + (ue - ub) + (ve - vb);
+                auto [h3, l3] = arithmetic::umul1(*(ub + 2), *vb);
+                l1 = arithmetic::uadd1ca(h0, l1, h1);
+                l2 = arithmetic::uadd1ca(h1, l2, h2);
+                l3 = arithmetic::uadd1ca(h2, l3, h3);
+                *(rb + 2) = arithmetic::uadd1c(*(rb + 2), l1, cov);
+                *(rb + 3) = arithmetic::uadd1c(*(rb + 3), l2, cov);
+                *(rb + 4) = arithmetic::uadd1c(*(rb + 4), l3, cov);
+                std::tie(h0, l0) = arithmetic::umul1(*(ub + 3), *vb);
+                l0 = arithmetic::uadd1ca(h3, l0, h0);
+                *(rb + 5) = arithmetic::uadd1c(*(rb + 5), l0, cov);
+                *(rb + 6) = h0 + cov;
+
+                rb += 4;
+                ub += 4;
+            }
+            return rb + 3;
+        }
+    } else {
+        auto [h3, l3] = arithmetic::umul1(*(ub + 3), *vb);
+        if (!(ucnt & 2)) {
+            // ucnt = 4, 8, 12, ...
+            for (auto un = ucnt; un != 4; un -= 4) {
+                ub += 4;
+                *rb = l0;
+                *(rb + 1) = arithmetic::uadd1ca(h0, l1, h1);
+                std::tie(h0, l0) = arithmetic::umul1(*ub, *vb);
+                *(rb + 2) = arithmetic::uadd1ca(h1, l2, h2);
+                std::tie(h1, l1) = arithmetic::umul1(*(ub + 1), *vb);
+                *(rb + 3) = arithmetic::uadd1ca(h2, l3, h3);
+                std::tie(h2, l2) = arithmetic::umul1(*(ub + 2), *vb);
+                l0 = arithmetic::uadd1ca(h3, l0, h0);
+                std::tie(h3, l3) = arithmetic::umul1(*(ub + 3), *vb);
+                rb += 4; 
+            }
+
+            *rb = l0;
+            *(rb + 1) = arithmetic::uadd1ca(h0, l1, h1);
+            *(rb + 2) = arithmetic::uadd1ca(h1, l2, h2);
+            *(rb + 3) = arithmetic::uadd1ca(h2, l3, h3);
+            *(rb + 4) = h3;
+
+            while (++vb != ve) {
+                rb += 5 - ucnt;
+                ub += 4 - ucnt;
+                
+                auto [h0, l0] = arithmetic::umul1(*ub, *vb);
+                auto [h1, l1] = arithmetic::umul1(*(ub + 1), *vb);
+                auto [h2, l2] = arithmetic::umul1(*(ub + 2), *vb);
+                auto [cov, l0_] = arithmetic::uadd1(*rb, l0);
+                for (auto un = ucnt; un != 4; un -= 4) {
+                    *rb = l0_;
+                    ub += 4;
+                    l0_ = arithmetic::umul4add<LimbT>(ub - 1, *vb, rb + 1, cov, h0, h1, l1, h2, l2);
+                    rb += 4;
+                }
+                *rb = l0_;
+                l1 = arithmetic::uadd1ca(h0, l1, h1);
+                *(rb + 1) = arithmetic::uadd1c(*(rb + 1), l1, cov);
+                l2 = arithmetic::uadd1ca(h1, l2, h2);
+                *(rb + 2) = arithmetic::uadd1c(*(rb + 2), l2, cov);
+                auto [h3, l3] = arithmetic::umul1(*(ub + 3), *vb);
+                l3 = arithmetic::uadd1ca(h2, l3, h3);
+                *(rb + 3) = arithmetic::uadd1c(*(rb + 3), l3, cov);
+                *(rb + 4) = h3 + cov;
+            }
+            return rb + 5;
+        } else {
+            // ucnt = 6, 10, 14, ...
+            for (auto un = ucnt;;) {
+                *rb = l0;
+                *(rb + 1) = arithmetic::uadd1ca(h0, l1, h1);
+                *(rb + 2) = arithmetic::uadd1ca(h1, l2, h2);
+                *(rb + 3) = arithmetic::uadd1ca(h2, l3, h3);
+                std::tie(h0, l0) = arithmetic::umul1(*(ub + 4), *vb);
+                std::tie(h1, l1) = arithmetic::umul1(*(ub + 5), *vb);
+                l0 = arithmetic::uadd1ca(h3, l0, h0);
+                ub += 4; rb += 4; un -= 4;
+                if (un == 2) break;
+                std::tie(h2, l2) = arithmetic::umul1(*(ub + 2), *vb);
+                std::tie(h3, l3) = arithmetic::umul1(*(ub + 3), *vb);
+            }
+            *rb = l0;
+            *(rb + 1) = arithmetic::uadd1ca(h0, l1, h1);
+            *(rb + 2) = h1;
+            while (++vb != ve) {
+                rb += 3 - ucnt; // rb = r0 + 1
+                ub += 2 - ucnt; // ub = u0
+                
+                auto [h0, l0] = arithmetic::umul1(*ub, *vb);
+                auto [h1, l1] = arithmetic::umul1(*(ub + 1), *vb);
+                auto [h2, l2] = arithmetic::umul1(*(ub + 2), *vb);
+                auto [cov, l0_] = arithmetic::uadd1(*rb, l0);
+                for (auto un = ucnt; un != 6; un -= 4) { // (ucnt = 6, 10, 14, ...)
+                    *rb = l0_;
+                    l0_ = arithmetic::umul4add<LimbT>(ub + 3, *vb, rb + 1, cov, h0, h1, l1, h2, l2);
+                    ub += 4; rb += 4;
+                }
+                *rb = l0_;
+                std::tie(h3, l3) = arithmetic::umul1(*(ub + 3), *vb);
+                l1 = arithmetic::uadd1ca(h0, l1, h1);
+                l2 = arithmetic::uadd1ca(h1, l2, h2);
+                l3 = arithmetic::uadd1ca(h2, l3, h3);
+
+                *(rb + 1) = arithmetic::uadd1c(*(rb + 1), l1, cov);
+                *(rb + 2) = arithmetic::uadd1c(*(rb + 2), l2, cov);
+                *(rb + 3) = arithmetic::uadd1c(*(rb + 3), l3, cov);
+
+                ub += 4; rb += 4;
+                std::tie(h0, l0) = arithmetic::umul1(*ub, *vb);
+                std::tie(h1, l1) = arithmetic::umul1(*(ub + 1), *vb);
+                l0 = arithmetic::uadd1ca(h3, l0, h0);
+                
+                *rb = arithmetic::uadd1c(*rb, l0, cov);
+                l1 = arithmetic::uadd1ca(h0, l1, h1);
+                *(rb + 1) = arithmetic::uadd1c(*(rb + 1), l1, cov);
+                *(rb + 2) = h1 + cov;
+            }
+            return rb + 3;
+        }
+    }
 }
-//#endif
+
+template <std::unsigned_integral LimbT>
+requires (sizeof(LimbT) == 8)
+inline LimbT* umul(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, LimbT* rb) noexcept
+{
+    if constexpr (sizeof(LimbT) == 8) {
+#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
+#   if defined(NUMETRON_PLATFORM_AUTODETECT)
+        std::call_once(mul_basecase_init_flag, []() {
+            uint64_t platform_descriptor = numetron_detect_platform();
+            //std::cout << "PLATFROM: " << std::hex << "0x" << platform_descriptor << std::dec << std::endl;
+            __mul_basecase_ptr = detect_mul_basecase(platform_descriptor);
+        });
+        if (__mul_basecase_ptr) __mul_basecase_ptr(rb, ub, (ue - ub), vb, (ve - vb));
+        return rb + (ue - ub) + (ve - vb);
+#   else
+        NUMETRON_mul_basecase(rb, ub, (ue - ub), vb, (ve - vb));
+        return rb + (ue - ub) + (ve - vb);
+#   endif
 #endif
+    }
+    return umul_basecase_unrolled<LimbT>(ub, ue, vb, ve, rb);
+    //return umul<LimbT, LimbT*>(ub, ue, vb, ve, rb);
+}
+
+
 // base case mul with explicit high limbs uh and vh
 // returns iterator to one past the last written limb (r + u.size() + v.size() + 2)
 template <std::unsigned_integral LimbT, typename ResultIteratorT>
@@ -2079,8 +1658,6 @@ LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, 
     
     return rh;
 }
-
-
 
 // prereqs: u >= d, d.back() > 0
 // {uh, ul} / d -> q(from high to low); rl -> ul, returns rh

@@ -23,155 +23,155 @@ __alderlake_mul_basecase PROC
 	mov     r8, QWORD PTR  [rsp+56] ; vn
 
 	cmp	rdx, 2
-	ja	Lgen ; if un > 2 goto .Lgen
-	mov	rdx, QWORD PTR [rcx] ; load v[0] ->%rdx // before that %rdx could be 1 or 2, but flags are preserved and we can use them to know exactly un
-	mulx	r9, rax, QWORD PTR [rsi] ; v[0](%rdx) * u[0](%rsi) -> %r9:%rax
-	mov	QWORD PTR [rdi], rax ; %rax -> r[0](%rdi)
-	je	Ls2x ; if un == 2 goto .Ls2x
+	ja	Lgen
+	mov	rdx, QWORD PTR [rcx]
+	mulx r9, rax, QWORD PTR [rsi]
+	mov	QWORD PTR [rdi], rax
+	je	Ls2x
 
-	mov	QWORD PTR [rdi + 8], r9 ; %r9 -> r[1](%rdi + 8)
+	mov	QWORD PTR [rdi + 8], r9
 	pop     rsi
     pop     rdi
     ret
 
-Ls2x: ; case un == 2
-	mulx	r10, rax, QWORD PTR [rsi + 8] ; v[0](%rdx) * u[1](%rsi + 8) -> %r10:%rax
-	add	rax, r9 ; low(v0*u1) + hight(v0*u0) -> carry, %rax
-	adc	r10, 0 ; %r10 + carry -> carry, %r10
+Ls2x:
+	mulx r10, rax, QWORD PTR [rsi + 8]
+	add	rax, r9
+	adc	r10, 0
 	cmp	r8d, 2
-	je	Ls22 ; if vn == 2 goto .Ls22
+	je	Ls22
 
-Ls21: ; case un == 2, vn == 1
-	mov	QWORD PTR [rdi + 8], rax ; %rax -> r[1](%rdi + 8)
-	mov	QWORD PTR [rdi + 16], r10 ; %r10 -> r[2](%rdi + 16)
+Ls21:
+	mov	QWORD PTR [rdi + 8], rax
+	mov	QWORD PTR [rdi + 16], r10
 	pop     rsi
     pop     rdi
     ret
 
-Ls22: ; case un == 2, vn == 2
-	mov	rdx, QWORD PTR [rcx + 8] ; load v[1] ->%rdx
-	mulx	r9, r8, QWORD PTR [rsi] ; v[1](%rdx) * u[0](%rsi) -> %r9:%r8
-	add	rax, r8 ; low(v0*u1) + hight(v0*u0) + low(v1*u0) -> carry, %rax
-	adc	r9, r10 ; %r9 + carry -> carry, %r9
-	mov	QWORD PTR [rdi + 8], rax ; %rax -> r[1](%rdi + 8)
-	mulx	r10, rax, QWORD PTR [rsi + 8] ; v[1](%rdx) * u[1](%rsi + 8) -> %r10:%rax
-	adc	r10, 0 ; %r10 + carry -> carry, %r10
-	adc	rax, r9 ; %rax + carry -> carry, %rax
-	mov	QWORD PTR [rdi + 16], rax ; %rax -> r[2](%rdi + 16)
-	adc	r10, 0 ; %r10 + carry -> carry, %r10
-	mov	QWORD PTR [rdi + 24], r10 ; %r10 -> r[3](%rdi + 24)
-	pop     rsi
-    pop     rdi
+Ls22:
+	mov	rdx, QWORD PTR [rcx + 8]
+	mulx r9, r8, QWORD PTR [rsi]
+	add	rax, r8
+	adc	r9, r10
+	mov	QWORD PTR [rdi + 8], rax
+	mulx r10, rax, QWORD PTR [rsi + 8]
+	adc	r10, 0
+	adc	rax, r9
+	mov	QWORD PTR [rdi + 16], rax
+	adc	r10, 0
+	mov	QWORD PTR [rdi + 24], r10
+	pop rsi
+    pop rdi
     ret
 
 Lgen:
-	push	rbx
-	push	rbp
-	push	r12
-	push	r13
-	push	r14
-	push	r15
-; will be used as temporaries %rbx, %rbp, %r12, %r13, %r14, %r15
-	mov	r14, rdx ; un -> %r14
-	neg	r14 ; -un -> %r14
-	shl	r14, 3 ; -un * 8 -> %r14
-	mov	r15, rcx ; vp -> %r15
-	mov	rbp, r8 ; vn -> %rbp
+	push rbx
+	push rbp
+	push r12
+	push r13
+	push r14
+	push r15
 
-	test	dl, 1 ; test if un is odd
-	mov	rdx, QWORD PTR [r15] ; load v[0] ->%rdx
-	jz	Lbx0 ; if un is even goto .Lbx0
+	mov	r14, rdx
+	neg	r14
+	shl	r14, 3
+	mov	r15, rcx
+	mov	rbp, r8
 
-Lbx1: ; un is odd
-	test	r14b, 16 ; test second bit of ~un
-	jnz	Lb01 ; if second bit of un is 0 goto .Lb01 (un = 5, 9, 13, ...)
+	test dl, 1
+	mov	rdx, QWORD PTR [r15]
+	jz	Lbx0
 
-Lb11: ; un = bxxx11 (u is odd, second bit of un is 1) (un = 3, 7, 11, 15, ...)
-	lea	rcx, QWORD PTR [r14 + 24] ; -un * 8 + 24 -> %rcx
-	mulx	r10, r11, QWORD PTR [rsi] ; v[0](%rdx) * u[0](%rsi) -> %r10:%r11
-	mulx	r12, r13, QWORD PTR [rsi + 8] ; v[0](%rdx) * u[1](%rsi + 8) -> %r12:%r13
-	mulx	rax, rbx, QWORD PTR [rsi + 16] ; v[0](%rdx) * u[2](%rsi + 16) -> %rax:%rbx
-	lea	rdi, QWORD PTR [rdi + 8] ; ++rp
-	lea	rsi, QWORD PTR [rsi + 24] ; up += 3
-	jrcxz	Lmed3 ; if (24 - 8*un == 0) <=> un == 3 goto .Lmed3
+Lbx1:
+	test r14b, 16
+	jnz	Lb01
 
-Lmtp3: ; un >= 4, but un = bxxx11 => un = 7, 11, 15, ...
-	mulx	r8, r9, QWORD PTR [rsi] ; v[0](%rdx) * u[3](%rsi) -> %r8:%r9
-	adcx	r13, r10 ; high(u0*v0) + low(u1*v0) -> carry, %r13
-	mov	QWORD PTR [rdi - 8], r11 ; low(u0*v0) -> r[0](%rdi - 8)
-	mulx	r10, r11, QWORD PTR [rsi + 8] ; v[0](%rdx) * u[4](%rsi + 8) -> %r10:%r11
-	adcx	rbx, r12 ; high(u1*v0) + low(u2*v0) + carry -> carry, %rbx
-	mov	QWORD PTR [rdi], r13 ; high(u0*v0) + low(u1*v0) -> r[1](%rdi)
-	mulx	r12, r13, QWORD PTR [rsi + 16] ; v[0](%rdx) * u[5](%rsi + 16) -> %r12:%r13
-	adcx	r9, rax ; high(u2*v0) + carry -> carry, %r9
-	mov	QWORD PTR [rdi + 8], rbx ; high(u1*v0) + low(u2*v0) + carry -> r[2](%rdi + 8)
-	mulx	rax, rbx, QWORD PTR [rsi + 24] ; v[0](%rdx) * u[6](%rsi + 24) -> %rax:%rbx
-	adcx	r11, r8 ; high(u3*v0) + low(u4*v0) + carry -> carry, %r11
-	mov	QWORD PTR [rdi + 16], r9 ; high(u2*v0) + carry -> r[3](%rdi + 16)
-	lea	rsi, QWORD PTR [rsi + 32] ; up += 4
-	lea	rdi, QWORD PTR [rdi + 32] ; rp += 4
-	lea	rcx, QWORD PTR [rcx + 32] ; -un * 8 + 24 + 32 -> %rcx
-	jrcxz	Lmed3 ; if (24 - 8*un + 32 == 0) <=> un == 7 goto .Lmed3
-	jmp	Lmtp3 ; else goto .Lmtp3 // un >= 8, un = bxxx11 => un >= 11
+Lb11:
+	lea	rcx, QWORD PTR [r14 + 24]
+	mulx	r10, r11, QWORD PTR [rsi]
+	mulx	r12, r13, QWORD PTR [rsi + 8]
+	mulx	rax, rbx, QWORD PTR [rsi + 16]
+	lea	rdi, QWORD PTR [rdi + 8]
+	lea	rsi, QWORD PTR [rsi + 24]
+	jrcxz	Lmed3
 
-Lmed3: ; un = 3 || un = 7
-	adcx	r13, r10 ; high(u0*v0) + low(u1*v0) -> carry, %r13
-	mov	QWORD PTR [rdi - 8], r11 ; low(u0*v0) -> r[0](%rdi - 8)
-	adcx	rbx, r12 ; high(u1*v0) + low(u2*v0) + carry -> carry, %rbx
-	mov	QWORD PTR [rdi], r13 ; high(u0*v0) + low(u1*v0) -> r[1](%rdi)
-	adcx	rax, rcx ; high(u2*v0) + carry -> carry, %rax
-	mov	QWORD PTR [rdi + 8], rbx ; high(u1*v0) + low(u2*v0) + carry -> r[2](%rdi + 8)
-	mov	QWORD PTR [rdi + 16], rax ; high(u2*v0) + carry -> r[3](%rdi + 16)
-	dec	rbp ; vn--
-	jz	Lret ; if vn == 0 goto .Lret
-
-Lout3: ; vn > 1, un = 3 || un = 7
-	lea	rdi, QWORD PTR [rdi + r14 + 32] ; rp += -un * 8 + 32
-	lea	rsi, QWORD PTR [rsi + r14 + 24] ; up += -un * 8 + 24
-	lea	r15, QWORD PTR [r15 + 8] ; vp += 1
-; xor	%edx, %edx				# un(%rdx) = 0
-	mov	rdx, QWORD PTR [r15] ; load v[0] ->%rdx
-
-	mulx	r10, r11, QWORD PTR [rsi - 24] ; v[0](%rdx) * u[0](%rsi - 24) -> %r10:%r11
-	mulx	r12, r13, QWORD PTR [rsi - 16] ; v[0](%rdx) * u[1](%rsi - 16) -> %r12:%r13
-	mulx	rax, rbx, QWORD PTR [rsi - 8] ; v[0](%rdx) * u[2](%rsi - 8) -> %rax:%rbx
-
-	lea	rcx, QWORD PTR [r14 + 24] ; -un * 8 + 24 -> %rcx
-	adox	r11, QWORD PTR [rdi - 8] ; low(u0*v0) + r[0](%rdi - 8) -> carry, %r11
-	jrcxz	Led3 ; if (24 - 8*un == 0) <=> un == 3 goto .Led3
-
-Ltp3: ; un >= 4, but un = bxxx11 => un = 7, 11, 15, ...
-	mulx	r8, r9, QWORD PTR [rsi] ; v[0](%rdx) * u[3](%rsi) -> %r8:%r9
-	adcx	r13, r10 ; high(u0*v0) + low(u1*v0) -> carry, %r13
-	mov	QWORD PTR [rdi - 8], r11 ; low(u0*v0) -> r[0](%rdi - 8)
-	adox	r13, QWORD PTR [rdi] ; high(u0*v0) + low(u1*v0) + r[1](%rdi) + ovcarry -> ovcarry, %r13
-	mulx	r10, r11, QWORD PTR [rsi + 8] ; v[0](%rdx) * u[4](%rsi + 8) -> %r10:%r11
-	adcx	rbx, r12
+Lmtp3:
+	mulx r8, r9, QWORD PTR [rsi]
+	adcx r13, r10
+	mov	QWORD PTR [rdi - 8], r11
+	mulx r10, r11, QWORD PTR [rsi + 8]
+	adcx rbx, r12
 	mov	QWORD PTR [rdi], r13
-	adox	rbx, QWORD PTR [rdi + 8]
-	mulx	r12, r13, QWORD PTR [rsi + 16]
-	adcx	r9, rax
+	mulx r12, r13, QWORD PTR [rsi + 16]
+	adcx r9, rax
 	mov	QWORD PTR [rdi + 8], rbx
-	adox	r9, QWORD PTR [rdi + 16]
-	mulx	rax, rbx, QWORD PTR [rsi + 24]
-	adcx	r11, r8
+	mulx rax, rbx, QWORD PTR [rsi + 24]
+	adcx r11, r8
 	mov	QWORD PTR [rdi + 16], r9
-	adox	r11, QWORD PTR [rdi + 24]
 	lea	rsi, QWORD PTR [rsi + 32]
 	lea	rdi, QWORD PTR [rdi + 32]
 	lea	rcx, QWORD PTR [rcx + 32]
-	jrcxz	Led3
+	jrcxz Lmed3
+	jmp	Lmtp3
+
+Lmed3:
+	adcx r13, r10
+	mov	QWORD PTR [rdi - 8], r11
+	adcx rbx, r12
+	mov	QWORD PTR [rdi], r13
+	adcx rax, rcx
+	mov	QWORD PTR [rdi + 8], rbx
+	mov	QWORD PTR [rdi + 16], rax
+	dec	rbp
+	jz Lret
+
+Lout3:
+	lea	rdi, QWORD PTR [rdi + r14 + 32]
+	lea	rsi, QWORD PTR [rsi + r14 + 24]
+	lea	r15, QWORD PTR [r15 + 8]
+; xor	%edx, %edx
+	mov	rdx, QWORD PTR [r15]
+
+	mulx r10, r11, QWORD PTR [rsi - 24]
+	mulx r12, r13, QWORD PTR [rsi - 16]
+	mulx rax, rbx, QWORD PTR [rsi - 8]
+
+	lea	rcx, QWORD PTR [r14 + 24]
+	adox r11, QWORD PTR [rdi - 8]
+	jrcxz Led3
+
+Ltp3:
+	mulx r8, r9, QWORD PTR [rsi]
+	adcx r13, r10
+	mov	QWORD PTR [rdi - 8], r11
+	adox r13, QWORD PTR [rdi]
+	mulx r10, r11, QWORD PTR [rsi + 8]
+	adcx rbx, r12
+	mov	QWORD PTR [rdi], r13
+	adox rbx, QWORD PTR [rdi + 8]
+	mulx r12, r13, QWORD PTR [rsi + 16]
+	adcx r9, rax
+	mov	QWORD PTR [rdi + 8], rbx
+	adox r9, QWORD PTR [rdi + 16]
+	mulx rax, rbx, QWORD PTR [rsi + 24]
+	adcx r11, r8
+	mov	QWORD PTR [rdi + 16], r9
+	adox r11, QWORD PTR [rdi + 24]
+	lea	rsi, QWORD PTR [rsi + 32]
+	lea	rdi, QWORD PTR [rdi + 32]
+	lea	rcx, QWORD PTR [rcx + 32]
+	jrcxz Led3
 	jmp	Ltp3
 
 Led3:
-	adcx	r13, r10
+	adcx r13, r10
 	mov	QWORD PTR [rdi - 8], r11
-	adox	r13, QWORD PTR [rdi]
-	adcx	rbx, r12
+	adox r13, QWORD PTR [rdi]
+	adcx rbx, r12
 	mov	QWORD PTR [rdi], r13
-	adox	rbx, QWORD PTR [rdi + 8]
-	adcx	rax, rcx
-	adox	rax, rcx
+	adox rbx, QWORD PTR [rdi + 8]
+	adcx rax, rcx
+	adox rax, rcx
 	mov	QWORD PTR [rdi + 8], rbx
 	mov	QWORD PTR [rdi + 16], rax
 	dec	rbp ; vn--
@@ -204,7 +204,7 @@ DB	102, 77, 15, 56, 246, 216
 	lea	rsi, QWORD PTR [rsi + 32]
 	lea	rdi, QWORD PTR [rdi + 32]
 	lea	rcx, QWORD PTR [rcx + 32]
-	jrcxz	Lmed1
+	jrcxz Lmed1
 	jmp	Lmtp1
 Lmed1:
 DB	102, 77, 15, 56, 246, 234
@@ -264,7 +264,6 @@ DB	243, 72, 15, 56, 246, 193
 	dec	rbp
 	jnz	Lout1
 	jmp	Lret
-
 
 Lbx0:
 	test	r14b, 16

@@ -506,8 +506,9 @@ inline constexpr auto umul1(T u, T v) noexcept -> std::pair<T, T>
 template <std::unsigned_integral T>
 inline constexpr T umul4add(T const* u, T v, T* r, unsigned char& cov, T& h0, T& h1, T& l1, T& h2, T& l2) noexcept
 {
+#if 1
     if constexpr (sizeof(T) == 8) if (!std::is_constant_evaluated()) {
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+#if defined(_MSC_VER) && defined(_M_X64)
     unsigned __int64 h3;
     unsigned __int64 l3 = NUMETRON_mul64(v, *u, &h3);
 
@@ -528,6 +529,7 @@ inline constexpr T umul4add(T const* u, T v, T* r, unsigned char& cov, T& h0, T&
     return l0;
 #endif
     }
+#endif
     auto [h3, l3] = arithmetic::umul1(*u, v);
     l1 = arithmetic::uadd1ca(h0, l1, h1);
     l2 = arithmetic::uadd1ca(h1, l2, h2);

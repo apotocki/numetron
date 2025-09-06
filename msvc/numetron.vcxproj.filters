@@ -16,6 +16,15 @@
     <Filter Include="asm\x86_64\k8">
       <UniqueIdentifier>{f15c4d68-c64a-4964-8847-1536935af526}</UniqueIdentifier>
     </Filter>
+    <Filter Include="numetron">
+      <UniqueIdentifier>{285e76e7-c408-4600-9780-78f6919ad143}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="numetron\detail">
+      <UniqueIdentifier>{17cd1a09-91fc-4d4f-b610-8283959b025f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="numetron\config">
+      <UniqueIdentifier>{b2ca48de-ea29-43e8-b9dc-b9309833db46}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="..\src\arch\x86_64\k8\mul_basecase.asm">
@@ -53,5 +62,58 @@
     <None Include="..\src\arch\README.md">
       <Filter>asm</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\basic_decimal.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\basic_integer.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\ct.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\decimal_arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\decimal_view.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\integer_view.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\integer_view_arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limb_arithmetic.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_from_decimal_string.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_from_integral.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_from_string.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_to_string.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\detail\hash.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\detail\scope_exit.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\detail\small_array.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\config\cmath.hpp">
+      <Filter>numetron\config</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
