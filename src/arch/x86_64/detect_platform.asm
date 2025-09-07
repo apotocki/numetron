@@ -56,7 +56,7 @@ ALIGN 16
 ;6	    4E	    Skylake	        Skylake
 ;6	    5E	    Skylake	        Skylake
 ;6	    8E	    Kaby Lake	    Kaby Lake
-;6	    9E	    Coffee Lake	    Coffee Lake         CORE2
+;6	    9E	    Coffee Lake	    Coffee Lake
 ;6	    A5	    Comet Lake	    Comet Lake
 ;6	    A6	    Ice Lake	    Ice Lake
 ;6	    7D	    Tiger Lake	    Tiger Lake
@@ -133,19 +133,29 @@ unknown:
 get_fms:
     mov eax, 1
     cpuid
-    mov ebx, eax       ; eax = family/model/stepping
-    and ebx, 0F00h      ; keep only family
-    or  r9d, ebx        ; apply family
+    mov ebx, eax         ; eax = family/model/stepping
+
+    shr ebx, 8
+    and ebx, 0Fh         ;  keep only family
+    cmp ebx, 0Fh         ;  check if family == 0x0F
+    jne skip_ext_family
+    mov edx, eax
+    shr edx, 20 
+    and edx, 0FFh        ; extended family
+    add ebx, edx         ; append extended family
+skip_ext_family:
+    shl ebx, 8
+    or  r9d, ebx         ; apply family = real_family << 8
 
     mov ebx, eax
-    and ebx, 0F0h       ; keep only model
+    and ebx, 0F0h        ; keep only model
     shr ebx, 4
-    or  r9d, ebx        ; apply model
+    or  r9d, ebx         ; apply model
 
     mov ebx, eax
-    and ebx, 0F0000h   ; keep only extended model
+    and ebx, 0F0000h     ; keep only extended model
     shr ebx, 12
-    or  r9d, ebx       ; apply extended model
+    or  r9d, ebx         ; apply extended model
     
     ; check if Atom
     mov ebx, r9d

@@ -54,7 +54,7 @@
 #6	    4E	    Skylake	        Skylake
 #6	    5E	    Skylake	        Skylake
 #6	    8E	    Kaby Lake	    Kaby Lake
-#6	    9E	    Coffee Lake	    Coffee Lake         CORE2
+#6	    9E	    Coffee Lake	    Coffee Lake
 #6	    A5	    Comet Lake	    Comet Lake
 #6	    A6	    Ice Lake	    Ice Lake
 #6	    7D	    Tiger Lake	    Tiger Lake
@@ -123,8 +123,17 @@ numetron_detect_platform:
     mov $1, %eax
     cpuid
     mov %eax, %ebx        #  eax = family/model/stepping
-    and $0xF00, %ebx      #  keep only family
-    or %ebx, %r9d         #  apply family
+    shr $8, %ebx
+    and $0x0F, %ebx       #  keep only family
+    cmp $0x0F, %ebx       #  check if family == 0x0F
+    jne 1f
+    mov %eax, %edx        
+    shr $20, %edx
+    and $0xFF, %edx       # extended family
+    add %edx, %ebx        # append extended family
+1:
+    shl $8, %ebx
+    or %ebx, %r9d         # apply family = real_family << 8
 
     mov %eax, %ebx
     and $0xF0, %ebx       #  keep only model

@@ -19,7 +19,7 @@
 
 
 detect_mul_basecase:
-    # %rdi = platform_descriptor (Microsoft x64 calling convention)
+    # %rdi = platform_descriptor (SysV x64 calling convention)
 
     cmp $0x10000, %rdi
     jl  .Lamd_platform
@@ -33,17 +33,30 @@ detect_mul_basecase:
     ret
     
 .Lamd_platform:
+    cmp $0x001530, %rdi # Excavator
+    jge .Lamd_15ge
     lea __k8_mul_basecase(%rip), %rax
+    ret
+.Lamd_jaguar:
+    lea __k8_mul_basecase(%rip), %rax
+    ret
+.Lamd_15ge:
+    cmp $0x001700, %rdi # less than Zen
+    jl .Lamd_jaguar
+    lea __alderlake_mul_basecase(%rip), %rax  # All Zen
     ret
 
 .Lintel_platform:
-    cmp $0x01069E, %rdi # Core2
-    jge .Lcore2_platform
-    lea __k8_mul_basecase(%rip), %rax   # Pre-Core2 Intel
-    ret
+    # Check Intel family 06h
+    mov %edi, %eax 
+    and $0xFFFF00, %eax                 # vendor + family
+    cmp $0x010600, %eax                 # Intel + family 06h
+    jne .Lintel_non6                    # Non-06h (e.g., NetBurst) -> k8 kernel
 
-.Lcore2_platform:
-    cmp $0x10697, %rdi # Alder Lake
+    # family 06h:
+    mov %edi, %eax
+    and $0xFF, %eax
+    cmp $0x97, %eax
     jge .Lalderlake_platform
     lea __core2_mul_basecase(%rip), %rax
     ret
@@ -51,10 +64,13 @@ detect_mul_basecase:
 .Lalderlake_platform:
     lea __alderlake_mul_basecase(%rip), %rax
     ret
+.Lintel_non6:
+    lea __k8_mul_basecase(%rip), %rax   # Non-06h Intel (e.g., family 0Fh)
+    ret
 
 .Latom_platform:
 .Lvia_platform:
-    xor %rax, %rax                        # VIA - Unknown
+    xor %rax, %rax                      # VIA - Unknown
     ret
 
     .size detect_mul_basecase,.-detect_mul_basecase
