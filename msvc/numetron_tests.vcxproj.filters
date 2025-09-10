@@ -78,6 +78,9 @@
     <ClInclude Include="..\include\numetron\detail\base_case.hpp">
       <Filter>numetron\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\float16.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\tests\basic_decimal_test.cpp">
@@ -104,8 +107,14 @@
     <ClCompile Include="..\tests\mpn_mul_test.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="..\tests\float16_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\arch\README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="numetron.natvis" />
   </ItemGroup>
 </Project>

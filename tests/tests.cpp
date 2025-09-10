@@ -15,13 +15,52 @@ void numetron_test_registrar()
     register_test(BOOST_TEST_CASE(&basic_integer_test0));
     register_test(BOOST_TEST_CASE(&basic_decimal_test0));
     register_test(BOOST_TEST_CASE_SILENT(&ct_test));
+    register_test(BOOST_TEST_CASE(&test_float16_basic_operations));
+    register_test(BOOST_TEST_CASE(&test_float16_special_values));
+    register_test(BOOST_TEST_CASE(&test_float16_zeros));
+    register_test(BOOST_TEST_CASE(&test_float16_small_values));
+    register_test(BOOST_TEST_CASE(&test_float16_precision_limits));
+    register_test(BOOST_TEST_CASE(&test_float16_arithmetic_properties));
+    register_test(BOOST_TEST_CASE(&test_float16_negative_values));
 }
 AUTOTEST(numetron_test_registrar)
 #else
 
+TEST(NumetronTest, float16_basic_operations) { test_float16_basic_operations(); }
+TEST(NumetronTest, float16_special_values) { test_float16_special_values(); }
+TEST(NumetronTest, float16_zeros) { test_float16_zeros(); }
+TEST(NumetronTest, float16_small_values) { test_float16_small_values(); }
+TEST(NumetronTest, float16_precision_limits) { test_float16_precision_limits(); }
+TEST(NumetronTest, float16_arithmetic_properties) { test_float16_arithmetic_properties(); }
+TEST(NumetronTest, float16_negative_values) { test_float16_negative_values(); }
+TEST(NumetronTest, float16_integral_constructor) { test_float16_integral_constructor(); }
+TEST(NumetronTest, float16_static_values) { test_float16_static_values(); }
+TEST(NumetronTest, float16_static_values_ordering) { test_float16_static_values_ordering(); }
+TEST(NumetronTest, float16_static_values_bit_patterns) { test_float16_static_values_bit_patterns(); }
+TEST(NumetronTest, float16_integral_equality) { test_float16_integral_equality(); }
+TEST(NumetronTest, float16_integral_equality_special_values) { test_float16_integral_equality_special_values(); }
+TEST(NumetronTest, float16_integral_equality_precision) { test_float16_integral_equality_precision(); }
+TEST(NumetronTest, float16_floating_point_equality) { test_float16_floating_point_equality(); }
+TEST(NumetronTest, float16_floating_point_equality_special_values) { test_float16_floating_point_equality_special_values(); }
+TEST(NumetronTest, float16_floating_point_equality_precision_limits) { test_float16_floating_point_equality_precision_limits(); }
+TEST(NumetronTest, float16_floating_point_mixed_precision) { test_float16_floating_point_mixed_precision(); }
+TEST(NumetronTest, float16_double_constructor) { test_float16_double_constructor(); }
+TEST(NumetronTest, float16_double_precision_conversion) { test_float16_double_precision_conversion(); }
+TEST(NumetronTest, float16_double_comparison) { test_float16_double_comparison(); }
+TEST(NumetronTest, float16_integral_three_way_comparison) { test_float16_integral_three_way_comparison(); }
+TEST(NumetronTest, float16_integral_three_way_comparison_special_values) { test_float16_integral_three_way_comparison_special_values(); }
+TEST(NumetronTest, float16_integral_three_way_comparison_boundary_values) { test_float16_integral_three_way_comparison_boundary_values(); }
+TEST(NumetronTest, float16_integral_three_way_comparison_precision) { test_float16_integral_three_way_comparison_precision(); }
+TEST(NumetronTest, float16_integral_three_way_comparison_derived_operators) { test_float16_integral_three_way_comparison_derived_operators(); }
+TEST(NumetronTest, float16_floating_point_three_way_comparison) { test_float16_floating_point_three_way_comparison(); }
+TEST(NumetronTest, float16_floating_point_three_way_comparison_special_values) { test_float16_floating_point_three_way_comparison_special_values(); }
+TEST(NumetronTest, float16_floating_point_three_way_comparison_precision) { test_float16_floating_point_three_way_comparison_precision(); }
+TEST(NumetronTest, float16_floating_point_three_way_comparison_derived_operators) { test_float16_floating_point_three_way_comparison_derived_operators(); }
+
 TEST(NumetronTest, basic_integer) { basic_integer_test0(); }
 TEST(NumetronTest, basic_decimal) { basic_decimal_test0(); }
 TEST(NumetronTest, compile_time) { ct_test(); }
+
 //TEST(NumetronTest, mul) { mul_test(); }
 //TEST(NumetronTest, mpn_mul) { mpn_mul_test(); }
 

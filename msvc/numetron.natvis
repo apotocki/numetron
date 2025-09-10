@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  
+  <!-- Float16 visualization -->
+  <Type Name="numetron::float16">
+    <!-- Special values first -->
+    <DisplayString Condition="((data &gt;&gt; 10) &amp; 0x1F) == 0x1F &amp;&amp; (data &amp; 0x3FF) != 0">NaN</DisplayString>
+    <DisplayString Condition="((data &gt;&gt; 10) &amp; 0x1F) == 0x1F &amp;&amp; (data &amp; 0x3FF) == 0 &amp;&amp; (data &amp; 0x8000) != 0">-∞</DisplayString>
+    <DisplayString Condition="((data &gt;&gt; 10) &amp; 0x1F) == 0x1F &amp;&amp; (data &amp; 0x3FF) == 0 &amp;&amp; (data &amp; 0x8000) == 0">+∞</DisplayString>
+    <DisplayString Condition="data == 0x0000">+0.0</DisplayString>
+    <DisplayString Condition="data == 0x8000">-0.0</DisplayString>
+    
+    <!-- Normal case: manually convert float16 to float -->
+    <DisplayString Condition="((data &gt;&gt; 10) &amp; 0x1F) != 0">
+      {(((data &amp; 0x8000) != 0) ? -1.0f : 1.0f) * 
+      (1.0f + ((data &amp; 0x3FF) / 1024.0f)) *
+        (((((data &gt;&gt; 10) &amp; 0x1F) - 15) &gt; 0) ? 
+            ((1 &lt;&lt; (((data &gt;&gt; 10) &amp; 0x1F) - 15))) :
+            (1.0f / (1 &lt;&lt; (15 - ((data &gt;&gt; 10) &amp; 0x1F)))))
+        }
+    </DisplayString>
+    
+    
+    <!-- Subnormal case -->
+    <DisplayString Condition="((data &gt;&gt; 10) &amp; 0x1F) == 0 &amp;&amp; (data &amp; 0x3FF) != 0">
+      {(((data &amp; 0x8000) != 0) ? -1.0f : 1.0f) * 
+      ((data &amp; 0x3FF) / 1024.0f) * 
+      (1.0f / 16384.0f)}
+    </DisplayString>
+    
+    <Expand>
+      <Item Name="Sign">((data &amp; 0x8000) != 0) ? -1 : 1</Item>
+      <Item Name="Exponent">(data &gt;&gt; 10) &amp; 0x1F</Item>
+      <Item Name="Mantissa">data &amp; 0x3FF</Item>
+      <Item Name="Raw bits">data,x</Item>
+      <Item Name="Is NaN">((data &gt;&gt; 10) &amp; 0x1F) == 0x1F &amp;&amp; (data &amp; 0x3FF) != 0</Item>
+      <Item Name="Is Infinity">((data &gt;&gt; 10) &amp; 0x1F) == 0x1F &amp;&amp; (data &amp; 0x3FF) == 0</Item>
+      <Item Name="Is Zero">((data &gt;&gt; 10) &amp; 0x1F) == 0 &amp;&amp; (data &amp; 0x3FF) == 0</Item>
+      <Item Name="Is Subnormal">((data &gt;&gt; 10) &amp; 0x1F) == 0 &amp;&amp; (data &amp; 0x3FF) != 0</Item>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

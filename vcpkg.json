@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "“Header-only C++ library for arbitrary-precision and compile-time big integers.",
   "dependencies": [
-    "gtest"
+    "gtest",
+    "gmp"
   ]
 }

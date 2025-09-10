@@ -115,5 +115,8 @@
     <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\config\cmath.hpp">
       <Filter>numetron\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\float16.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
