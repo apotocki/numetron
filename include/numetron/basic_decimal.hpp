@@ -240,9 +240,22 @@ struct decimal_holder : AllocatorT
         return { limbs, ldata->size };
     }
 
+    inline bool allocated_is_positive() const
+    {
+        DataT* ldata = allocated_data();
+        return ldata->size && !ldata->sign;
+    }
+
     inline bool allocated_is_negative() const
     {
-        return !!allocated_data()->sign;
+        DataT* ldata = allocated_data();
+        return ldata->size && !!allocated_data()->sign;
+    }
+
+    inline bool is_positive() const noexcept
+    {
+        LimbT ctl = ctl_limb();
+        return is_inplaced(ctl) ? !!inplace_limbs_[0] && !inplaced_is_negative(ctl) : allocated_is_positive();
     }
 
     inline bool is_negative() const noexcept
@@ -820,6 +833,7 @@ public:
         aholder_.negate();
     }
 
+    inline bool is_positive() const noexcept { return aholder_.is_positive(); }
     inline bool is_negative() const noexcept { return aholder_.is_negative(); }
 
     inline bool is_inplaced() const noexcept { return aholder_.is_inplaced(); }

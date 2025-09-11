@@ -10,9 +10,8 @@
 #include <bit>
 #include <compare>
 #include <utility>
+#include <functional>
 #include <type_traits>
-
-#include "detail/hash.hpp"
 
 namespace numetron {
 
@@ -93,19 +92,29 @@ public:
         return from_bits(0x7D00);  // signaling NaN: sign=0, exp=0x1F, mantissa=0x100
     }
     
+#if defined(_MSC_VER)
+    static constexpr float16 (max)() noexcept
+    {
+        return from_bits(0x7BFF);  // Maximum finite value: 65504.0
+    }
+    static constexpr float16 (min)() noexcept
+    {
+        return from_bits(0x0400);  // Minimum positive normal value: 6.103515625e-5
+    }
+#else
     static constexpr float16 max() noexcept
     {
         return from_bits(0x7BFF);  // Maximum finite value: 65504.0
     }
-    
-    static constexpr float16 lowest() noexcept
-    {
-        return from_bits(0xFBFF);  // Minimum finite value: -65504.0
-    }
-    
     static constexpr float16 min() noexcept
     {
         return from_bits(0x0400);  // Minimum positive normal value: 6.103515625e-5
+    }
+#endif
+
+    static constexpr float16 lowest() noexcept
+    {
+        return from_bits(0xFBFF);  // Minimum finite value: -65504.0
     }
     
     static constexpr float16 epsilon() noexcept
@@ -153,7 +162,7 @@ public:
 
     friend inline size_t hash_value(float16 const& v) noexcept
     {
-        return detail::hasher{}(v.data);
+        return std::hash<uint16_t>{}(v.data);
     }
 };
 
