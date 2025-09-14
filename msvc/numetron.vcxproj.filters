@@ -64,59 +64,59 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\arithmetic.hpp">
+    <ClInclude Include="..\include\numetron\arithmetic.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\basic_decimal.hpp">
+    <ClInclude Include="..\include\numetron\basic_decimal.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\basic_integer.hpp">
+    <ClInclude Include="..\include\numetron\basic_integer.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\ct.hpp">
+    <ClInclude Include="..\include\numetron\ct.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\decimal_arithmetic.hpp">
+    <ClInclude Include="..\include\numetron\decimal_arithmetic.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\decimal_view.hpp">
+    <ClInclude Include="..\include\numetron\decimal_view.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\integer_view.hpp">
+    <ClInclude Include="..\include\numetron\float16.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\integer_view_arithmetic.hpp">
+    <ClInclude Include="..\include\numetron\integer_view.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limb_arithmetic.hpp">
+    <ClInclude Include="..\include\numetron\integer_view_arithmetic.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_from_decimal_string.hpp">
+    <ClInclude Include="..\include\numetron\limb_arithmetic.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_from_integral.hpp">
+    <ClInclude Include="..\include\numetron\limbs_from_decimal_string.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_from_string.hpp">
+    <ClInclude Include="..\include\numetron\limbs_from_integral.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\limbs_to_string.hpp">
+    <ClInclude Include="..\include\numetron\limbs_from_string.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\detail\hash.hpp">
-      <Filter>numetron\detail</Filter>
+    <ClInclude Include="..\include\numetron\limbs_to_string.hpp">
+      <Filter>numetron</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\detail\scope_exit.hpp">
-      <Filter>numetron\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\detail\small_array.hpp">
-      <Filter>numetron\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\config\cmath.hpp">
+    <ClInclude Include="..\include\numetron\config\cmath.hpp">
       <Filter>numetron\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\annium-lang\tpls\numetron\include\numetron\float16.hpp">
-      <Filter>numetron</Filter>
+    <ClInclude Include="..\include\numetron\detail\hash.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\scope_exit.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\small_array.hpp">
+      <Filter>numetron\detail</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
