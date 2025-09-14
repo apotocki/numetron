@@ -12,6 +12,7 @@
 #include <utility>
 #include <functional>
 #include <type_traits>
+#include <limits>
 
 namespace numetron {
 
@@ -725,6 +726,12 @@ inline std::partial_ordering operator <=> (numetron::float16 const& l, T const& 
     //}
 }
 
+template <typename T>
+inline constexpr float16 float16_cast(T f) noexcept
+{
+    return numetron::float16{ static_cast<float>(f) };
+}
+
 } // namespace numetron
 
 namespace std {
@@ -738,10 +745,42 @@ struct hash<numetron::float16>
     }
 };
 
-}
-
-template <typename T>
-inline numetron::float16 float16_cast(T f) noexcept
+template <>
+class numeric_limits<numetron::float16>
 {
-    return numetron::float16{ static_cast<float>(f) };
+public:
+    static constexpr bool is_specialized = true;
+    static constexpr numetron::float16 (min)() noexcept { return (numetron::float16::min)(); }
+    static constexpr numetron::float16 (max)() noexcept { return (numetron::float16::max)(); }
+    static constexpr numetron::float16 lowest() noexcept { return numetron::float16::lowest(); }
+    static constexpr int digits = 11;
+    static constexpr int digits10 = 3;
+    static constexpr int max_digits10 = 5;
+    static constexpr bool is_signed = true;
+    static constexpr bool is_integer = false;
+    static constexpr bool is_exact = false;
+    static constexpr int radix = 2;
+    static constexpr numetron::float16 epsilon() noexcept { return numetron::float16::epsilon(); }
+    static constexpr numetron::float16 round_error() noexcept { return numetron::float16::from_bits(0x3800); } // ~0.5
+    static constexpr int min_exponent = -13;
+    static constexpr int min_exponent10 = -4;
+    static constexpr int max_exponent = 16;
+    static constexpr int max_exponent10 = 4;
+    static constexpr bool has_infinity = true;
+    static constexpr bool has_quiet_NaN = true;
+    static constexpr bool has_signaling_NaN = true;
+    //static constexpr float_denorm_style has_denorm = float_denorm_style::denorm_present;
+    static constexpr bool has_denorm_loss = true;
+    static constexpr numetron::float16 infinity() noexcept { return numetron::float16::infinity(); }
+    static constexpr numetron::float16 quiet_NaN() noexcept { return numetron::float16::quiet_NaN(); }
+    static constexpr numetron::float16 signaling_NaN() noexcept { return numetron::float16::signaling_NaN(); }
+    static constexpr numetron::float16 denorm_min() noexcept { return numetron::float16::denorm_min(); }
+    static constexpr bool is_iec559 = true;
+    static constexpr bool is_bounded = true;
+    static constexpr bool is_modulo = false;
+    static constexpr bool traps = false;
+    static constexpr bool tinyness_before = false;
+    static constexpr float_round_style round_style = float_round_style::round_to_nearest;
+};
+
 }
