@@ -12,8 +12,8 @@
 
 #include "detail/small_array.hpp"
 
-#define NUMETRON_USE_ASM
-#define NUMETRON_PLATFORM_AUTODETECT
+//#define NUMETRON_USE_ASM
+//#define NUMETRON_PLATFORM_AUTODETECT
 
 //#define NUMETRON_PLATFORM_ALDERLAKE
 //#define NUMETRON_PLATFORM_CORE2

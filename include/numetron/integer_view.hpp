@@ -205,6 +205,7 @@ public:
 
     inline int sgn() const noexcept { return (!*this) ? 0 : ctl_.sign(); }
 
+    inline bool is_positive() const noexcept { return ctl_.sign() > 0; }
     inline bool is_negative() const noexcept { return ctl_.sign() < 0; }
     inline bool is_inplace() const noexcept { return ctl_.inplace_bit; }
 
