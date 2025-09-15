@@ -29,10 +29,10 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build solution
-        run: msbuild msvc/numetron_tests.sln /p:Configuration=Release
+        run: msbuild numetron_tests.sln /p:Configuration=Release
 
       - name: Run tests
         run: |
-          cd msvc/x64/Release
+          cd x64/Release
           $env:PATH += ";${{ github.workspace }}\vcpkg_installed\x64-windows\bin"
           .\numetron_tests.exe
