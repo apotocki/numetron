@@ -200,6 +200,9 @@ struct integer_holder : AllocatorT
         free();
     }
 
+    integer_holder& operator= (integer_holder const&) = delete;
+    integer_holder& operator= (integer_holder &&) = delete;
+
     // initilize by inplace value = 0
     inline void init_zero() noexcept
     {
@@ -468,9 +471,7 @@ struct integer_holder : AllocatorT
         LimbT* rlimbs = rhs.inplace_limbs_;
         LimbT* llimbs_end = llimbs + common_sz;
         while (llimbs != llimbs_end) {
-            LimbT tmp = *llimbs;
-            *llimbs++ = *rlimbs;
-            *rlimbs++ = tmp;
+            std::swap(*llimbs++, *rlimbs++);
         }
 
         if (lsz > rsz) {
@@ -483,6 +484,7 @@ struct integer_holder : AllocatorT
         }
     }
 
+private:
     inline void swap_limbs_data(integer_holder & rhs) noexcept
     {
         limbs_data* self_ld = allocated_data();
@@ -494,13 +496,14 @@ struct integer_holder : AllocatorT
     {
         limbs_data* rhs_ld = rhs.allocated_data();
         size_t sz = inplaced_size(ctl);
-        std::copy(inplace_limbs_, inplace_limbs_ + sz, rhs.inplace_limbs_);
+        std::memcpy(rhs.inplace_limbs_, inplace_limbs_, sz * sizeof(LimbT));
         if (sz < N) {
             integer_holder::ctl_limb(rhs.inplace_limbs_) = ctl;
         }
         set_allocated(rhs_ld);
     }
 
+public:
     // [limbs, high limb mask, sign]
     [[nodiscard]] inline std::tuple<std::span<const LimbT>, LimbT, int> decompose() const noexcept
     {
@@ -602,9 +605,10 @@ struct integer_holder : AllocatorT
     {
         LimbT* rlimbs = rhs.data();
         LimbT& rctllimb = integer_holder::ctl_limb(rlimbs);
-        size_t rsz = rhs.raw_significant_size(rctllimb);
+        size_t rsz = integer_holder::raw_significant_size(rctllimb);
 
-        std::copy(rlimbs, rlimbs + rsz, inplace_limbs_);
+        std::memcpy(inplace_limbs_, rlimbs, rsz * sizeof(LimbT));
+        
         if (rsz < N) {
             integer_holder::ctl_limb(inplace_limbs_) = rctllimb;
         }
@@ -804,7 +808,8 @@ public:
 
     inline basic_integer& operator=(basic_integer const& rhs)
     {
-        return this->operator=(basic_integer{ rhs });
+        aholder_.operator=(rhs.aholder_);
+        return *this;
     }
 
     basic_integer& operator=(basic_integer && rhs) noexcept
