@@ -93,19 +93,19 @@ struct decimal_holder : AllocatorT
     }
 
     // small size optimized allocator
-    struct sso_allocator_type
+    struct inplace_allocator_type
     {
         using value_type = LimbT;
         
         decimal_holder& holder_;
-        bool sso_allocation_ = false;
-        inline explicit sso_allocator_type(decimal_holder& h) noexcept : holder_{ h } {}
+        bool inplace_allocation_ = false;
+        inline explicit inplace_allocator_type(decimal_holder& h) noexcept : holder_{ h } {}
 
         LimbT* allocate(size_t cnt)
         {
-            if (cnt <= N && !sso_allocation_) {
+            if (cnt <= N && !inplace_allocation_) {
                 return holder_.inplace_limbs_;
-                sso_allocation_ = true;
+                inplace_allocation_ = true;
             } else {
                 return holder_.allocate(cnt + data_sizeof_in_limbs) + data_sizeof_in_limbs;
             }
@@ -117,12 +117,12 @@ struct decimal_holder : AllocatorT
             if (!std::equal_to<LimbT*>{}(ptr, ibuff)) {
                 holder_.deallocate(ptr - data_sizeof_in_limbs, sz + data_sizeof_in_limbs);
             } else {
-                sso_allocation_ = false;
+                inplace_allocation_ = false;
             }
         }
     };
 
-    inline sso_allocator_type sso_allocator() noexcept { return sso_allocator_type{ *this }; }
+    inline inplace_allocator_type inplace_allocator() noexcept { return inplace_allocator_type{ *this }; }
 
     inline LimbT const* laundered_data() const noexcept { return std::launder(inplace_limbs_); }
     inline LimbT* laundered_data() noexcept { return std::launder(inplace_limbs_); }
@@ -365,13 +365,12 @@ private:
     }
 
 public:
-    explicit decimal_holder()
+    inline explicit decimal_holder() noexcept
     {
         init_zero();
     }
 
-    template <typename AllocT>
-    explicit decimal_holder(AllocT&& alloc) : allocator_type{ std::forward<AllocT>(alloc) }
+    inline explicit decimal_holder(AllocatorT const& alloc) noexcept : allocator_type{ alloc }
     {
         init_zero();
     }
@@ -381,6 +380,25 @@ public:
     inline decimal_holder(BuilderT const& iftor, AllocT&& alloc) : allocator_type{ std::forward<AllocT>(alloc) }
     {
         iftor(*this);
+    }
+
+    template <std::integral T>
+    decimal_holder(T value, AllocatorT const& alloc)
+        : allocator_type{ alloc }
+    {
+        if (!value) {
+            init_zero();
+            return;
+        }
+
+        exp_inplace_t exp = 0;
+        while (0 == value % 10) {
+            value /= 10;
+            ++exp;
+        }
+        ctl_limb(inplace_limbs_) = in_place_mask;
+        inplace_allocator_type salloc = inplace_allocator();
+        init(to_limbs<LimbT>(value, salloc), salloc, exp);
     }
 
     decimal_holder(decimal_holder const& rhs)
@@ -733,7 +751,7 @@ std::exception_ptr from_integer_string(decimal_holder<LimbT, N, EBC, DataT, Allo
     //using storage_type = decimal_holder<LimbT, N, EBC, DataT, AllocatorT>;
     std::string_view orig_str = str;
 
-    auto opt_tpl = to_limbs<LimbT>(str, base, dh.sso_allocator());
+    auto opt_tpl = to_limbs<LimbT>(str, base, dh.inplace_allocator());
     if (!opt_tpl.has_value()) {
         std::string error;
         try { std::rethrow_exception(opt_tpl.error()); }
@@ -758,7 +776,7 @@ std::exception_ptr from_decimal_string(decimal_holder<LimbT, N, EBC, DataT, Allo
     //using storage_type = decimal_holder<LimbT, N, EBC, DataT, AllocatorT>;
     std::string_view orig_str = str;
     int64_t exp;
-    auto alloc = dh.sso_allocator();
+    auto alloc = dh.inplace_allocator();
     auto opt_sig_tpl = to_significand_limbs<LimbT>(str, alloc, exp);
     
     if (!opt_sig_tpl.has_value()) {
@@ -824,8 +842,6 @@ public:
 
     using storage_type = alloc_holder; // for debug
 
-    explicit basic_decimal(AllocatorT const& alloc) noexcept : aholder_{ alloc } {}
-
     explicit basic_decimal(basic_integer_view<LimbT> s, basic_integer_view<LimbT> exp = {}, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ [&s, &exp](storage_type& dh) { dh.init(s, exp); }, alloc }
     {
@@ -841,27 +857,16 @@ public:
     {}
 
     inline basic_decimal(basic_decimal&& rhs) noexcept
-        : aholder_{ std::move(rhs.aholder_) }
-    {}
+        : aholder_{ rhs.aholder_.allocator() }
+    {
+        aholder_.do_move(rhs.aholder_);
+    }
 
     template <std::integral T>
     basic_decimal(T value, AllocatorT const& alloc = AllocatorT{})
-        : aholder_{ [&value](storage_type& dh) {
-            if (!value) {
-                dh.init_zero();
-                return;
-            }
-            typename storage_type::exp_inplace_t exp = 0;
-            while (0 == value % 10) {
-                value /= 10;
-                ++exp;
-            }
-            storage_type::ctl_limb(dh.inplace_limbs_) = storage_type::in_place_mask;
-            auto alloc = dh.sso_allocator();
-            dh.init(to_limbs<LimbT>(value, alloc), alloc, exp);
-        }, alloc }
+        : aholder_{ value, alloc }
     {}
-
+   
     explicit basic_decimal(std::string_view str, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ alloc }
     {
