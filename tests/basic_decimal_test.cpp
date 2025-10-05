@@ -18,6 +18,13 @@ void basic_decimal_test0()
     using dec_t = basic_decimal<uint64_t, 1, 8>;
     using mdec_t = basic_decimal<uint8_t, 1, 2>;
 
+    decimal d = std::numeric_limits<int64_t>::min();
+    decimal d2 = d + decimal{ 1 };
+    CHECK_EQUAL((int64_t)d2, std::numeric_limits<int64_t>::min() + 1);
+    d = d + decimal{ 1 };
+    CHECK_EQUAL((int64_t)d, std::numeric_limits<int64_t>::min() + 1);
+
+    //decimal d2 = d;
     //mdec_t d0{ "9.00000000990000000000001"sv };
 
     //std::cout << mdec_t::storage_type::sig_limb_count_bits << "\n";

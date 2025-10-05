@@ -1,4 +1,4 @@
-// Numetron — Compile-time and runtime arbitrary-precision arithmetic
+// Numetron â€” Compile-time and runtime arbitrary-precision arithmetic
 // (c) 2025 Alexander Pototskiy
 // Licensed under the MIT License. See LICENSE file for details.
 
@@ -148,6 +148,22 @@ struct decimal_holder : AllocatorT
     inline static bool is_inplaced(LimbT ctl) noexcept { return !!(ctl & in_place_mask); }
     inline bool is_inplaced() const noexcept { return is_inplaced(ctl_limb()); }
 
+    inline LimbT const* data() const noexcept
+    {
+        LimbT const* laundered_limbs = laundered_data();
+        LimbT ctl = ctl_limb(laundered_limbs);
+        // do not launder limbs if they store inplace data
+        return is_inplaced(ctl) ? inplace_limbs_ : laundered_limbs;
+    }
+
+    inline LimbT* data() noexcept
+    {
+        LimbT* laundered_limbs = laundered_data();
+        LimbT ctl = ctl_limb(laundered_limbs);
+        // do not launder limbs if they store inplace data
+        return is_inplaced(ctl) ? inplace_limbs_ : laundered_limbs;
+    }
+
     inline static bool inplaced_is_negative(LimbT ctl) noexcept { return !!(ctl & sign_mask); }
     inline bool inplaced_is_negative() const noexcept { return inplaced_is_negative(ctl_limb()); }
 
@@ -160,6 +176,13 @@ struct decimal_holder : AllocatorT
         }
     }
     inline size_t inplaced_size() const noexcept { return inplaced_size(ctl_limb()); }
+
+    // returns count of first used inplace_limbs_. ctl limb isn't taken into account if it doesn't contain value bits
+    inline static size_t raw_significant_size(LimbT ctl)
+    {
+        if (is_inplaced(ctl)) return inplaced_size(ctl);
+        return sizeof(DataT*) / sizeof(LimbT); // limbs used to store the pointer to limbs_data
+    }
 
     inline static exp_inplace_t inplace_exponent(LimbT ctl) noexcept
     {
@@ -213,7 +236,7 @@ struct decimal_holder : AllocatorT
         }
     }
 
-    inline DataT * allocated_data() const noexcept
+    [[nodiscard]] inline DataT * allocated_data() const noexcept
     {
         if constexpr (!overwritten_limb_flag) {
             return *std::launder(reinterpret_cast<DataT* const*>(inplace_limbs_));
@@ -222,7 +245,7 @@ struct decimal_holder : AllocatorT
         }
     }
 
-    inline std::tuple<DataT const*, LimbT const*> allocated_data_and_limbs() const noexcept
+    [[nodiscard]] inline std::tuple<DataT const*, LimbT const*> allocated_data_and_limbs() const noexcept
     {
         DataT const* ldata;
         if constexpr (!overwritten_limb_flag) {
@@ -234,34 +257,45 @@ struct decimal_holder : AllocatorT
         return std::tuple{ ldata, limbs };
     }
 
-    inline std::span<const LimbT> allocated_limbs() const
+    [[nodiscard]] inline std::span<const LimbT> allocated_limbs() const
     {
         auto [ldata, limbs] = allocated_data_and_limbs();
         return { limbs, ldata->size };
     }
 
-    inline bool allocated_is_positive() const
+    [[nodiscard]] inline bool allocated_is_positive() const
     {
         DataT* ldata = allocated_data();
         return ldata->size && !ldata->sign;
     }
 
-    inline bool allocated_is_negative() const
+    [[nodiscard]] inline bool allocated_is_negative() const
     {
         DataT* ldata = allocated_data();
         return ldata->size && !!allocated_data()->sign;
     }
 
-    inline bool is_positive() const noexcept
+    [[nodiscard]] inline bool is_positive() const noexcept
     {
         LimbT ctl = ctl_limb();
         return is_inplaced(ctl) ? !!inplace_limbs_[0] && !inplaced_is_negative(ctl) : allocated_is_positive();
     }
 
-    inline bool is_negative() const noexcept
+    [[nodiscard]] inline bool is_negative() const noexcept
     {
         LimbT ctl = ctl_limb();
         return is_inplaced(ctl) ? inplaced_is_negative(ctl) : allocated_is_negative();
+    }
+
+    [[nodiscard]] bool is_zero() const noexcept
+    {
+        LimbT ctl = ctl_limb();
+        if (is_inplaced(ctl)) {
+            return inplaced_size(ctl) == 1 && ((N == 1 && !(inplace_limbs_[0] & last_significand_limb_mask)) || (N > 1 && !inplace_limbs_[0]));
+        } else {
+            auto limbs = allocated_limbs();
+            return std::find_if(limbs.rbegin(), limbs.rend(), [](LimbT l) { return !!l; }) == limbs.rend();
+        }
     }
 
     inline void negate()
@@ -274,6 +308,63 @@ struct decimal_holder : AllocatorT
         }
     }
 
+    void swap(decimal_holder& rhs) noexcept
+    {
+        LimbT& llimb = ctl_limb();
+        LimbT& rlimb = rhs.ctl_limb();
+        if (decimal_holder::is_inplaced(llimb)) {
+            if (!decimal_holder::is_inplaced(rlimb)) return inplaced_swap_with_limbs_data(llimb, rhs);
+        } else if (decimal_holder::is_inplaced(rlimb)) {
+            return rhs.inplaced_swap_with_limbs_data(rlimb, *this);
+        } else {
+            return swap_limbs_data(rhs);
+        }
+        // both inplace
+        // trying valgrind friendly
+
+        size_t lsz = decimal_holder::inplaced_size(llimb);
+        size_t rsz = decimal_holder::inplaced_size(rlimb);
+        size_t common_sz = (std::min)(lsz, rsz);
+
+        LimbT* llimbs = inplace_limbs_;
+        LimbT* rlimbs = rhs.inplace_limbs_;
+        LimbT* llimbs_end = llimbs + common_sz;
+        while (llimbs != llimbs_end) {
+            std::swap(*llimbs++, *rlimbs++);
+        }
+
+        if (lsz > rsz) {
+            lsz = (std::min)(lsz, N - 1);
+            std::memcpy(rlimbs, llimbs, (lsz - rsz) * sizeof(LimbT));
+        } else if (rsz > lsz) {
+            rsz = (std::min)(rsz, N - 1);
+            std::memcpy(llimbs, rlimbs, (rsz - lsz) * sizeof(LimbT));
+        }
+        if (common_sz < N) {
+            std::swap(llimb, rlimb);
+        }
+    }
+
+private:
+    inline void swap_limbs_data(decimal_holder& rhs) noexcept
+    {
+        DataT* self_ld = allocated_data();
+        set_allocated(rhs.allocated_data());
+        rhs.set_allocated(self_ld);
+    }
+
+    void inplaced_swap_with_limbs_data(LimbT ctl, decimal_holder& rhs) noexcept
+    {
+        DataT* rhs_ld = rhs.allocated_data();
+        size_t sz = inplaced_size(ctl);
+        std::memcpy(rhs.inplace_limbs_, inplace_limbs_, sz * sizeof(LimbT));
+        if (sz < N) {
+            decimal_holder::ctl_limb(rhs.inplace_limbs_) = ctl;
+        }
+        set_allocated(rhs_ld);
+    }
+
+public:
     explicit decimal_holder()
     {
         init_zero();
@@ -336,6 +427,9 @@ struct decimal_holder : AllocatorT
             }
         }
     }
+
+    decimal_holder& operator= (decimal_holder const&) = delete;
+    decimal_holder& operator= (decimal_holder&&) = delete;
 
     ~decimal_holder()
     {
@@ -549,17 +643,6 @@ struct decimal_holder : AllocatorT
         //assert(p == reinterpret_cast<DataT*>(limbsdata));
     }
 
-    bool is_zero() const noexcept
-    {
-        LimbT ctl = ctl_limb();
-        if (is_inplaced(ctl)) {
-            return inplaced_size(ctl) == 1 && ((N == 1 && !(inplace_limbs_[0] & last_significand_limb_mask)) || (N > 1 && !inplace_limbs_[0]));
-        } else {
-            auto limbs = allocated_limbs();
-            return std::find_if(limbs.rbegin(), limbs.rend(), [](LimbT l) { return !!l; }) == limbs.rend();
-        }
-    }
-
     [[nodiscard]] inline basic_integer_view<LimbT> significand() const noexcept
     {
         LimbT ctl = ctl_limb();
@@ -618,6 +701,20 @@ struct decimal_holder : AllocatorT
     [[nodiscard]] bool is_fit_significand() const noexcept
     {
         return significand().template is_fit<T>();
+    }
+
+    void do_move(decimal_holder& rhs) noexcept
+    {
+        LimbT* rlimbs = rhs.data();
+        LimbT& rctllimb = decimal_holder::ctl_limb(rlimbs);
+        size_t rsz = decimal_holder::raw_significant_size(rctllimb);
+
+        std::memcpy(inplace_limbs_, rlimbs, rsz * sizeof(LimbT));
+        
+        if (rsz < N) {
+            decimal_holder::ctl_limb(inplace_limbs_) = rctllimb;
+        }
+        rctllimb = in_place_mask; // rhs can contain a garbage value after this
     }
 
     inline void free() noexcept
@@ -739,6 +836,14 @@ public:
         : aholder_{ [&dv](storage_type& dh) { dh.init(dv.significand(), dv.exponent()); }, alloc }
     {}
 
+    inline basic_decimal(basic_decimal const& rhs)
+        : aholder_{ rhs.aholder_ }
+    {}
+
+    inline basic_decimal(basic_decimal&& rhs) noexcept
+        : aholder_{ std::move(rhs.aholder_) }
+    {}
+
     template <std::integral T>
     basic_decimal(T value, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ [&value](storage_type& dh) {
@@ -768,6 +873,21 @@ public:
         }
     }
         
+    inline basic_decimal& operator=(basic_decimal const& rhs)
+    {
+        alloc_holder tmp{ rhs.aholder_ };
+        tmp.swap(aholder_);
+        return *this;
+    }
+
+    inline basic_decimal& operator=(basic_decimal&& rhs) noexcept
+    {
+        aholder_.free();
+        allocator() = std::move(rhs.allocator());
+        aholder_.do_move(rhs.aholder_);
+        return *this;
+    }
+
     static std::expected<basic_decimal, std::exception_ptr> from_string(std::string_view str, AllocatorT const& alloc = AllocatorT{}) noexcept
     {
         basic_decimal result(alloc);
@@ -967,6 +1087,12 @@ inline basic_decimal<LimbT, N, E, AllocatorT> operator+ (basic_decimal<LimbT, N,
         re += 1;
     }
     return basic_decimal<LimbT, N, E, AllocatorT>{ rs, re, l.allocator() };
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t RN, size_t E, size_t RE, typename AllocatorT, typename AllocatorRT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator+ (basic_decimal<LimbT, N, E, AllocatorT> const& lv, basic_decimal<LimbT, RN, RE, AllocatorRT> const& rv)
+{
+    return lv + (basic_decimal_view<LimbT>)rv;
 }
 
 template <typename Elem, typename Traits, std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
