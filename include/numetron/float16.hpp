@@ -165,6 +165,11 @@ public:
     {
         return std::hash<uint16_t>{}(v.data);
     }
+
+    [[nodiscard]] inline float16 operator-() const noexcept
+    {
+        return from_bits(data ^ 0x8000); // Flip the sign bit
+    }
 };
 
 inline bool operator== (float16 const& l, float16 const& r) noexcept

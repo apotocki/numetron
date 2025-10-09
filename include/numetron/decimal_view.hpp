@@ -86,6 +86,11 @@ public:
 
     inline basic_integer_view<LimbT> const& significand() const noexcept { return significand_; }
     inline basic_integer_view<LimbT> const& exponent() const noexcept { return exponent_; }
+
+    [[nodiscard]] inline basic_decimal_view operator- () const noexcept
+    {
+        return basic_decimal_view{ -significand_, exponent_ };
+    }
 };
 
 using decimal_view = basic_decimal_view<uint64_t>;
