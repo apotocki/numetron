@@ -86,8 +86,8 @@ struct integer_holder : AllocatorT
         LimbT* allocate(size_t cnt)
         {
             if (cnt <= N && !inplace_allocation_) {
-                return holder_.inplace_limbs_;
                 inplace_allocation_ = true;
+                return holder_.inplace_limbs_;
             } else {
                 return holder_.allocate(cnt + limbs_data_sizeof_in_limbs) + limbs_data_sizeof_in_limbs;
             }
@@ -145,8 +145,6 @@ struct integer_holder : AllocatorT
         do_move(rhs);
     }
 
-
-
     integer_holder(integer_holder const& rhs)
         : allocator_type{ static_cast<allocator_type const&>(rhs) }
     {
@@ -198,7 +196,7 @@ struct integer_holder : AllocatorT
 
     inline ~integer_holder()
     {
-        free();
+        do_free();
     }
 
     integer_holder& operator= (integer_holder const&) = delete;
@@ -632,7 +630,7 @@ public:
         }
     }
 
-    inline void free() noexcept
+    inline void do_free() noexcept
     {
         LimbT ctl = ctl_limb();
         if (!is_inplaced(ctl)) {
@@ -814,7 +812,7 @@ public:
 
     basic_integer& operator=(basic_integer && rhs) noexcept
     {
-        aholder_.free();
+        aholder_.do_free();
         allocator() = std::move(rhs.allocator());
         aholder_.do_move(rhs.aholder_);
         return *this;

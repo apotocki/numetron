@@ -38,7 +38,7 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
     while (!str.empty() && std::isspace(str.front())) str = str.substr(1);
     if (!str.empty() && str.front() == '-') {
         str = str.substr(1);
-        std::get<3>(result) = -1;
+        get<3>(result) = -1;
     }
     if (str.empty()) [[unlikely]] {
         return std::unexpected(std::make_exception_ptr(std::invalid_argument("no value"s)));;
@@ -87,17 +87,17 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
             } while (pc != pce);
             str = { pc, pce }; // has eaten the complete exponent part
         }
-        std::get<0>(result) = alloc_traits_t::allocate(alloc, 1);
-        std::get<1>(result) = std::get<2>(result) = 1;
-        *std::get<0>(result) = 0;
+        get<0>(result) = alloc_traits_t::allocate(alloc, 1);
+        get<1>(result) = get<2>(result) = 1;
+        *get<0>(result) = 0;
         return result;
     }
     size_t left_digits = pce - pc;
     size_t max_limbs_count = (left_digits + digits_per_limb) / digits_per_limb; // total digits = 1 + left_digits
-    std::get<0>(result) = alloc_traits_t::allocate(alloc, max_limbs_count);
-    std::get<2>(result) = max_limbs_count;
-    *std::get<0>(result) = limb;
-    std::get<1>(result) = 1;
+    get<0>(result) = alloc_traits_t::allocate(alloc, max_limbs_count);
+    get<2>(result) = max_limbs_count;
+    *get<0>(result) = limb;
+    get<1>(result) = 1;
     limb = 0;
     for (size_t dc = 0;;) {
         auto [nextlimb, zcnt] = get_digit();
@@ -105,9 +105,9 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
             exponent = point_pos < 0 ? zcnt : -static_cast<int64_t>(point_pos);
             assert(dc || !limb);
             if (dc) {
-                if (LimbT climb = limb_arithmetic::umul1_inplace(std::get<0>(result), std::get<0>(result) + std::get<1>(result), ipow<LimbT>(10, dc), limb); climb) {
-                    *(std::get<0>(result) + std::get<1>(result)) = climb;
-                    ++std::get<1>(result);
+                if (LimbT climb = limb_arithmetic::umul1_inplace(get<0>(result), get<0>(result) + get<1>(result), ipow<LimbT>(10, dc), limb); climb) {
+                    *(get<0>(result) + get<1>(result)) = climb;
+                    ++get<1>(result);
                 }
             }
             break;
@@ -118,9 +118,9 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
             zcnt -= k;
             limb = limb ? limb * ipow<LimbT>(10, k) : 0;
             if (dc < digits_per_limb) break;
-            if (LimbT climb = limb_arithmetic::umul1_inplace(std::get<0>(result), std::get<0>(result) + std::get<1>(result), big_base, limb); climb) {
-                *(std::get<0>(result) + std::get<1>(result)) = climb;
-                ++std::get<1>(result);
+            if (LimbT climb = limb_arithmetic::umul1_inplace(get<0>(result), get<0>(result) + get<1>(result), big_base, limb); climb) {
+                *(get<0>(result) + get<1>(result)) = climb;
+                ++get<1>(result);
             }
             dc = 0;
             limb = 0;
@@ -130,9 +130,9 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
         
         if (dc < digits_per_limb) continue;
 
-        if (LimbT climb = limb_arithmetic::umul1_inplace(std::get<0>(result), std::get<0>(result) + std::get<1>(result), big_base, limb); climb) {
-            *(std::get<0>(result) + std::get<1>(result)) = climb;
-            ++std::get<1>(result);
+        if (LimbT climb = limb_arithmetic::umul1_inplace(get<0>(result), get<0>(result) + get<1>(result), big_base, limb); climb) {
+            *(get<0>(result) + get<1>(result)) = climb;
+            ++get<1>(result);
         }
         dc = 0;
         limb = 0;

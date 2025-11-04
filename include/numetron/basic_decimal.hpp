@@ -451,7 +451,7 @@ public:
 
     ~decimal_holder()
     {
-        free();
+        do_free();
     }
 
     // initilize by inplace value = 0
@@ -735,7 +735,7 @@ public:
         rctllimb = in_place_mask; // rhs can contain a garbage value after this
     }
 
-    inline void free() noexcept
+    inline void do_free() noexcept
     {
         LimbT ctl = ctl_limb();
         if (!is_inplaced(ctl)) {
@@ -800,7 +800,7 @@ std::exception_ptr from_decimal_string(decimal_holder<LimbT, N, EBC, DataT, Allo
         }
 
     } catch (std::bad_alloc const& e) {
-        return std::make_exception_ptr(std::invalid_argument((std::ostringstream{} << "can't allocate a decimal storage for '" << str << "', error: " << e.what()).str()));
+        return std::make_exception_ptr(std::invalid_argument((std::ostringstream{} << "can't allocate a decimal storage for '"sv << str << "', error: "sv << e.what()).str()));
     } catch (...) {
         return std::current_exception();
     }
@@ -887,7 +887,7 @@ public:
 
     inline basic_decimal& operator=(basic_decimal&& rhs) noexcept
     {
-        aholder_.free();
+        aholder_.do_free();
         allocator() = std::move(rhs.allocator());
         aholder_.do_move(rhs.aholder_);
         return *this;

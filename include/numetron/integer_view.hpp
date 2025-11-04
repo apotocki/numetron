@@ -123,10 +123,11 @@ class basic_integer_view
         : limbs_{ limbs }, ctl_{ std::move(ctl) }
     {}
 
-    inline basic_integer_view(std::in_place_t, const_limb_t* limbs, ctl_type ctl) noexcept
+    inline basic_integer_view(std::in_place_t, const_limb_t * limbs, ctl_type ctl) noexcept
         : ctl_{ std::move(ctl) }
     {
-        std::copy(limbs, limbs + inplace_max_size, inplace_value_);
+        assert(ctl_.size <= inplace_max_size);
+        std::memcpy(inplace_value_, limbs, ctl_.size * sizeof(LimbT));
     }
 
 public: // temporary, to do: make private
@@ -142,7 +143,7 @@ public:
     using limb_type = LimbT;
 
     inline basic_integer_view() noexcept
-        : limbs_{nullptr}
+        : limbs_{ nullptr }
     {}
 
     template <std::integral T>
@@ -171,6 +172,20 @@ public:
     basic_integer_view(basic_integer_view<LT> rhs) noexcept
         : limbs_{ rhs.limbs_ }, ctl_{ rhs.ctl_ }
     {}
+
+    template <typename LT, size_t BuffSz>
+    requires(std::is_same_v<std::remove_cv_t<LT>, LimbT> && (BuffSz == std::dynamic_extent || BuffSz <= inplace_max_size))
+    static inline basic_integer_view make_inplace(std::span<LT, BuffSz> sv, int sign = 1) noexcept(BuffSz != std::dynamic_extent)
+    {
+        if constexpr (BuffSz == std::dynamic_extent) {
+            if (sv.size() > inplace_max_size) {
+                throw std::runtime_error("basic_integer_view::make_inplace: size exceeds inplace maximum size");
+            }
+        }
+        ctl_type ctl{ sv.size(), sign };
+        ctl.inplace_bit = 1;
+        return basic_integer_view{ std::in_place, sv.data(), std::move(ctl) };
+    }
 
     inline std::tuple<std::span<const LimbT>, LimbT, int> decompose() const noexcept
     {
@@ -218,7 +233,7 @@ public:
                 return { 0, std::span{ limbs_, size() } };
             }
             if (!size()) [[unlikely]] return { 0, {} };
-            return { limbs_[size() - 1] & last_significand_limb_mask(), std::span{limbs_, size() - 1 } };
+            return { limbs_[size() - 1] & last_significand_limb_mask(), std::span{ limbs_, size() - 1 } };
         }
     }
 

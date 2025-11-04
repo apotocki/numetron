@@ -28,6 +28,8 @@ class basic_decimal_view
 public:
     using limb_type = LimbT;
 
+    basic_decimal_view() noexcept = default;
+
     template <typename ST, typename ET>
     inline basic_decimal_view(ST && s, ET && e) noexcept
         : significand_{ std::forward<ST>(s) }, exponent_{ std::forward<ET>(e) }
