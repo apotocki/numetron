@@ -407,7 +407,7 @@ public:
         LimbT rlimb = rhs.ctl_limb();
         if (decimal_holder::is_inplaced(rlimb)) {
             if constexpr (N > 1) {
-                std::copy(rhs.inplace_limbs_, rhs.inplace_limbs_ + decimal_holder::inplaced_size(rlimb), inplace_limbs_);
+                std::memcpy(inplace_limbs_, rhs.inplace_limbs_, decimal_holder::inplaced_size(rlimb) * sizeof(LimbT));
             }
             decimal_holder::ctl_limb(inplace_limbs_) = rlimb;
         } else {
@@ -432,7 +432,8 @@ public:
                 return true;
             };
             if (can_inplace(rhs_ldata, rhs_limbs)) {
-                std::copy(rhs_limbs, rhs_limbs + rhs_ldata->size, inplace_limbs_);
+                ctl_limb(inplace_limbs_) = 0; // just to avoid using an uninitialized value
+                std::memcpy(inplace_limbs_, rhs_limbs, rhs_ldata->size * sizeof(LimbT));
                 inplaced_set_masks(rhs_ldata->size, rhs_ldata->sign ? -1 : 1, rhs.integral_exponent<int64_t>());
             } else {
                 size_t exp_sz = rhs_ldata->allocated_exponent ? (size_t)std::abs(rhs_ldata->exponent) : 0;
