@@ -73,14 +73,18 @@ public:
                 return basic_integer<LimbT, N, AllocatorT>{0};
             }
         }
-        basic_integer<LimbT, N, AllocatorT> val10{ 10 };
-        auto expm = pow(val10, (unsigned int)std::abs((int)exponent_));
 
         basic_integer<LimbT, N, AllocatorT> result{ significand_ };
-        if (exponent_.sgn() > 0) {
-            result *= expm;
-        } else {
-            result /= expm;
+        int intexp = (int)exponent_;
+        if (intexp) {
+            basic_integer<LimbT, N, AllocatorT> val10{ 10 };
+            auto expm = pow(val10, (unsigned int)std::abs(intexp));
+
+            if (intexp > 0) {
+                result *= expm;
+            } else {
+                result /= expm;
+            }
         }
 
         return result;

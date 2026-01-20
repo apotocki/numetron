@@ -1244,16 +1244,52 @@ auto udivby1(std::span<LimbT> ls, LimbT d, LimbT invd, int l) -> LimbT
 
 // returns residual
 template <std::unsigned_integral LimbT>
-auto udivby1(std::span<const LimbT> ls, LimbT d, std::span<LimbT> r) -> LimbT
+auto udivby1(std::span<const LimbT> ls, LimbT d, std::span<LimbT> q) -> LimbT
 {
-    assert(r.size() >= ls.size());
-    std::copy(ls.begin(), ls.end(), r.begin());
-    int shift = numetron::arithmetic::count_leading_zeros(d);
-    int l = std::numeric_limits<LimbT>::digits - shift;
-    LimbT u1 = (shift ? (LimbT{ 1 } << l) : 0) - d;
+    assert(d);
+    assert(q.size() >= ls.size());
+    
+    // Special case: division by 1
+    if (d == 1) {
+        std::memcpy(q.data(), ls.data(), ls.size() * sizeof(LimbT));
+        return 0;
+    }
+    
+    constexpr int limb_bits = std::numeric_limits<LimbT>::digits;
+    int zcnt = numetron::arithmetic::count_leading_zeros(d);
+    
+    // Special case: d is a power of two
+    if ((d & (d - 1)) == 0) {
+        if (ls.empty()) return 0;
+        
+        LimbT remainder_mask = d - 1;
+        int shift = limb_bits - 1 - zcnt;
+
+        // Remainder is the lowest 'shift' bits of the number
+        LimbT remainder = ls.front() & remainder_mask;
+
+        // Quotient is the number shifted right by 'shift' bits
+        int lshift = limb_bits - shift;
+        
+        LimbT const* src = ls.data();
+        LimbT* dst = q.data();
+        size_t n = ls.size();
+
+        for (size_t i = 0; i < n - 1; ++i) {
+            dst[i] = (src[i] >> shift) | (src[i + 1] << lshift);
+        }
+        dst[n - 1] = src[n - 1] >> shift;
+        
+        return remainder;
+    }
+    
+    std::memcpy(q.data(), ls.data(), ls.size() * sizeof(LimbT));
+    
+    int l = limb_bits - zcnt;
+    LimbT u1 = (zcnt ? (LimbT{ 1 } << l) : 0) - d;
     auto [invd, dummy] = numetron::arithmetic::udiv2by1<LimbT>(u1, 0, d);
 
-    return udivby1(r, d, invd, l);
+    return udivby1(q, d, invd, l);
 }
 
 template <std::unsigned_integral LimbT, LimbT d, bool ProcR = true>
@@ -1820,7 +1856,7 @@ inline void udiv(std::span<const LimbT> u, std::span<const LimbT> v, std::span<L
     }
     if (1 == ve - vb) {
         r.front() = udivby1(u, *vb, q);
-        std::fill(r.begin() + 1, r.end(), 0);
+        std::memset(r.data() + 1, 0, (r.size() - 1) * sizeof(LimbT));
         return;
     }
     throw std::runtime_error("not implemented");
