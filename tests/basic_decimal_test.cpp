@@ -33,6 +33,17 @@ void basic_decimal_test0()
     using namespace numetron::literals;
 
     //auto vvv = -.022e-12;
+    
+    CHECK_EQUAL(to_string(dec_t{ "42.00"sv }), "42");
+    CHECK_EQUAL(to_string(dec_t{ "42.1"sv }), "42.1");
+    CHECK_EQUAL(to_string(dec_t{ "42.001"sv }), "42.001");
+    CHECK_EQUAL(to_string(dec_t{ "42.001000"sv }), "42.001");
+    CHECK_EQUAL(to_string(dec_t{ ".0042"sv }), "0.0042");
+    CHECK_EQUAL(to_string(dec_t{ "0.0042"sv }), "0.0042");
+    CHECK_EQUAL(to_string(dec_t{ ".0042000"sv }), "0.0042");
+    CHECK_EQUAL(to_string(dec_t{ "00.0042000"sv }), "0.0042");
+    CHECK_EQUAL(to_string(dec_t{ ".0042000e-2"sv }), "0.000042");
+    CHECK_EQUAL(to_string(dec_t{ ".0042000e4"sv }), "42");
 
     CHECK_EQUAL(dec_t{ ".022"sv }.exponent_as<int>(), -3);
     CHECK_EQUAL(dec_t{ "-.022"sv }.significand(), -22);

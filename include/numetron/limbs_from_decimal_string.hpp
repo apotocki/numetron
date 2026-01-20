@@ -46,6 +46,7 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
     const char* pc = str.data(), *pce = pc + str.size();
 
     int point_pos = -1;
+    int significant_digits_after_point = 0;
     // returns {not zero digit, preceding number of zeros}
     auto get_digit = [&point_pos, &pc, pce]() -> std::pair<LimbT, size_t> {
         size_t zcnt = 0;
@@ -92,6 +93,9 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
         *get<0>(result) = 0;
         return result;
     }
+    if (point_pos >= 0) {
+        significant_digits_after_point = point_pos;
+    }
     size_t left_digits = pce - pc;
     size_t max_limbs_count = (left_digits + digits_per_limb) / digits_per_limb; // total digits = 1 + left_digits
     get<0>(result) = alloc_traits_t::allocate(alloc, max_limbs_count);
@@ -102,7 +106,7 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
     for (size_t dc = 0;;) {
         auto [nextlimb, zcnt] = get_digit();
         if (!nextlimb) { // significand is finished
-            exponent = point_pos < 0 ? zcnt : -static_cast<int64_t>(point_pos);
+            exponent = point_pos < 0 ? zcnt : -static_cast<int64_t>(significant_digits_after_point);
             assert(dc || !limb);
             if (dc) {
                 if (LimbT climb = limb_arithmetic::umul1_inplace(get<0>(result), get<0>(result) + get<1>(result), ipow<LimbT>(10, dc), limb); climb) {
@@ -111,6 +115,9 @@ std::expected<std::tuple<LimbT*, size_t, size_t, int>, std::exception_ptr> to_si
                 }
             }
             break;
+        }
+        if (point_pos >= 0) {
+            significant_digits_after_point = point_pos;
         }
         while (zcnt) {
             size_t k = (std::min)(digits_per_limb - dc, zcnt);
