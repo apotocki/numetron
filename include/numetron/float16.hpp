@@ -157,7 +157,7 @@ public:
     [[nodiscard]] constexpr float16 next_up() const
     {
         uint16_t exp = (data >> 10) & 0x1F;
-        uint16_t mant = data & 0x3FF;
+        //uint16_t mant = data & 0x3FF;
         bool sign = (data & 0x8000) != 0;
         
         // Check for NaN or infinity - undefined behavior, throw exception
@@ -188,7 +188,7 @@ public:
     [[nodiscard]] constexpr float16 next_down() const
     {
         uint16_t exp = (data >> 10) & 0x1F;
-        uint16_t mant = data & 0x3FF;
+        //uint16_t mant = data & 0x3FF;
         bool sign = (data & 0x8000) != 0;
         
         // Check for NaN or infinity - undefined behavior, throw exception

@@ -8,8 +8,8 @@
 #include <limits>
 #include <span>
 
-#include "arithmetic.hpp"
-#include "ct.hpp"
+#include "numetron/arithmetic.hpp"
+#include "numetron/ct.hpp"
 
 namespace numetron::limb_arithmetic {
 
