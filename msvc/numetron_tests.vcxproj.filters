@@ -19,6 +19,12 @@
     <Filter Include="tools">
       <UniqueIdentifier>{325e5afd-3cd5-452e-8e82-5d3b25f7272e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="numetron\limb_arithmetic">
+      <UniqueIdentifier>{6c225169-d0e0-4457-9645-34c961c1eb9d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="numetron\external">
+      <UniqueIdentifier>{522b1bc1-145e-4348-8cd8-8e449c503c00}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\numetron\arithmetic.hpp">
@@ -75,11 +81,20 @@
     <ClInclude Include="..\include\numetron\detail\scope_exit.hpp">
       <Filter>numetron\detail</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\numetron\detail\base_case.hpp">
-      <Filter>numetron\config</Filter>
-    </ClInclude>
     <ClInclude Include="..\include\numetron\float16.hpp">
       <Filter>numetron</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\config\start_lifetime.hpp">
+      <Filter>numetron\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\external\dragonbox.h">
+      <Filter>numetron\external</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -112,9 +127,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="src\arch\README.md" />
+    <Natvis Include="numetron.natvis" />
   </ItemGroup>
   <ItemGroup>
-    <Natvis Include="numetron.natvis" />
+    <None Include="..\README.md" />
+    <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
 </Project>

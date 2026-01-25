@@ -253,7 +253,7 @@ struct decimal_holder : AllocatorT
         } else {
             ldata = reinterpret_cast<DataT const*>(std::rotl(*std::launder(reinterpret_cast<uintptr_t const*>(inplace_limbs_)), 1));
         }
-        LimbT const* limbs = std::launder(reinterpret_cast<LimbT const*>(ldata)) + data_sizeof_in_limbs;
+        LimbT const* limbs = reinterpret_cast<LimbT const*>(ldata) + data_sizeof_in_limbs;
         return std::tuple{ ldata, limbs };
     }
 
@@ -864,10 +864,19 @@ public:
     }
 
     template <std::integral T>
-    basic_decimal(T value, AllocatorT const& alloc = AllocatorT{})
+    inline basic_decimal(T value, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ value, alloc }
     {}
-   
+
+    template <std::floating_point T>
+    inline explicit basic_decimal(T value, AllocatorT const& alloc = AllocatorT{})
+        : basic_decimal(basic_decimal_view<LimbT>{ value }, alloc)
+    {}
+
+    inline explicit basic_decimal(float16 value, AllocatorT const& alloc = AllocatorT{})
+        : basic_decimal(basic_decimal_view<LimbT>{ value }, alloc)
+    {}
+
     explicit basic_decimal(std::string_view str, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ alloc }
     {

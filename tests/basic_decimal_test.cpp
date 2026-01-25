@@ -6,6 +6,7 @@
 
 #include "numetron/basic_decimal.hpp"
 #include "numetron/basic_integer.hpp"
+#include "numetron/float16.hpp"
 
 #include <vector>
 #include <iostream>
@@ -17,6 +18,7 @@ void basic_decimal_test0()
 {
     using dec_t = basic_decimal<uint64_t, 1, 8>;
     using mdec_t = basic_decimal<uint8_t, 1, 2>;
+    using decv_t = basic_decimal_view<uint64_t>;
 
     decimal d = std::numeric_limits<int64_t>::min();
     decimal d2 = d + decimal{ 1 };
@@ -24,16 +26,13 @@ void basic_decimal_test0()
     d = d + decimal{ 1 };
     CHECK_EQUAL((int64_t)d, std::numeric_limits<int64_t>::min() + 1);
 
-    //decimal d2 = d;
-    //mdec_t d0{ "9.00000000990000000000001"sv };
-
-    //std::cout << mdec_t::storage_type::sig_limb_count_bits << "\n";
-    //using biv_t = basic_integer_view<uint64_t>;
     using namespace std::string_view_literals;
     using namespace numetron::literals;
 
-    //auto vvv = -.022e-12;
-    
+    CHECK_EQUAL(to_string(decv_t{ 42.00 }), "42");
+    CHECK_EQUAL(to_string(decv_t{ -42.01 }), "-42.01");
+    CHECK_EQUAL(to_string(dec_t{ 42.00 }), "42");
+    CHECK_EQUAL(to_string(dec_t{ -42.01 }), "-42.01");
     CHECK_EQUAL(to_string(dec_t{ "42.00"sv }), "42");
     CHECK_EQUAL(to_string(dec_t{ "42.1"sv }), "42.1");
     CHECK_EQUAL(to_string(dec_t{ "42.001"sv }), "42.001");
@@ -109,6 +108,84 @@ void basic_decimal_test0()
     //x0 /= 10000000000000000000ul;
     //x0 /= 10000000000000000000ul;
     //CHECK_EQUAL("219399878273287837459238450239485023985748738458787"_bi / "0xffffFFFFffffFFFE"_bi, "-0xffffFFFFffffFFFF"_bi);
+
+    // ==================== float16 -> decimal_view tests ====================
+    
+    // Basic integer values
+    CHECK_EQUAL(to_string(decv_t{ float16{0} }), "0");
+    CHECK_EQUAL(to_string(decv_t{ float16{1} }), "1");
+    CHECK_EQUAL(to_string(decv_t{ float16{-1} }), "-1");
+    CHECK_EQUAL(to_string(decv_t{ float16{10} }), "10");
+    CHECK_EQUAL(to_string(decv_t{ float16{100} }), "100");
+    CHECK_EQUAL(to_string(decv_t{ float16{1000} }), "1000");
+    CHECK_EQUAL(to_string(decv_t{ float16{-1000} }), "-1000");
+    
+    // Fractional values - float16 has limited precision (about 3-4 decimal digits)
+    CHECK_EQUAL(to_string(decv_t{ float16{0.5f} }), "0.5");
+    CHECK_EQUAL(to_string(decv_t{ float16{-0.5f} }), "-0.5");
+    CHECK_EQUAL(to_string(decv_t{ float16{0.25f} }), "0.25");
+    CHECK_EQUAL(to_string(decv_t{ float16{0.125f} }), "0.125");
+    CHECK_EQUAL(to_string(decv_t{ float16{1.5f} }), "1.5");
+    CHECK_EQUAL(to_string(decv_t{ float16{-1.5f} }), "-1.5");
+    
+    // Powers of 2 (exact in binary floating point)
+    CHECK_EQUAL(to_string(decv_t{ float16{2.0f} }), "2");
+    CHECK_EQUAL(to_string(decv_t{ float16{4.0f} }), "4");
+    CHECK_EQUAL(to_string(decv_t{ float16{8.0f} }), "8");
+    CHECK_EQUAL(to_string(decv_t{ float16{16.0f} }), "16");
+    CHECK_EQUAL(to_string(decv_t{ float16{0.0625f} }), "0.0625"); // 1/16
+    
+    // Special float16 values - max finite value (65504)
+    CHECK_EQUAL(to_string(decv_t{ (float16::max)() }), "65504");
+    CHECK_EQUAL(to_string(decv_t{ float16::lowest() }), "-65504");
+    
+    // Small values near min normal
+    auto min_normal = (float16::min)();
+    auto min_normal_dv = decv_t{ min_normal };
+    CHECK(min_normal_dv.significand() > 0); // should be positive
+    CHECK(min_normal_dv.exponent() < 0);    // should have negative exponent
+    
+    // Subnormal (denormalized) values
+    auto denorm_min = float16::denorm_min();
+    auto denorm_dv = decv_t{ denorm_min };
+    CHECK(denorm_dv.significand() > 0); // should be positive
+    CHECK(denorm_dv.exponent() < 0);    // should have very negative exponent
+    
+    // Negative zero should equal positive zero
+    CHECK_EQUAL(to_string(decv_t{ float16::zero() }), "0");
+    CHECK_EQUAL(to_string(decv_t{ float16::negative_zero() }), "0");
+    
+    // Values that are exact in float16
+    CHECK_EQUAL(to_string(decv_t{ float16{1024} }), "1024");
+    CHECK_EQUAL(to_string(decv_t{ float16{2048} }), "2048");
+    
+    // Check significand and exponent directly for some values
+    auto dv_half = decv_t{ float16{0.5f} };
+    CHECK_EQUAL(dv_half.significand(), 5);
+    CHECK_EQUAL(dv_half.exponent(), -1);
+    
+    auto dv_quarter = decv_t{ float16{0.25f} };
+    CHECK_EQUAL(dv_quarter.significand(), 25);
+    CHECK_EQUAL(dv_quarter.exponent(), -2);
+    
+    auto dv_ten = decv_t{ float16{10} };
+    CHECK_EQUAL(dv_ten.significand(), 1);
+    CHECK_EQUAL(dv_ten.exponent(), 1);
+    
+    auto dv_hundred = decv_t{ float16{100} };
+    CHECK_EQUAL(dv_hundred.significand(), 1);
+    CHECK_EQUAL(dv_hundred.exponent(), 2);
+
+    // pretty-printing tests
+    //CHECK_EQUAL(to_string(decv_t{ float16{42.1} }), "42.1");
+    //CHECK_EQUAL(to_string(decv_t{ float16{0.1023} }), "0.1023");
+    //CHECK_EQUAL(to_string(decv_t{ float16{0.1022} }), "0.1022");
+
+    // Test that infinity/NaN throws
+    EXPECT_THROW(decv_t{ float16::infinity() }, std::invalid_argument);
+    EXPECT_THROW(decv_t{ float16::negative_infinity() }, std::invalid_argument);
+    EXPECT_THROW(decv_t{ float16::quiet_NaN() }, std::invalid_argument);
+    EXPECT_THROW(decv_t{ float16::signaling_NaN() }, std::invalid_argument);
 }
 
 }

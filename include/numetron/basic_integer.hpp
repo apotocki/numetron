@@ -415,7 +415,14 @@ struct integer_holder : AllocatorT
             ldata = reinterpret_cast<limbs_data const*>(std::rotl(*std::launder(reinterpret_cast<uintptr_t const*>(inplace_limbs_)), 1));
         }
 
-        LimbT const* limbs = std::launder(reinterpret_cast<LimbT const*>(ldata)) + limbs_data_sizeof_in_limbs;
+        LimbT const* limbs = reinterpret_cast<LimbT const*>(ldata) + limbs_data_sizeof_in_limbs;
+        return std::tuple{ ldata, limbs };
+    }
+
+    inline std::tuple<limbs_data*, LimbT*> allocated_data_and_limbs()
+    {
+        limbs_data* ldata = allocated_data();
+        LimbT* limbs = reinterpret_cast<LimbT*>(ldata) + limbs_data_sizeof_in_limbs;
         return std::tuple{ ldata, limbs };
     }
 
@@ -891,6 +898,9 @@ public:
     template <std::unsigned_integral ShiftOperandT>
     inline basic_integer& operator<<= (ShiftOperandT r) { *this = *this << r; return *this; }
 
+    template <std::unsigned_integral ShiftOperandT>
+    inline basic_integer& operator>>= (ShiftOperandT r) { *this = *this >> r; return *this; }
+
     // return self / divider, r -> self
     basic_integer div_qr(basic_integer_view<LimbT> divider);
     
@@ -1085,6 +1095,10 @@ basic_integer<LimbT, N, AllocatorT> basic_integer<LimbT, N, AllocatorT>::div_qr(
             qih.init_zero();
             return;
         }
+        if (!sh) {
+            sh = sl.back();
+            sl = sl.first(sl.size() - 1);
+        }
 
         auto [dh, dl] = divider.limbs();
         unsigned int dh_cnt = dh ? 1 : 0;
@@ -1095,7 +1109,7 @@ basic_integer<LimbT, N, AllocatorT> basic_integer<LimbT, N, AllocatorT>::div_qr(
         }
         if (!dh) {
             dh = dl.back();
-            dl = dl.subspan(0, dl.size() - 1);
+            dl = dl.first(dl.size() - 1);
         }
 
         auto alloc = qih.inplace_allocator();
@@ -1104,7 +1118,7 @@ basic_integer<LimbT, N, AllocatorT> basic_integer<LimbT, N, AllocatorT>::div_qr(
             alloc.allocate(qsz),
             0, qsz, !(sgn() + divider.sgn()) ? -1 : 1
         };
-        SCOPE_EXCEPTIONAL_EXIT([&alloc, &result] { alloc.deallocate(get<0>(result), get<2>(result)); });
+        NUMETRON_SCOPE_EXCEPTIONAL_EXIT([&alloc, &result] { alloc.deallocate(get<0>(result), get<2>(result)); });
 
         ///
         //std::array<LimbT, 32> buff;
@@ -1116,22 +1130,32 @@ basic_integer<LimbT, N, AllocatorT> basic_integer<LimbT, N, AllocatorT>::div_qr(
 
         std::span<LimbT> q{ get<0>(result), qsz };
         //sh = arithmetic::udiv<LimbT>(sh, sl, { daux, dsz }, { daux_tmp, dsz }, &q.back());
-        sh = limb_arithmetic::udiv<LimbT>(sh, sl, dh, dl, &q.back(), std::allocator<LimbT>{});
+        size_t newsz;
+        if (dl.empty()) {
+            sh = limb_arithmetic::udivby1<LimbT>(sh, sl, dh, q);
+            newsz = sh ? 1 : 0;
+        } else {
+            sh = limb_arithmetic::udiv<LimbT>(sh, sl, dh, dl, &q.back(), std::allocator<LimbT>{});
+            newsz = sl.size() + (sh ? 1 : 0);
+        }
         std::get<1>(result) = qsz - (q.back() ? 0 : 1);
 
         qih.init(result); // numetron::div_qr<LimbT>(sh, sl, sgn(), divider, qih.inplace_allocator()));
 
         LimbT & ctl = aholder_.ctl_limb();
         if (alloc_holder::is_inplaced(ctl)) {
-            size_t newsz = sl.size() + (sh ? 1 : 0);
             if (actualN == newsz) {
                 alloc_holder::inplaced_set_high_limb(ctl, sh);
-            } else { // newsz < actualN => sh is a part of inplace limbs, just update size
+            } else if (newsz) { // newsz < actualN
                 alloc_holder::inplaced_truncate(ctl, newsz);
+                aholder_.inplace_limbs_[newsz - 1] = sh;
+            } else {
+                aholder_.init_zero();
             }
         } else { // sh is already updated (because allocated), just update size
-            detail::limbs_data* ldata = aholder_.allocated_data();
-            ldata->size = static_cast<uint32_t>(sl.size() + (sh ? 1 : 0));
+            auto [ldata, limbs] = aholder_.allocated_data_and_limbs();
+            ldata->size = static_cast<uint32_t>(newsz);
+            if (newsz && sh) limbs[newsz - 1] = sh;
         }
     });
 }
@@ -1426,6 +1450,12 @@ template <std::unsigned_integral LimbT, size_t LN, std::unsigned_integral NT, ty
 inline basic_integer<LimbT, LN, AllocatorLT> operator<< (basic_integer<LimbT, LN, AllocatorLT> const& l, NT n)
 {
     return l.build_new([lv = (basic_integer_view<LimbT>)l, n](auto& ih) { ih.init(shift_left(lv, n, ih.inplace_allocator())); });
+}
+
+template <std::unsigned_integral LimbT, size_t LN, std::unsigned_integral NT, typename AllocatorLT>
+inline basic_integer<LimbT, LN, AllocatorLT> operator>> (basic_integer<LimbT, LN, AllocatorLT> const& l, NT n)
+{
+    return l.build_new([lv = (basic_integer_view<LimbT>)l, n](auto& ih) { ih.init(shift_right(lv, n, ih.inplace_allocator())); });
 }
 
 template <std::unsigned_integral LimbT, size_t LN, std::unsigned_integral NT, typename AllocatorLT>

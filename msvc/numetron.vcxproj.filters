@@ -25,6 +25,9 @@
     <Filter Include="numetron\config">
       <UniqueIdentifier>{b2ca48de-ea29-43e8-b9dc-b9309833db46}</UniqueIdentifier>
     </Filter>
+    <Filter Include="numetron\limb_arithmetic">
+      <UniqueIdentifier>{3ec5867c-89ec-47af-9b0d-840d52cc4fa8}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="..\src\arch\x86_64\k8\mul_basecase.asm">
@@ -62,6 +65,8 @@
     <None Include="..\src\arch\README.md">
       <Filter>asm</Filter>
     </None>
+    <None Include="..\README.md" />
+    <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\numetron\arithmetic.hpp">
@@ -117,6 +122,15 @@
     </ClInclude>
     <ClInclude Include="..\include\numetron\detail\small_array.hpp">
       <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\config\start_lifetime.hpp">
+      <Filter>numetron\config</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

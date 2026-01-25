@@ -12,6 +12,8 @@
 #include "ct.hpp"
 #include "config/cmath.hpp"
 
+#include "limb_arithmetic/udiv.hpp"
+
 namespace numetron {
 
 // limbs are destructed during the string conversion

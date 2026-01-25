@@ -23,13 +23,14 @@
     <ClInclude Include="..\include\numetron\basic_decimal.hpp" />
     <ClInclude Include="..\include\numetron\basic_integer.hpp" />
     <ClInclude Include="..\include\numetron\config\cmath.hpp" />
+    <ClInclude Include="..\include\numetron\config\start_lifetime.hpp" />
     <ClInclude Include="..\include\numetron\ct.hpp" />
     <ClInclude Include="..\include\numetron\decimal_arithmetic.hpp" />
     <ClInclude Include="..\include\numetron\decimal_view.hpp" />
-    <ClInclude Include="..\include\numetron\detail\base_case.hpp" />
     <ClInclude Include="..\include\numetron\detail\hash.hpp" />
     <ClInclude Include="..\include\numetron\detail\scope_exit.hpp" />
     <ClInclude Include="..\include\numetron\detail\small_array.hpp" />
+    <ClInclude Include="..\include\numetron\external\dragonbox.h" />
     <ClInclude Include="..\include\numetron\float16.hpp" />
     <ClInclude Include="..\include\numetron\integer_view.hpp" />
     <ClInclude Include="..\include\numetron\integer_view_arithmetic.hpp" />
@@ -38,6 +39,8 @@
     <ClInclude Include="..\include\numetron\limbs_from_string.hpp" />
     <ClInclude Include="..\include\numetron\limbs_to_string.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp" />
     <ClInclude Include="..\tests\test_common.hpp" />
   </ItemGroup>
   <ItemGroup>
@@ -87,15 +90,16 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="src\arch\README.md" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="numetron.vcxproj">
       <Project>{b3da4b02-589c-4f86-b8be-4cccd9faa17b}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="numetron.natvis" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\README.md" />
+    <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
@@ -168,7 +172,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp23</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <PrecompiledHeaderFile />
       <PrecompiledHeaderOutputFile />
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -191,7 +195,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp23</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <PrecompiledHeaderFile />
       <PrecompiledHeaderOutputFile />
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -212,7 +216,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp23</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <PrecompiledHeaderFile />
       <PrecompiledHeaderOutputFile />
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -235,7 +239,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp23</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <PrecompiledHeaderFile />
       <PrecompiledHeaderOutputFile />
       <MultiProcessorCompilation>true</MultiProcessorCompilation>

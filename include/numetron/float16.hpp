@@ -13,6 +13,7 @@
 #include <functional>
 #include <type_traits>
 #include <limits>
+#include <stdexcept>
 
 namespace numetron {
 
@@ -70,6 +71,12 @@ public:
     inline uint16_t to_bits() const noexcept
     {
         return data;
+    }
+
+    inline bool is_finit() const noexcept
+    {
+        uint16_t exp = (data >> 10) & 0x1F;
+        return exp != 0x1F;
     }
 
     // Static methods for special values
@@ -141,6 +148,66 @@ public:
     static constexpr float16 one() noexcept
     {
         return from_bits(0x3C00);  // 1.0
+    }
+
+    // Returns the next representable float16 value greater than the current value.
+    // For +max, returns +infinity.
+    // For -0, returns +denorm_min (smallest positive subnormal).
+    // Behavior is undefined for infinity or NaN inputs.
+    [[nodiscard]] constexpr float16 next_up() const
+    {
+        uint16_t exp = (data >> 10) & 0x1F;
+        uint16_t mant = data & 0x3FF;
+        bool sign = (data & 0x8000) != 0;
+        
+        // Check for NaN or infinity - undefined behavior, throw exception
+        if (exp == 0x1F) {
+            throw std::domain_error("next_up: undefined for infinity or NaN");
+        }
+        
+        if (!sign) {
+            // Positive number (or +0): increment the bit pattern
+            // This works because IEEE 754 format is designed so that
+            // incrementing the bit pattern gives the next larger value
+            return from_bits(data + 1);
+        } else {
+            // Negative number (or -0)
+            if (data == 0x8000) {
+                // -0 -> +denorm_min (smallest positive subnormal)
+                return from_bits(0x0001);
+            }
+            // Negative: decrement magnitude (decrement bit pattern)
+            return from_bits(data - 1);
+        }
+    }
+    
+    // Returns the next representable float16 value less than the current value.
+    // For -max, returns -infinity.
+    // For +0, returns -denorm_min (largest negative subnormal, closest to zero).
+    // Behavior is undefined for infinity or NaN inputs.
+    [[nodiscard]] constexpr float16 next_down() const
+    {
+        uint16_t exp = (data >> 10) & 0x1F;
+        uint16_t mant = data & 0x3FF;
+        bool sign = (data & 0x8000) != 0;
+        
+        // Check for NaN or infinity - undefined behavior, throw exception
+        if (exp == 0x1F) {
+            throw std::domain_error("next_down: undefined for infinity or NaN");
+        }
+        
+        if (sign) {
+            // Negative number (or -0): increment the bit pattern (increases magnitude)
+            return from_bits(data + 1);
+        } else {
+            // Positive number (or +0)
+            if (data == 0x0000) {
+                // +0 -> -denorm_min (smallest negative subnormal)
+                return from_bits(0x8001);
+            }
+            // Positive: decrement bit pattern (decreases value)
+            return from_bits(data - 1);
+        }
     }
 
     template <std::floating_point T>
@@ -319,7 +386,7 @@ inline float16::float16(T f32val) noexcept
     const uint8_t exp32 = f32data >> 23;
     const int8_t exp32_diff = exp32 - 127;
 
-    uint16_t exp16 = 0;
+    uint16_t exp16;
     uint16_t frac16 = frac32 >> 13;
 
     if (exp32 == 0xff || exp32_diff > 15) {
@@ -336,6 +403,18 @@ inline float16::float16(T f32val) noexcept
         frac16 = 0;
     } else if (!exp16 && exp32) {
         frac16 = (0x200 | (frac16 >> 1)) >> (17 - exp32_diff);
+    } else {
+        uint32_t round_bits = frac32 & 0x1FFF;  // 0-12 bits
+        uint32_t half = 0x1000; // 12bit = 0.5
+
+        if (round_bits > half) {
+            frac16++;
+        } else if (round_bits == half) {
+            // = 0.5: ties-to-even
+            if (frac16 & 1) {
+                frac16++;
+            }
+        }
     }
 
     data = (f32data & 0x80000000) >> 16; // sign

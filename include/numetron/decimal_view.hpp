@@ -11,11 +11,16 @@
 #include <iterator>
 #include <string>
 #include <iosfwd>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 #include "integer_view.hpp"
 #include "basic_integer.hpp"
-
+#include "float16.hpp"
 #include "detail/hash.hpp"
+
+#include "external/dragonbox.h"
 
 namespace numetron {
 
@@ -46,6 +51,33 @@ public:
         exponent_ = e;
     }
 
+    template <std::floating_point T>
+    explicit basic_decimal_view(T value)
+    {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument("floating-point value must be finite");
+        }
+        
+        if (value == 0.0) {
+            significand_ = 0;
+            exponent_ = 0;
+            return;
+        }
+        
+        auto result = jkj::dragonbox::to_decimal(value, jkj::dragonbox::policy::trailing_zero::remove);
+        
+        auto sig = result.significand;
+        int64_t exp = result.exponent;
+        
+        significand_ = sig;
+        if (result.is_negative) {
+            significand_ = -significand_;
+        }
+        exponent_ = exp;
+    }
+
+    explicit basic_decimal_view(float16 value);
+    
     inline bool is_negative() const noexcept { return significand_.is_negative(); }
     inline int sgn() const noexcept { return significand_.sgn(); }
 
@@ -171,6 +203,193 @@ std::strong_ordering operator<=> (basic_decimal_view<LimbT> const& lhs, basic_de
     }
 }
 
+#if 1
+template <std::unsigned_integral LimbT>
+basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
+{
+    uint16_t bits = value.to_bits();
+
+    bool is_negative = (bits & 0x8000) != 0;
+    uint16_t exp_bits = (bits >> 10) & 0x1F;
+    uint16_t mant_bits = bits & 0x3FF;
+
+    if (exp_bits == 0x1F) {
+        throw std::invalid_argument("floating-point value must be finite");
+    }
+
+    if (exp_bits == 0 && mant_bits == 0) {
+        significand_ = 0;
+        exponent_ = 0;
+        return;
+    }
+
+    int binary_exp;
+    uint32_t significand;
+
+    if (exp_bits == 0) {
+        // Subnormal
+        significand = mant_bits;
+        binary_exp = -24;
+    } else {
+        // Normal
+        significand = 1024 + mant_bits;
+        binary_exp = static_cast<int>(exp_bits) - 25;
+    }
+
+    // Remove trailing binary zeros
+    while ((significand & 1) == 0) {
+        significand >>= 1;
+        ++binary_exp;
+    }
+
+    int64_t decimal_exp = 0;
+    uint64_t sig = significand;
+
+    if (binary_exp >= 0) {
+        sig <<= binary_exp;
+    } else {
+        int neg_exp = -binary_exp;
+        decimal_exp = binary_exp;
+
+        // Compute 5^neg_exp (max neg_exp = 24, 5^24 fits in uint64_t)
+        static constexpr uint64_t pow5_table[] = {
+            1ULL, 5ULL, 25ULL, 125ULL, 625ULL, 3125ULL, 15625ULL, 78125ULL,
+            390625ULL, 1953125ULL, 9765625ULL, 48828125ULL, 244140625ULL,
+            1220703125ULL, 6103515625ULL, 30517578125ULL, 152587890625ULL,
+            762939453125ULL, 3814697265625ULL, 19073486328125ULL,
+            95367431640625ULL, 476837158203125ULL, 2384185791015625ULL,
+            11920928955078125ULL, 59604644775390625ULL
+        };
+        sig *= pow5_table[neg_exp];
+    }
+
+    // Remove trailing decimal zeros
+    while (sig && (sig % 10) == 0) {
+        sig /= 10;
+        ++decimal_exp;
+    }
+
+    significand_ = static_cast<LimbT>(sig);
+    if (is_negative) {
+        significand_ = -significand_;
+    }
+    exponent_ = decimal_exp;
+}
+
+#else
+
+template <std::unsigned_integral LimbT>
+basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
+{
+    // Compute 5^neg_exp (max neg_exp = 24, 5^24 fits in uint64_t)
+    static constexpr uint64_t pow5_table[] = {
+        1ULL, 5ULL, 25ULL, 125ULL, 625ULL, 3125ULL, 15625ULL, 78125ULL,
+        390625ULL, 1953125ULL, 9765625ULL, 48828125ULL, 244140625ULL,
+        1220703125ULL, 6103515625ULL, 30517578125ULL, 152587890625ULL,
+        762939453125ULL, 3814697265625ULL, 19073486328125ULL,
+        95367431640625ULL, 476837158203125ULL, 2384185791015625ULL,
+        11920928955078125ULL, 59604644775390625ULL
+    };
+
+    auto exact = [](float16 v) -> std::tuple<uint64_t, int64_t, bool> {
+        uint16_t bits = v.to_bits();
+        bool is_negative = (bits & 0x8000) != 0;
+        uint16_t exp_bits = (bits >> 10) & 0x1F;
+        
+        if (exp_bits == 0x1F) {
+            throw std::invalid_argument("floating-point value must be finite");
+        }
+
+        uint16_t mant_bits = bits & 0x3FF;
+        
+        if (exp_bits == 0 && mant_bits == 0) return { 0, 0, false };
+
+        int binary_exp;
+        uint32_t significand;
+
+        if (exp_bits == 0) {
+            // Subnormal
+            significand = mant_bits;
+            binary_exp = -24;
+        } else {
+            // Normal
+            significand = 1024 + mant_bits;
+            binary_exp = static_cast<int>(exp_bits) - 25;
+        }
+
+        // Remove trailing binary zeros
+        while ((significand & 1) == 0) {
+            significand >>= 1;
+            ++binary_exp;
+        }
+
+        int64_t decimal_exp = 0;
+        uint64_t sig = significand;
+
+        if (binary_exp >= 0) {
+            sig <<= binary_exp;
+        } else {
+            int neg_exp = -binary_exp;
+            decimal_exp = binary_exp;
+            sig *= pow5_table[neg_exp];
+        }
+
+        return { sig, decimal_exp, is_negative };
+    };
+
+    auto to_float = [](uint64_t s, int64_t e, bool is_negative) -> float {
+        float val = static_cast<float>(s);
+        if (e > 0) {
+            for (int64_t i = 0; i < e; ++i) val *= 10.0f;
+        } else {
+            for (int64_t i = 0; i < -e; ++i) val /= 10.0f;
+        }
+        return is_negative ? -val : val;
+    };
+
+    auto [sig, decimal_exp, is_negative] = exact(value); // get exact decimal representation first
+    float orig = to_float(sig, decimal_exp, is_negative);
+
+    // Try to shorten by removing last digit
+    while (sig >= 10) {
+        uint64_t base = sig / 10;
+        int remainder = sig % 10;
+        int64_t new_exp = decimal_exp + 1;
+        if (!remainder) {
+            sig = base;
+            decimal_exp = new_exp;
+            continue;
+        } else if (remainder >= 5) {
+            float16 nup = is_negative ? value.next_down() : value.next_up();
+            if (!nup.is_finit()) break;
+            if (std::abs((float)nup - orig) < to_float(1, decimal_exp, false)) break;
+            float rounded = to_float(base + 1, new_exp, is_negative);
+            
+            if (std::abs(rounded - orig) > std::abs(orig - (float)nup) / 2) break;
+            sig = base + 1;
+            decimal_exp = new_exp;
+            continue;
+        } else { // remainder < 5
+            float16 ndown = is_negative ? value.next_up() : value.next_down();
+            if (!ndown.is_finit()) break;
+            if (std::abs((float)ndown - orig) < to_float(1, decimal_exp, false)) break;
+            float rounded = to_float(base, new_exp, is_negative);
+            if (std::abs(rounded - orig) > std::abs(orig - (float)ndown) / 2) break;
+            sig = base;
+            decimal_exp = new_exp;
+            continue;
+        }
+    }
+
+    significand_ = sig;
+    if (is_negative) {
+        significand_ = -significand_;
+    }
+    exponent_ = decimal_exp;
+}
+
+#endif
+
 template <std::unsigned_integral LimbT>
 inline std::string to_string(basic_decimal_view<LimbT> const& val)
 {
@@ -178,9 +397,6 @@ inline std::string to_string(basic_decimal_view<LimbT> const& val)
     bool reversed;
 
     int sgn = val.sgn();
-    if (!sgn) {
-        result = std::string("0"sv);
-    }
     if (sgn < 0) result.push_back('-');
     size_t offset = result.size();
 

@@ -63,18 +63,21 @@
     </MASM>
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\README.md" />
     <None Include="..\src\arch\README.md" />
     <None Include="..\src\arch\x86_64\alderlake\mul_basecase.s" />
     <None Include="..\src\arch\x86_64\core2\mul_basecase.s" />
     <None Include="..\src\arch\x86_64\k8\mul_basecase.s" />
     <None Include="..\src\arch\x86_64\detect_mul_basecase.s" />
     <None Include="..\src\arch\x86_64\detect_platform.s" />
+    <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\numetron\arithmetic.hpp" />
     <ClInclude Include="..\include\numetron\basic_decimal.hpp" />
     <ClInclude Include="..\include\numetron\basic_integer.hpp" />
     <ClInclude Include="..\include\numetron\config\cmath.hpp" />
+    <ClInclude Include="..\include\numetron\config\start_lifetime.hpp" />
     <ClInclude Include="..\include\numetron\ct.hpp" />
     <ClInclude Include="..\include\numetron\decimal_arithmetic.hpp" />
     <ClInclude Include="..\include\numetron\decimal_view.hpp" />
@@ -89,6 +92,8 @@
     <ClInclude Include="..\include\numetron\limbs_from_string.hpp" />
     <ClInclude Include="..\include\numetron\limbs_to_string.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
@@ -163,6 +168,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -180,6 +186,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -195,6 +202,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -212,6 +220,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>
