@@ -15,12 +15,22 @@
 #include <limits>
 #include <stdexcept>
 
-#if defined(_MSC_VER)
-#  include <intrin.h>
-#elif (defined(__F16C__) || (defined(_MSC_VER) && (defined(__AVX2__) || defined(__F16C__)))) && (defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64))
-#  include <immintrin.h>
+#if defined(_MSC_VER) && defined(__AVX2__)
+#   include <intrin.h>
+#endif
+
+// F16C intrinsics detection
+// MSVC: uses _mm_cvtps_ph / _mm_cvtph_ps (vector intrinsics) with /arch:AVX2 or /arch:AVX
+// GCC/Clang: uses _cvtss_sh / _cvtsh_ss (scalar intrinsics) with -mf16c
+#if defined(_MSC_VER) && (defined(__AVX2__) || defined(__AVX__))
+#   include <immintrin.h>
+#   define NUMETRON_F16C_MSVC 1
+#elif (defined(__F16C__)) && (defined(__i386__) || defined(__x86_64__))
+#   include <immintrin.h>
+#   define NUMETRON_F16C_GCC 1
 #elif defined(__aarch64__) && (defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC))
-#  include <arm_neon.h>
+#   include <arm_neon.h>
+#   define NUMETRON_F16C_ARM 1
 #endif
 
 namespace numetron {
@@ -389,11 +399,18 @@ requires(sizeof(T) == 4)
 inline float16::float16(T f32val) noexcept
 {
     uint32_t f32data = std::bit_cast<uint32_t>(f32val);
-#if defined(__aarch64__) && (defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC))
+#if defined(NUMETRON_F16C_ARM)
     // AArch64 FP16: use NEON conversions (float <-> __fp16)
     __fp16 h = static_cast<__fp16>(static_cast<float>(f32val));
     data = std::bit_cast<uint16_t>(h);
-#elif (defined(__F16C__) || (defined(_MSC_VER) && (defined(__AVX2__) || defined(__F16C__)))) && defined(__F16CINTRIN_H)
+#elif defined(NUMETRON_F16C_MSVC)
+    // MSVC: use vector intrinsics and extract scalar
+    // Note: _mm_cvtps_ph imm8 must be 0-7 (only rounding mode bits, no _MM_FROUND_NO_EXC)
+    __m128 v = _mm_set_ss(f32val);
+    __m128i h = _mm_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT);
+    data = static_cast<uint16_t>(_mm_extract_epi16(h, 0));
+#elif defined(NUMETRON_F16C_GCC)
+    // GCC/Clang: use scalar intrinsics
     data = _cvtss_sh(f32val, 0);
 #else
     const uint32_t frac32 = f32data & 0x7fffff;
@@ -540,11 +557,17 @@ inline float16::float16(T f64val) noexcept
 template <std::floating_point T>
 inline float16::operator T() const noexcept
 {
-#if defined(__aarch64__) && (defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC))
+#if defined(NUMETRON_F16C_ARM)
     __fp16 h = std::bit_cast<__fp16>(data);
     return static_cast<T>(static_cast<float>(h));
-#elif (defined(__F16C__) || (defined(_MSC_VER) && (defined(__AVX2__) || defined(__F16C__)))) && defined(__F16CINTRIN_H)
-    return _cvtsh_ss(data);
+#elif defined(NUMETRON_F16C_MSVC)
+    // MSVC: use vector intrinsics and extract scalar
+    __m128i h = _mm_cvtsi32_si128(data);
+    __m128 v = _mm_cvtph_ps(h);
+    return static_cast<T>(_mm_cvtss_f32(v));
+#elif defined(NUMETRON_F16C_GCC)
+    // GCC/Clang: use scalar intrinsics
+    return static_cast<T>(_cvtsh_ss(data));
 #else
     uint32_t exponent = (data >> 10) & 0x1F;
     uint32_t mantissa = (data & 0x3FF);
@@ -573,9 +596,8 @@ inline float16::operator T() const noexcept
     f32data |= static_cast<uint32_t>(data & 0x8000) << 16;
     f32data |= (mantissa << 13);
 
-    return std::bit_cast<float>(f32data);
+    return static_cast<T>(std::bit_cast<float>(f32data));
 #endif
-
 }
 
 // Helper function for compile-time validation
