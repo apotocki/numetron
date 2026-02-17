@@ -15,6 +15,14 @@
 #include <limits>
 #include <stdexcept>
 
+#if defined(_MSC_VER)
+#  include <intrin.h>
+#elif (defined(__F16C__) || (defined(_MSC_VER) && (defined(__AVX2__) || defined(__F16C__)))) && (defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64))
+#  include <immintrin.h>
+#elif defined(__aarch64__) && (defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC))
+#  include <arm_neon.h>
+#endif
+
 namespace numetron {
 
 class float16
@@ -381,7 +389,13 @@ requires(sizeof(T) == 4)
 inline float16::float16(T f32val) noexcept
 {
     uint32_t f32data = std::bit_cast<uint32_t>(f32val);
-#ifndef __F16CINTRIN_H
+#if defined(__aarch64__) && (defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC))
+    // AArch64 FP16: use NEON conversions (float <-> __fp16)
+    __fp16 h = static_cast<__fp16>(static_cast<float>(f32val));
+    data = std::bit_cast<uint16_t>(h);
+#elif (defined(__F16C__) || (defined(_MSC_VER) && (defined(__AVX2__) || defined(__F16C__)))) && defined(__F16CINTRIN_H)
+    data = _cvtss_sh(f32val, 0);
+#else
     const uint32_t frac32 = f32data & 0x7fffff;
     const uint8_t exp32 = f32data >> 23;
     const int8_t exp32_diff = exp32 - 127;
@@ -420,8 +434,6 @@ inline float16::float16(T f32val) noexcept
     data = (f32data & 0x80000000) >> 16; // sign
     data |= exp16 << 10;
     data |= frac16;
-#else
-    data = _cvtss_sh(f32val, 0);
 #endif
 }
 
@@ -528,10 +540,15 @@ inline float16::float16(T f64val) noexcept
 template <std::floating_point T>
 inline float16::operator T() const noexcept
 {
-#ifndef __F16CINTRIN_H
+#if defined(__aarch64__) && (defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC))
+    __fp16 h = std::bit_cast<__fp16>(data);
+    return static_cast<T>(static_cast<float>(h));
+#elif (defined(__F16C__) || (defined(_MSC_VER) && (defined(__AVX2__) || defined(__F16C__)))) && defined(__F16CINTRIN_H)
+    return _cvtsh_ss(data);
+#else
     uint32_t exponent = (data >> 10) & 0x1F;
     uint32_t mantissa = (data & 0x3FF);
-    
+
     uint32_t f32data;
 
     if (exponent == 0x1f) {
@@ -557,8 +574,6 @@ inline float16::operator T() const noexcept
     f32data |= (mantissa << 13);
 
     return std::bit_cast<float>(f32data);
-#else
-    return _cvtsh_ss(data);
 #endif
 
 }
@@ -669,7 +684,7 @@ inline bool operator== (numetron::float16 const& l, T const& r) noexcept
 {
     // Handle NaN cases first - NaN should not equal anything, including itself
     if (std::isnan(r)) {
-        return false; // NaN is never equal to anything
+        return false;
     }
     
     // Check if float16 is NaN or infinity
