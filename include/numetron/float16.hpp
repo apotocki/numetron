@@ -398,7 +398,6 @@ template <std::floating_point T>
 requires(sizeof(T) == 4)
 inline float16::float16(T f32val) noexcept
 {
-    uint32_t f32data = std::bit_cast<uint32_t>(f32val);
 #if defined(NUMETRON_F16C_ARM)
     // AArch64 FP16: use NEON conversions (float <-> __fp16)
     __fp16 h = static_cast<__fp16>(static_cast<float>(f32val));
@@ -413,6 +412,7 @@ inline float16::float16(T f32val) noexcept
     // GCC/Clang: use scalar intrinsics
     data = _cvtss_sh(f32val, 0);
 #else
+    uint32_t f32data = std::bit_cast<uint32_t>(f32val);
     const uint32_t frac32 = f32data & 0x7fffff;
     const uint8_t exp32 = f32data >> 23;
     const int8_t exp32_diff = exp32 - 127;
