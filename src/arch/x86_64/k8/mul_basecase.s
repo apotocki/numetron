@@ -1,6 +1,7 @@
 	.text
 	.align	16, 0x90
 	.globl	__k8_mul_basecase
+	.hidden	__k8_mul_basecase
 	.type	__k8_mul_basecase,@function
 	
 __k8_mul_basecase:

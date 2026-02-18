@@ -1,6 +1,7 @@
 	.text
 	.align	16, 0x90
 	.globl	__alderlake_mul_basecase
+	.hidden	__alderlake_mul_basecase
 	.type	__alderlake_mul_basecase,@function
 
 # extern "C" void __alderlake_mul_basecase(uint64_t* rp, uint64_t* up, size_t un, uint64_t* vp, uint64_t vn);

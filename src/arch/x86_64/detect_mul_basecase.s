@@ -6,12 +6,15 @@
 	.align	16, 0x90
 
     .globl __k8_mul_basecase
+    .hidden __k8_mul_basecase
     .type __k8_mul_basecase, @function
 
     .globl __core2_mul_basecase
+    .hidden __core2_mul_basecase
     .type __core2_mul_basecase, @function
 
     .globl __alderlake_mul_basecase
+    .hidden __alderlake_mul_basecase
     .type __alderlake_mul_basecase, @function
 
 	.globl	detect_mul_basecase

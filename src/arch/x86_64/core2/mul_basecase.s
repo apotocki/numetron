@@ -1,6 +1,7 @@
 	.text
 	.align	32, 0x90
 	.globl	__core2_mul_basecase
+	.hidden	__core2_mul_basecase
 	.type	__core2_mul_basecase,@function
 	
 __core2_mul_basecase:
