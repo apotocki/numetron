@@ -215,7 +215,6 @@ inline constexpr T uadd1ca(T a, T b, T& ca) noexcept
 #if defined(__clang__) && defined(__aarch64__)
         ca += __builtin_uaddl_overflow(a, b, &a);
         return a;
-    }
 #endif
 #if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
         __asm__(

@@ -64,6 +64,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\README.md" />
+    <None Include="..\src\arch\aarch64\detect_mul_basecase.s" />
     <None Include="..\src\arch\README.md" />
     <None Include="..\src\arch\x86_64\alderlake\mul_basecase.s" />
     <None Include="..\src\arch\x86_64\core2\mul_basecase.s" />
