@@ -863,6 +863,10 @@ public:
         aholder_.do_move(rhs.aholder_);
     }
 
+    inline explicit basic_decimal(AllocatorT const& alloc) noexcept
+        : aholder_{ alloc }
+    {}
+
     template <std::integral T>
     inline basic_decimal(T value, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ value, alloc }
@@ -903,7 +907,7 @@ public:
         return *this;
     }
 
-    static std::expected<basic_decimal, std::exception_ptr> from_string(std::string_view str, AllocatorT const& alloc = AllocatorT{}) noexcept
+    static std::expected<basic_decimal, std::exception_ptr> from_string(std::string_view& str, AllocatorT const& alloc = AllocatorT{}) noexcept
     {
         basic_decimal result(alloc);
         if (auto eptr = from_decimal_string(result.aholder_, str); eptr) {
