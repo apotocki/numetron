@@ -28,6 +28,9 @@
     <Filter Include="numetron\limb_arithmetic">
       <UniqueIdentifier>{3ec5867c-89ec-47af-9b0d-840d52cc4fa8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="asm\aarch64">
+      <UniqueIdentifier>{8b0468ad-844c-4cd9-ae57-298308617e1e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="..\src\arch\x86_64\k8\mul_basecase.asm">
@@ -67,6 +70,9 @@
     </None>
     <None Include="..\README.md" />
     <None Include="..\THIRD_PARTY_LICENSES.md" />
+    <None Include="..\src\arch\aarch64\detect_mul_basecase.s">
+      <Filter>asm\aarch64</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\numetron\arithmetic.hpp">
