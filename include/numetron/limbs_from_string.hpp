@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cmath>
 
+#include "limb_arithmetic/umul1.hpp"
 #include "limb_arithmetic.hpp"
 
 namespace numetron::detail {

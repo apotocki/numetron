@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="msvc/numetron.vcxproj" Id="b3da4b02-589c-4f86-b8be-4cccd9faa17b" />
+  <Project Path="msvc/numetron_tests.vcxproj" Id="1e5afc80-42fa-4bf2-bb36-846acc3fe6c5" />
+</Solution>
