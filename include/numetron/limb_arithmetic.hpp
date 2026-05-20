@@ -391,26 +391,7 @@ inline void uxor(std::span<const LimbT> u, std::span<const LimbT> v, std::span<L
     }
 }
 
-// prereq: size(r) >= u.size()
-// returns carry
-template <std::unsigned_integral LimbT, typename InputIteratorT, typename ResultIteratorT>
-inline LimbT uadd1(InputIteratorT u, size_t usz, LimbT v, ResultIteratorT r, LimbT c = 0) noexcept
-{
-    if (!usz) {
-        auto [hc, s] = numetron::arithmetic::uadd1(v, c);
-        *r = s;
-        return hc;
-    }
-    auto [hc, s] = numetron::arithmetic::uadd1<LimbT>(*u, v, c);
-    *r = s;
-    while (hc) {
-        if (!--usz) break;
-        ++u;
-        ++r;
-        std::tie(hc, *r) = numetron::arithmetic::uadd1<LimbT>(*u, hc);
-    }
-    return hc;
-}
+
 
 // inplace version
 template <std::unsigned_integral LimbT>

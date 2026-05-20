@@ -86,8 +86,8 @@ void mul_subtest()
 void mul_test()
 {
 
-    mul_subtest();
-#if 0
+    //mul_subtest();
+#if 1
     using integer_t = basic_integer<uint64_t, 1>;
 
     char const* path = std::getenv("TESTS_HOME");
@@ -125,7 +125,7 @@ void mul_test()
             data_set.emplace_back(std::move(u), std::move(v), std::move(r));
         }
     }
-    std::cout << "loaded #" << data_set.size() << "\n";
+    std::cout << "loaded #" << data_set.size() << std::endl;
 
     // test multiplication
     for (int attempt = 0; attempt < 50; ++attempt) {
@@ -149,7 +149,7 @@ void mul_test()
             }
         }
         auto finish = std::chrono::steady_clock::now();
-        std::cout << "done in: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " microseconds \n";
+        std::cout << "done in: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " microseconds " << std::endl;
     }
 #endif
 }

@@ -10,6 +10,27 @@
 
 namespace numetron::limb_arithmetic {
 
+// prereq: size(r) >= u.size()
+// returns carry
+template <std::unsigned_integral LimbT, typename InputIteratorT, typename ResultIteratorT>
+inline LimbT uadd1(InputIteratorT u, size_t usz, LimbT v, ResultIteratorT r, LimbT c = 0) noexcept
+{
+    if (!usz) {
+        auto [hc, s] = numetron::arithmetic::uadd1(v, c);
+        *r = s;
+        return hc;
+    }
+    auto [hc, s] = numetron::arithmetic::uadd1<LimbT>(*u, v, c);
+    *r = s;
+    while (hc) {
+        if (!--usz) break;
+        ++u;
+        ++r;
+        std::tie(hc, *r) = numetron::arithmetic::uadd1<LimbT>(*u, hc);
+    }
+    return hc;
+}
+
 // Unsigned add u[0..n) += v[0..n) inplace, where n is ve - v. Returns carry.
 template <std::unsigned_integral LimbT>
 inline LimbT uadd_inplace(LimbT* u, LimbT const* v, LimbT const* ve) noexcept
@@ -76,5 +97,6 @@ inline unsigned char uadd_unchecked(LimbT uh, std::span<const LimbT> u, LimbT vh
 {
     return uadd_unchecked<LimbT>(uh, u.data(), u.data() + u.size(), vh, v.data(), v.data() + v.size(), rb);
 }
+
 
 }

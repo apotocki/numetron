@@ -190,7 +190,7 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
     // c2_abs = d_u * d_v  (non-negative product of absolute differences)
     // -----------------------------------------------------------------------
     int sign = sign_u * sign_v;
-    size_t c2_sz;
+    size_t c2_sz = 0;
     if (sign) {
         LimbT* c2e = umul_dispatch(d_u, d_buf_n, d_v, n2, c2_tmp, alloc);
         while (c2e != c2_tmp && !*(c2e - 1)) { --c2e; }

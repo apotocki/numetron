@@ -133,8 +133,9 @@ public:
     }
 
     // Deallocate must be called in strict LIFO order.
-    void deallocate(void* ptr, std::size_t bytes, std::size_t alignment = alignof(std::max_align_t)) noexcept
+    void deallocate(void* ptr, std::size_t bytes, std::size_t = alignof(std::max_align_t)) noexcept
     {
+        (void)bytes; // alignment is not needed for deallocation, but we require it to match the allocation signature
         assert(m_top);
         // The pointer must be at the top of the current slab.
         std::size_t off = aligned_offset_for(m_top, ptr);
