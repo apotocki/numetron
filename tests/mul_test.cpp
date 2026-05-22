@@ -86,8 +86,8 @@ void mul_subtest()
 void mul_test()
 {
 
-    //mul_subtest();
-#if 1
+    mul_subtest();
+#if 0
     using integer_t = basic_integer<uint64_t, 1>;
 
     char const* path = std::getenv("TESTS_HOME");

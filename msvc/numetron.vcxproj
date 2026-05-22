@@ -97,6 +97,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\platform.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\thresholds.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_2x2.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_3x3.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_core.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\uadd.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp" />

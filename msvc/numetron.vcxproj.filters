@@ -31,6 +31,9 @@
     <Filter Include="asm\aarch64">
       <UniqueIdentifier>{8b0468ad-844c-4cd9-ae57-298308617e1e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="numetron\limb_arithmetic\toom">
+      <UniqueIdentifier>{c357ad59-4fd3-4ddd-93b0-c1da285ef8fb}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="..\src\arch\x86_64\k8\mul_basecase.asm">
@@ -173,6 +176,15 @@
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_2x2.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_3x3.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_core.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

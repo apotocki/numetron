@@ -25,6 +25,7 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
     }
 
     if (is_karatsuba_applicable(u.size(), v.size())) {
+        //return umul_karatsuba(u, v, std::move(alloc));
         return toom_engine<2,2>::umul(u, v, std::move(alloc));
     }
 
