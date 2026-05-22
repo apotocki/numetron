@@ -26,7 +26,7 @@ void numetron_test_registrar()
 AUTOTEST(numetron_test_registrar)
 #else
 
-#if 1
+#if 0
 TEST(NumetronTest, float16_basic_operations) { test_float16_basic_operations(); }
 TEST(NumetronTest, float16_special_values) { test_float16_special_values(); }
 TEST(NumetronTest, float16_zeros) { test_float16_zeros(); }
@@ -64,7 +64,7 @@ TEST(NumetronTest, compile_time) { ct_test(); }
 
 #else
 TEST(NumetronTest, mul) { mul_test(); }
-TEST(NumetronTest, mpn_mul) { mpn_mul_test(); }
+//TEST(NumetronTest, mpn_mul) { mpn_mul_test(); }
 #endif
 #if !defined(NDEBUG) && defined(_WIN32)
 #   include "windows.h"

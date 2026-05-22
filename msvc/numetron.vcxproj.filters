@@ -165,5 +165,14 @@
     <ClInclude Include="..\include\numetron\detail\stack_allocator.hpp">
       <Filter>numetron\detail</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_engine.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_plan.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

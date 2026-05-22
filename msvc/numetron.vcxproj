@@ -96,6 +96,7 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\platform.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\thresholds.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\uadd.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp" />
@@ -103,6 +104,8 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul1.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_basecase.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_plan.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_engine.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\usub.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

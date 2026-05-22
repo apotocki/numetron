@@ -6,15 +6,26 @@
 
 #include "umul_basecase.hpp"
 #include "umul_karatsuba.hpp"
+#include "toom_engine.hpp"
 
 namespace numetron::limb_arithmetic {
+
+inline bool is_toom3_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= NUMETRON_TOOM3_THRESHOLD && 3 * vn > un;
+}
 
 template <std::unsigned_integral LimbT, typename AllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
 inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
 {
+    if (is_toom3_applicable(u.size(), v.size())) {
+        return toom_engine<3, 3>::umul(u, v, std::move(alloc));
+    }
+
     if (is_karatsuba_applicable(u.size(), v.size())) {
-        return umul_karatsuba(u, v, std::move(alloc));
+        return toom_engine<2,2>::umul(u, v, std::move(alloc));
     }
 
     size_t rsz = u.size() + v.size();

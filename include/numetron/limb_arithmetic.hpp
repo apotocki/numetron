@@ -16,8 +16,10 @@
 #define NUMETRON_PLATFORM_AUTODETECT
 
 #include "limb_arithmetic/usub.hpp"
-#include "limb_arithmetic/umul.hpp"
 #include "limb_arithmetic/umul_karatsuba.hpp"
+#include "limb_arithmetic/toom_plan.hpp"
+#include "limb_arithmetic/toom_engine.hpp"
+#include "limb_arithmetic/umul.hpp"
 
 //#define NUMETRON_PLATFORM_ALDERLAKE
 //#define NUMETRON_PLATFORM_CORE2
