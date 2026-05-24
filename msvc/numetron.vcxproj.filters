@@ -34,6 +34,9 @@
     <Filter Include="numetron\limb_arithmetic\toom">
       <UniqueIdentifier>{c357ad59-4fd3-4ddd-93b0-c1da285ef8fb}</UniqueIdentifier>
     </Filter>
+    <Filter Include="numetron\external">
+      <UniqueIdentifier>{4fa1c969-40ed-44cd-b488-084b159105c9}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="..\src\arch\x86_64\k8\mul_basecase.asm">
@@ -185,6 +188,12 @@
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom_core.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\detail\assert.hpp">
+      <Filter>numetron\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\external\dragonbox.h">
+      <Filter>numetron\external</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

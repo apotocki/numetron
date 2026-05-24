@@ -13,6 +13,8 @@
 #include <utility>
 #include <concepts>
 
+#include "numetron/detail/assert.hpp"
+
 #include "umul_karatsuba.hpp"   // detail::uabs_diff, detail::umul_dispatch
 #include "udivby1.hpp"
 #include "numetron/detail/stack_allocator.hpp"
@@ -45,7 +47,7 @@ inline void slot_clear(toom_slot<LimbT>& s)
 template <std::unsigned_integral LimbT>
 inline void slot_copy(toom_slot<LimbT>& dst, toom_slot<LimbT> const& src)
 {
-    assert(dst.cap >= src.len);
+    NUMETRON_ASSERT(dst.cap >= src.len);
     if (src.len) std::memcpy(dst.ptr, src.ptr, src.len * sizeof(LimbT));
     dst.len = src.len;
     dst.sign = src.sign;
@@ -66,8 +68,8 @@ inline int slot_cmp_mag(toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
 template <std::unsigned_integral LimbT>
 inline void slot_sub_mag_ge(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
 {
-    assert(slot_cmp_mag(a, b) >= 0);
-    assert(dst.cap >= a.len);
+    NUMETRON_ASSERT(slot_cmp_mag(a, b) >= 0);
+    NUMETRON_ASSERT(dst.cap >= a.len);
     if (&dst != &a && a.len) {
         std::memcpy(dst.ptr, a.ptr, a.len * sizeof(LimbT));
     }
@@ -86,7 +88,7 @@ template <std::unsigned_integral LimbT>
 inline void slot_add_mag(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
 {
     const size_t m = (std::max)(a.len, b.len);
-    assert(dst.cap >= m + 1);
+    NUMETRON_ASSERT(dst.cap >= m + 1);
     if (a.len) {
         std::memcpy(dst.ptr, a.ptr, a.len * sizeof(LimbT));
     }
@@ -108,7 +110,7 @@ inline void slot_add_mag(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_
 template <std::unsigned_integral LimbT>
 inline void slot_set_positive(toom_slot<LimbT>& dst, std::span<const LimbT> src)
 {
-    assert(dst.cap >= src.size());
+    NUMETRON_ASSERT(dst.cap >= src.size());
     if (!src.empty()) std::memcpy(dst.ptr, src.data(), src.size() * sizeof(LimbT));
     dst.len = src.size();
     dst.sign = dst.len ? 1 : 0;
@@ -182,7 +184,7 @@ inline void slot_mul_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, Lim
         slot_copy(dst, a);
         return;
     }
-    assert(dst.cap >= a.len + 1);
+    NUMETRON_ASSERT(dst.cap >= a.len + 1);
     LimbT* out = dst.ptr;
     LimbT hi = umul1<LimbT>(a.ptr, a.ptr + a.len, k, out);
     dst.len = a.len;
@@ -200,23 +202,23 @@ inline void slot_divexact_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a
         slot_clear(dst);
         return;
     }
-    assert(dst.cap >= a.len);
+    NUMETRON_ASSERT(dst.cap >= a.len);
     LimbT rem = udivby1<LimbT>(std::span<const LimbT>{a.ptr, a.len}, d, std::span<LimbT>{dst.ptr, a.len});
-    assert(rem == 0);
+    NUMETRON_ASSERT(rem == 0);
     dst.len = a.len;
     dst.sign = a.sign;
     slot_trim(dst);
 }
 
-template <std::unsigned_integral LimbT>
-inline void slot_mul_dispatch(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
+template <std::unsigned_integral LimbT, typename ScratchAllocatorT>
+inline void slot_mul_dispatch(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b, ScratchAllocatorT scratch_alloc)
 {
     if (!a.sign || !b.sign) {
         slot_clear(dst);
         return;
     }
-    assert(dst.cap >= a.len + b.len);
-    LimbT* re = detail::umul_dispatch(a.ptr, a.len, b.ptr, b.len, dst.ptr, numetron::detail::stack_allocator<LimbT>{});
+    NUMETRON_ASSERT(dst.cap >= a.len + b.len);
+    LimbT* re = detail::umul_dispatch(a.ptr, a.len, b.ptr, b.len, dst.ptr, scratch_alloc);
     dst.len = static_cast<size_t>(re - dst.ptr);
     dst.sign = a.sign * b.sign;
     slot_trim(dst);
@@ -226,7 +228,7 @@ template <std::unsigned_integral LimbT>
 inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> const& c, size_t shift)
 {
     if (!c.sign) return;
-    assert(c.sign > 0);
+    NUMETRON_ASSERT(c.sign > 0);
     if (shift >= rsz) return;
 
     const size_t avail = rsz - shift;
@@ -239,15 +241,21 @@ inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> c
 
 enum class toom_op : unsigned char
 {
-    load_part_u,
-    load_part_v,
+    // dst(tmp) <- 0
     clear,
+    // dst(tmp) <- src0
     copy,
+    // dst(tmp) <- src0 + src1 (signed slots)
     add,
+    // dst(tmp) <- src0 - src1 (signed slots)
     sub,
+    // dst(tmp) <- src0 * imm
     mul_small,
+    // dst(tmp) <- src0 / imm, exact division is required (remainder must be 0)
     divexact_small,
+    // dst(tmp) <- src0 * src1
     mul_block,
+    // rb += src0 << (imm * chunk) limbs
     compose_shifted,
 };
 
@@ -261,6 +269,7 @@ enum class toom_mem_kind : unsigned short
 
 struct toom_ref
 {
+    // Packed ref: [kind:2 bits | expr/id:14 bits]
     unsigned short bits = 0;
 };
 
@@ -282,9 +291,13 @@ struct toom_ref
 struct toom_instr
 {
     toom_op op;
+    // Destination ref (expected tmp for all ops except compose_shifted where dst is ignored)
     toom_ref dst;
+    // Primary source ref
     toom_ref src0;
+    // Secondary source ref (used by binary ops)
     toom_ref src1;
+    // Immediate argument (small multiplier/divisor or compose shift index)
     unsigned short imm;
     unsigned short imm2 = 0;
     unsigned short imm3 = 0;

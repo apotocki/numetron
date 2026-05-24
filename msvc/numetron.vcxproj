@@ -82,10 +82,12 @@
     <ClInclude Include="..\include\numetron\ct.hpp" />
     <ClInclude Include="..\include\numetron\decimal_arithmetic.hpp" />
     <ClInclude Include="..\include\numetron\decimal_view.hpp" />
+    <ClInclude Include="..\include\numetron\detail\assert.hpp" />
     <ClInclude Include="..\include\numetron\detail\hash.hpp" />
     <ClInclude Include="..\include\numetron\detail\scope_exit.hpp" />
     <ClInclude Include="..\include\numetron\detail\small_array.hpp" />
     <ClInclude Include="..\include\numetron\detail\stack_allocator.hpp" />
+    <ClInclude Include="..\include\numetron\external\dragonbox.h" />
     <ClInclude Include="..\include\numetron\float16.hpp" />
     <ClInclude Include="..\include\numetron\integer_view.hpp" />
     <ClInclude Include="..\include\numetron\integer_view_arithmetic.hpp" />
