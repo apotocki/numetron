@@ -107,6 +107,8 @@ struct toom_stage_traits<2, 2>
     static constexpr auto const& size_exprs = toom2_size_exprs;
     static constexpr auto const& tmp_layout = toom2_tmp_layout;
     static constexpr unsigned short slab_size_expr_id = 10;
+    static constexpr size_t N = 2;
+    static constexpr size_t M = 2;
 };
 
 } // namespace toom_runtime_detail

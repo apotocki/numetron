@@ -142,11 +142,7 @@ inline void slot_add_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, to
     }
 }
 
-template <std::unsigned_integral LimbT>
-inline toom_slot<LimbT> make_positive_view(std::span<const LimbT> part) noexcept
-{
-    return toom_slot<LimbT>{ const_cast<LimbT*>(part.data()), part.size(), part.size(), part.empty() ? 0 : 1 };
-}
+
 
 template <size_t Parts, std::unsigned_integral LimbT>
 inline std::span<const LimbT> resolve_input_part(std::span<const LimbT> src, size_t chunk, unsigned short part_id)
