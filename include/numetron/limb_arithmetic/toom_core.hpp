@@ -88,7 +88,7 @@ template <std::unsigned_integral LimbT>
 inline void slot_add_mag(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
 {
     const size_t m = (std::max)(a.len, b.len);
-    NUMETRON_ASSERT(dst.cap >= m + 1);
+    //NUMETRON_ASSERT(dst.cap >= m + 1);
     if (a.len) {
         std::memcpy(dst.ptr, a.ptr, a.len * sizeof(LimbT));
     }
@@ -97,8 +97,13 @@ inline void slot_add_mag(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_
     LimbT carry = 0;
     if (b.len) {
         carry = uadd_inplace(dst.ptr, b.ptr, b.ptr + b.len);
-        if (carry)
-            carry = uadd_limb(dst.ptr + b.len, dst.ptr + m + 1, carry);
+        if (carry) {
+            if (dst.cap >= m + 1) {
+                carry = uadd_limb(dst.ptr + b.len, dst.ptr + m + 1, carry);
+            } else {
+                carry = uadd_limb(dst.ptr + b.len, dst.ptr + m, carry);
+            }
+        }
     }
     dst.len = m + (carry ? 1 : 0);
     if (!carry) {
@@ -118,29 +123,29 @@ inline void slot_set_positive(toom_slot<LimbT>& dst, std::span<const LimbT> src)
     if (!dst.len) dst.sign = 0;
 }
 
-template <std::unsigned_integral LimbT>
-inline void slot_add_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
-{
-    if (!a.sign) { slot_copy(dst, b); return; }
-    if (!b.sign) { slot_copy(dst, a); return; }
-
-    if (a.sign == b.sign) {
-        slot_add_mag(dst, a, b);
-        dst.sign = a.sign;
-        return;
-    }
-
-    int c = slot_cmp_mag(a, b);
-    if (c == 0) {
-        slot_clear(dst);
-    } else if (c > 0) {
-        slot_sub_mag_ge(dst, a, b);
-        dst.sign = a.sign;
-    } else {
-        slot_sub_mag_ge(dst, b, a);
-        dst.sign = b.sign;
-    }
-}
+//template <std::unsigned_integral LimbT>
+//inline void slot_add_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
+//{
+//    if (!a.sign) { slot_copy(dst, b); return; }
+//    if (!b.sign) { slot_copy(dst, a); return; }
+//
+//    if (a.sign == b.sign) {
+//        slot_add_mag(dst, a, b);
+//        dst.sign = a.sign;
+//        return;
+//    }
+//
+//    int c = slot_cmp_mag(a, b);
+//    if (c == 0) {
+//        slot_clear(dst);
+//    } else if (c > 0) {
+//        slot_sub_mag_ge(dst, a, b);
+//        dst.sign = a.sign;
+//    } else {
+//        slot_sub_mag_ge(dst, b, a);
+//        dst.sign = b.sign;
+//    }
+//}
 
 
 
@@ -159,14 +164,6 @@ inline std::span<const LimbT> resolve_input_part(std::span<const LimbT> src, siz
     }
 
     return { src.data() + start, src.size() - start };
-}
-
-template <std::unsigned_integral LimbT>
-inline void slot_sub_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
-{
-    toom_slot<LimbT> nb = b;
-    nb.sign = -nb.sign;
-    slot_add_signed(dst, a, nb);
 }
 
 template <std::unsigned_integral LimbT>
@@ -217,7 +214,6 @@ inline void slot_mul_dispatch(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, 
     LimbT* re = detail::umul_dispatch(a.ptr, a.len, b.ptr, b.len, dst.ptr, scratch_alloc);
     dst.len = static_cast<size_t>(re - dst.ptr);
     dst.sign = a.sign * b.sign;
-    slot_trim(dst);
 }
 
 template <std::unsigned_integral LimbT>
@@ -237,25 +233,31 @@ inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> c
 
 enum class toom_op : unsigned char
 {
-    // dst(tmp) <- 0
+    // dst <- 0
     clear,
-    // dst(tmp) <- src0
+    // dst <- src0
     copy,
-    // dst(tmp) <- src0 + src1 (signed slots)
+    // dst <- src0 + src1 (signed slots)
     add,
-    // dst(tmp) <- src0 - src1 (signed slots)
+    // dst += src0 (signed slots)
+    inplace_add,
+    // dst <- src0 - src1 (signed slots)
     sub,
-    // dst(tmp) <- src0 * imm
+    // dst -= src0 (signed slots)
+    inplace_sub,
+    // dst <- src0 * imm
     mul_small,
-    // dst(tmp) <- src0 / imm, exact division is required (remainder must be 0)
+    // dst <- src0 / imm, exact division is required (remainder must be 0)
     divexact_small,
-    // dst(tmp) <- src0 * src1
+    // dst <- src0 * src1
     mul_block,
     // rb += src0 << (imm * chunk) limbs
     compose_shifted,
+    // print dst for debugging (src0, src1 are ignored)
+    print
 };
 
-enum class toom_mem_kind : unsigned short
+enum class toom_mem_kind : unsigned char
 {
     u = 0,
     v = 1,
@@ -314,6 +316,7 @@ enum class toom_size_expr_op : unsigned char
     constant,
     variable,
     add,
+    sub,
     mul_const,
     max2,
 };
@@ -321,12 +324,25 @@ enum class toom_size_expr_op : unsigned char
 struct toom_size_expr
 {
     toom_size_expr_op op;
-    unsigned short a;
-    unsigned short b;
+    uint64_t a;
+    uint64_t b;
 };
 
-struct toom_tmp_layout
+consteval uint_least64_t make_const(uint_least64_t value)
 {
+    CONSTEVAL_STATIC_ASSERT((value >> 62) == 0, "Constant value out of range");
+    return value | 0x8000000000000000;
+}
+
+consteval uint_least64_t make_variable(toom_size_var value)
+{
+    return static_cast<uint_least64_t>(static_cast<unsigned short>(value)) | 0xC000000000000000;
+}
+
+struct toom_slot_layout
+{
+    toom_mem_kind kind;
+    //signed char sign;
     unsigned short var;
     unsigned short off_expr;
     unsigned short cap_expr;

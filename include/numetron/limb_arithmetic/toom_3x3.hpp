@@ -43,27 +43,28 @@ inline constexpr std::array<toom_size_expr, 1> toom3_size_exprs{
     toom_size_expr{ toom_size_expr_op::constant, 0, 0 },
 };
 
-inline constexpr std::array<toom_tmp_layout, 20> toom3_tmp_layout{
-    toom_tmp_layout{ toom3_slots::EA1, 8, 2 },
-    toom_tmp_layout{ toom3_slots::EAM1, 10, 2 },
-    toom_tmp_layout{ toom3_slots::EA2, 12, 3 },
-    toom_tmp_layout{ toom3_slots::EAINF, 15, 1 },
-    toom_tmp_layout{ toom3_slots::EB1, 18, 2 },
-    toom_tmp_layout{ toom3_slots::EBM1, 20, 2 },
-    toom_tmp_layout{ toom3_slots::EB2, 22, 3 },
-    toom_tmp_layout{ toom3_slots::EBINF, 25, 1 },
-    toom_tmp_layout{ toom3_slots::W1, 30, 4 },
-    toom_tmp_layout{ toom3_slots::WM1, 34, 4 },
-    toom_tmp_layout{ toom3_slots::W2, 38, 4 },
-    toom_tmp_layout{ toom3_slots::WINF, 42, 2 },
-    toom_tmp_layout{ toom3_slots::R1, 48, 4 },
-    toom_tmp_layout{ toom3_slots::R2, 52, 4 },
-    toom_tmp_layout{ toom3_slots::R3, 56, 4 },
-    toom_tmp_layout{ toom3_slots::R4, 60, 2 },
-    toom_tmp_layout{ toom3_slots::T0, 62, 4 },
-    toom_tmp_layout{ toom3_slots::T1, 66, 4 },
-    toom_tmp_layout{ toom3_slots::T2, 70, 4 },
-    toom_tmp_layout{ toom3_slots::T3, 74, 4 },
+inline constexpr std::array<toom_slot_layout, 21> toom3_slot_layout{
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EA1, 8, 2 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EAM1, 10, 2 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EA2, 12, 3 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EAINF, 15, 1 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EB1, 18, 2 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EBM1, 20, 2 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EB2, 22, 3 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::EBINF, 25, 1 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::W1, 30, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::WM1, 34, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::W2, 38, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::WINF, 42, 2 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::R1, 48, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::R2, 52, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::R3, 56, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::R4, 60, 2 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::T0, 62, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::T1, 66, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::T2, 70, 4 },
+    toom_slot_layout{ toom_mem_kind::tmp, toom3_slots::T3, 74, 4 },
+    toom_slot_layout{ toom_mem_kind::rb, 0, 0, 2 },
 };
 
 inline constexpr std::array toom3_plan{
@@ -126,8 +127,10 @@ struct toom_stage_traits<3, 3>
 {
     static constexpr auto const& plan = toom3_plan;
     static constexpr auto const& size_exprs = toom3_size_exprs;
-    static constexpr auto const& tmp_layout = toom3_tmp_layout;
+    static constexpr auto const& slot_layout = toom3_slot_layout;
     static constexpr unsigned short slab_size_expr_id = 80;
+    static constexpr size_t N = 3;
+    static constexpr size_t M = 3;
 };
 
 } // namespace toom_runtime_detail

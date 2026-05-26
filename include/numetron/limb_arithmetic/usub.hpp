@@ -52,6 +52,15 @@ inline void usub_unchecked(LimbT const*& ub, LimbT const* ue, LimbT const* vb, L
     }
 }
 
+template <std::unsigned_integral LimbT>
+inline LimbT usub_partial_limb(LimbT const*& ub, LimbT const* ue, LimbT c, LimbT*& rb) noexcept
+{
+    for (; c && ub != ue; ++ub, ++rb) {
+        std::tie(c, *rb) = numetron::arithmetic::usub1(*ub, c);
+    }
+    return c;
+}
+
 // u size must be >= v size
 template <std::unsigned_integral LimbT>
 inline LimbT usub_unchecked(LimbT last_u, LimbT const* ub, LimbT const* ue, LimbT last_v, LimbT const* vb, LimbT const* ve, LimbT*& rb)

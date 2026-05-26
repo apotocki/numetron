@@ -9,6 +9,7 @@
 
 #include "numetron/detail/scope_exit.hpp"
 #include "numetron/detail/stack_allocator.hpp"
+#include "numetron/detail/assert.hpp"
 
 #include "uadd.hpp"
 #include "usub.hpp"
@@ -97,7 +98,7 @@ inline LimbT* umul_dispatch(
     }
 
     if (is_karatsuba_applicable(un, vn)) {
-        return umul_karatsuba_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
+        //return umul_karatsuba_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
     }
     if (vn) {
         return umul_basecase<LimbT>(u, un, v, vn, rb);
@@ -195,6 +196,7 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
         LimbT* c2e = umul_dispatch(d_u, d_buf_n, d_v, n2, c2_tmp, alloc);
         while (c2e != c2_tmp && !*(c2e - 1)) { --c2e; }
         c2_sz = c2e - c2_tmp;
+        print_limbs(c2_tmp, c2_sz, "c2_abs"sv);
     }
 
     // -----------------------------------------------------------------------
@@ -225,6 +227,7 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
             assert(c1_len <= mid_len);
             if (LimbT c = uadd_inplace(mid, c1, c1 + c1_len))
                 uadd_limb(mid + c1_len, re, c);
+            //print_limbs(mid, mid_len, "mid += c1"sv);
         }
 
         // mid += c0
@@ -232,6 +235,7 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
             LimbT c = uadd_inplace(mid, c0_tmp, c0_tmp + (std::min)(2 * n2, mid_len));
             if (c && 2 * n2 < mid_len)
                 uadd_limb(mid + 2 * n2, re, c);
+            //print_limbs(mid, mid_len, "mid += c1 + c0"sv);
         }
 
         // mid -= or += c2_abs
