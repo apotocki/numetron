@@ -5,15 +5,55 @@
 #pragma once
 
 #include "umul_basecase.hpp"
-#include "umul_karatsuba.hpp"
-#include "toom_engine.hpp"
+#include "toom/engine.hpp"
+#include "toom/thresholds.hpp"
+
+#ifdef NUMETRON_EXPLICIT_KARATSUBA
+#   include "umul_karatsuba.hpp"
+#endif
 
 namespace numetron::limb_arithmetic {
+
+inline bool is_karatsuba_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    // Condition is expressed in terms of vn so that Toom-k dispatch is uniform:
+    // each algorithm checks vn >= its threshold and un < k*vn (u fits in k pieces).
+    // For Karatsuba (k=2): vn >= threshold and un < 2*vn.
+    return vn >= NUMETRON_KARATSUBA_THRESHOLD && 2 * vn > un;
+}
 
 inline bool is_toom3_applicable(size_t un, size_t vn) noexcept
 {
     assert(un >= vn);
     return vn >= NUMETRON_TOOM3_THRESHOLD && 3 * vn > un;
+}
+
+template <std::unsigned_integral LimbT, typename AllocatorT>
+inline LimbT* umul_dispatch(
+    const LimbT* u, size_t un,
+    const LimbT* v, size_t vn,
+    LimbT* rb,
+    AllocatorT alloc)
+{
+    while (un > 0 && u[un - 1] == 0) --un;
+    while (vn > 0 && v[vn - 1] == 0) --vn;
+    if (un < vn) {
+        std::swap(u, v);
+        std::swap(un, vn);
+    }
+
+    if (is_karatsuba_applicable(un, vn)) {
+#ifndef NUMETRON_EXPLICIT_KARATSUBA
+        return toom_engine<2, 2>::umul(u, un, v, vn, rb, std::move(alloc));
+#else
+        return detail::umul_karatsuba_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
+#endif
+    }
+    if (vn) {
+        return umul_basecase<LimbT>(u, un, v, vn, rb);
+    }
+    return rb;
 }
 
 template <std::unsigned_integral LimbT, typename AllocatorT>
@@ -25,14 +65,20 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
     //}
 
     if (is_karatsuba_applicable(u.size(), v.size())) {
-        //return umul_karatsuba(u, v, std::move(alloc));
-        return toom_engine<2,2>::umul(u, v, std::move(alloc));
+#ifndef NUMETRON_EXPLICIT_KARATSUBA
+        return toom_engine<2, 2>::umul(u, v, std::move(alloc));
+#else
+        return umul_karatsuba(u, v, std::move(alloc));
+#endif
     }
 
-    size_t rsz = u.size() + v.size();
-    LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
-    LimbT* re = umul_basecase(u.data(), u.size(), v.data(), v.size(), r);
-    return { r, static_cast<size_t>(re - r), rsz };
+    if (!v.empty()) {
+        size_t rsz = u.size() + v.size();
+        LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
+        LimbT* re = umul_basecase(u.data(), u.size(), v.data(), v.size(), r);
+        return { r, static_cast<size_t>(re - r), rsz };
+    }
+    return { nullptr, 0, 0 };
 }
 
 // base case mul with explicit high limbs uh and vh

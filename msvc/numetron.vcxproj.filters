@@ -165,35 +165,32 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\uadd.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\thresholds.hpp">
-      <Filter>numetron\limb_arithmetic</Filter>
-    </ClInclude>
     <ClInclude Include="..\include\numetron\detail\stack_allocator.hpp">
       <Filter>numetron\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_engine.hpp">
-      <Filter>numetron\limb_arithmetic</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_plan.hpp">
-      <Filter>numetron\limb_arithmetic</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\toom.hpp">
-      <Filter>numetron\limb_arithmetic</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_2x2.hpp">
-      <Filter>numetron\limb_arithmetic\toom</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_3x3.hpp">
-      <Filter>numetron\limb_arithmetic\toom</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\numetron\limb_arithmetic\toom_core.hpp">
-      <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\detail\assert.hpp">
       <Filter>numetron\detail</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\external\dragonbox.h">
       <Filter>numetron\external</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\slot.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\core.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\engine.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_2x2.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_3x3.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\thresholds.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

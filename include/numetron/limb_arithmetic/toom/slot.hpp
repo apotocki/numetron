@@ -4,20 +4,24 @@
 
 #pragma once
 
-#include <span>
-#include <memory>
-#include <cassert>
-#include <cstring>
-#include <algorithm>
-#include <array>
-#include <utility>
 #include <concepts>
 
 #include "numetron/detail/assert.hpp"
 
-#include "umul_karatsuba.hpp"   // detail::uabs_diff, detail::umul_dispatch
-#include "udivby1.hpp"
+//#include "numetron/limb_arithmetic/umul_karatsuba.hpp"   // detail::uabs_diff, detail::umul_dispatch
+#include "numetron/limb_arithmetic/udivby1.hpp"
 #include "numetron/detail/stack_allocator.hpp"
+
+namespace numetron::limb_arithmetic {
+
+template <std::unsigned_integral LimbT, typename AllocatorT>
+LimbT* umul_dispatch(
+    const LimbT* u, size_t un,
+    const LimbT* v, size_t vn,
+    LimbT* rb,
+    AllocatorT alloc);
+
+}
 
 namespace numetron::limb_arithmetic::toom_runtime_detail {
 
@@ -52,6 +56,133 @@ inline void slot_copy(toom_slot<LimbT>& dst, toom_slot<LimbT> const& src)
     dst.len = src.len;
     dst.sign = src.sign;
 }
+
+template <std::unsigned_integral LimbT>
+void slot_add_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> a, toom_slot<LimbT> b)
+{
+    slot_trim(a);
+    if (!a.sign) { slot_copy(dst, b); return; }
+    slot_trim(b);
+    if (!b.sign) { slot_copy(dst, a); return; }
+
+    if (a.sign == b.sign) {
+        NUMETRON_ASSERT(dst.cap >= a.len);
+        NUMETRON_ASSERT(dst.cap >= b.len);
+        dst.sign = a.sign;
+        size_t isz = (std::min)(dst.len, a.len);
+        LimbT const* aptr = a.ptr;
+        LimbT* dstptr = dst.ptr;
+        LimbT carry = uadd_partial_unchecked(aptr, b.ptr, b.ptr + isz, dstptr);
+        if (isz < a.len) {
+            std::memcpy(dstptr, aptr, (a.len - isz) * sizeof(LimbT));
+            dst.len = a.len;
+        } else if (isz < b.len) {
+            std::memcpy(dstptr, b.ptr + isz, (b.len - isz) * sizeof(LimbT));
+            dst.len = b.len;
+        } else {
+            dst.len = isz;
+        }
+        if (carry) {
+            carry = uadd_limb(dst.ptr + isz, dst.ptr + dst.len, carry);
+            if (carry) {
+                NUMETRON_ASSERT(dst.cap >= dst.len + 1);
+                if (dst.cap >= dst.len + 1) {
+                    dst.ptr[dst.len] = carry;
+                    ++dst.len;
+                }
+            }
+        }
+        return;
+    }
+
+    NUMETRON_ASSERT(a.len && b.len);
+    LimbT const* plast_a = a.ptr + a.len - 1;
+    LimbT const* plast_b = b.ptr + b.len - 1;
+
+    bool do_swap = false;
+    if (a.len == b.len) {
+        while (*plast_a == *plast_b) {
+            if (plast_a == a.ptr) {
+                dst.len = 0;
+                dst.sign = 0;
+                return;
+            }
+            --plast_a; --plast_b; --a.len;
+        }
+        b.len = a.len;
+        do_swap = *plast_a < *plast_b;
+    }
+    LimbT* dstptr = dst.ptr;
+    if ((a.len < b.len) ^ do_swap) {
+        std::swap(a, b);
+    }
+    LimbT const* aptr = a.ptr;
+    LimbT const* aptr_e = a.ptr + a.len;
+    NUMETRON_ASSERT(dst.cap >= a.len);
+    LimbT borrow = usub_partial_unchecked<LimbT>(aptr, b.ptr, b.ptr + b.len, dstptr);
+    if (borrow) {
+        borrow = usub_partial_limb(aptr, aptr_e, borrow, dstptr);
+        NUMETRON_ASSERT(!borrow);
+    }
+    dstptr = std::copy(aptr, aptr_e, dstptr);
+    dst.sign = a.sign;
+    dst.len = static_cast<size_t>(dstptr - dst.ptr);
+}
+
+
+template <std::unsigned_integral LimbT>
+void slot_inplace_add(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a)
+{
+    // This path is intentionally window-oriented for rb accumulation:
+    // carry/borrow that cannot be fully propagated inside dst window may be ignored.
+    // It matches Karatsuba-style middle-term accumulation semantics on bounded rb spans.
+    if (!a.sign) { return; }
+    
+    NUMETRON_ASSERT(dst.cap >= a.len);
+
+    if (dst.sign == a.sign) {
+        size_t isz = (std::min)(dst.len, a.len);
+        auto carry = uadd_inplace(dst.ptr, a.ptr, a.ptr + isz);
+
+        if (isz < a.len) {
+            std::memcpy(dst.ptr + isz, a.ptr + isz, (a.len - isz) * sizeof(LimbT));
+            dst.len = a.len;
+        }
+        if (carry) {
+            carry = uadd_limb(dst.ptr + isz, dst.ptr + dst.len, carry);
+            if (carry) {
+                // we can store the carry if there is a storage for it, but we don't require it
+                if (dst.cap >= dst.len + 1) {
+                    dst.ptr[dst.len] = static_cast<LimbT>(carry);
+                    ++dst.len;
+                }
+            }
+        }
+        return;
+    }
+    NUMETRON_ASSERT(dst.len > a.len);
+    auto borrow = usub_inplace(dst.ptr, a.ptr, a.ptr + a.len);
+    if (borrow) {
+        borrow = usub_limb(dst.ptr + a.len, dst.ptr + dst.len, borrow);
+        // just ignore the borrow
+        (void)borrow;
+    }
+}
+
+template <std::unsigned_integral LimbT, typename ScratchAllocatorT>
+inline void slot_mul_dispatch(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b, ScratchAllocatorT scratch_alloc)
+{
+    if (!a.sign || !b.sign) {
+        slot_clear(dst);
+        return;
+    }
+    NUMETRON_ASSERT(dst.cap >= a.len + b.len);
+    LimbT* re = umul_dispatch(a.ptr, a.len, b.ptr, b.len, dst.ptr, scratch_alloc);
+    dst.len = static_cast<size_t>(re - dst.ptr);
+    dst.sign = a.sign * b.sign;
+}
+
+#if 0
 
 template <std::unsigned_integral LimbT>
 inline int slot_cmp_mag(toom_slot<LimbT> const& a, toom_slot<LimbT> const& b)
@@ -147,25 +278,6 @@ inline void slot_set_positive(toom_slot<LimbT>& dst, std::span<const LimbT> src)
 //    }
 //}
 
-
-
-template <size_t Parts, std::unsigned_integral LimbT>
-inline std::span<const LimbT> resolve_input_part(std::span<const LimbT> src, size_t chunk, unsigned short part_id)
-{
-    const size_t idx = static_cast<size_t>(part_id);
-    const size_t start = idx * chunk;
-    if (start >= src.size()) {
-        return {};
-    }
-
-    if (idx + 1 < Parts) {
-        const size_t n = (std::min)(chunk, src.size() - start);
-        return { src.data() + start, n };
-    }
-
-    return { src.data() + start, src.size() - start };
-}
-
 template <std::unsigned_integral LimbT>
 inline void slot_mul_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, LimbT k)
 {
@@ -203,18 +315,7 @@ inline void slot_divexact_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a
     slot_trim(dst);
 }
 
-template <std::unsigned_integral LimbT, typename ScratchAllocatorT>
-inline void slot_mul_dispatch(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b, ScratchAllocatorT scratch_alloc)
-{
-    if (!a.sign || !b.sign) {
-        slot_clear(dst);
-        return;
-    }
-    NUMETRON_ASSERT(dst.cap >= a.len + b.len);
-    LimbT* re = detail::umul_dispatch(a.ptr, a.len, b.ptr, b.len, dst.ptr, scratch_alloc);
-    dst.len = static_cast<size_t>(re - dst.ptr);
-    dst.sign = a.sign * b.sign;
-}
+
 
 template <std::unsigned_integral LimbT>
 inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> const& c, size_t shift)
@@ -231,130 +332,5 @@ inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> c
         uadd_limb(rb + shift + len, rb + rsz, carry);
 }
 
-enum class toom_op : unsigned char
-{
-    // dst <- 0
-    clear,
-    // dst <- src0
-    copy,
-    // dst <- src0 + src1 (signed slots)
-    add,
-    // dst += src0 (signed slots)
-    inplace_add,
-    // dst <- src0 - src1 (signed slots)
-    sub,
-    // dst -= src0 (signed slots)
-    inplace_sub,
-    // dst <- src0 * imm
-    mul_small,
-    // dst <- src0 / imm, exact division is required (remainder must be 0)
-    divexact_small,
-    // dst <- src0 * src1
-    mul_block,
-    // rb += src0 << (imm * chunk) limbs
-    compose_shifted,
-    // print dst for debugging (src0, src1 are ignored)
-    print
-};
-
-enum class toom_mem_kind : unsigned char
-{
-    u = 0,
-    v = 1,
-    rb = 2,
-    tmp = 3,
-};
-
-struct toom_ref
-{
-    // Packed ref: [kind:2 bits | expr/id:14 bits]
-    unsigned short bits = 0;
-};
-
-[[nodiscard]] constexpr toom_ref make_ref(toom_mem_kind kind, unsigned short expr_id) noexcept
-{
-    return toom_ref{ static_cast<unsigned short>((static_cast<unsigned short>(kind) << 14) | (expr_id & 0x3FFF)) };
+#endif
 }
-
-[[nodiscard]] constexpr toom_mem_kind ref_kind(toom_ref ref) noexcept
-{
-    return static_cast<toom_mem_kind>((ref.bits >> 14) & 0x3u);
-}
-
-[[nodiscard]] constexpr unsigned short ref_expr_id(toom_ref ref) noexcept
-{
-    return static_cast<unsigned short>(ref.bits & 0x3FFFu);
-}
-
-struct toom_instr
-{
-    toom_op op;
-    // Destination ref (expected tmp for all ops except compose_shifted where dst is ignored)
-    toom_ref dst;
-    // Primary source ref
-    toom_ref src0;
-    // Secondary source ref (used by binary ops)
-    toom_ref src1;
-    // Immediate argument (small multiplier/divisor or compose shift index)
-    unsigned short imm;
-    unsigned short imm2 = 0;
-    unsigned short imm3 = 0;
-};
-
-enum class toom_size_var : unsigned short
-{
-    un,
-    vn,
-    chunk,
-    u_hi,
-    v_hi,
-    d_buf_n,
-};
-
-enum class toom_size_expr_op : unsigned char
-{
-    constant,
-    variable,
-    add,
-    sub,
-    mul_const,
-    max2,
-};
-
-struct toom_size_expr
-{
-    toom_size_expr_op op;
-    uint64_t a;
-    uint64_t b;
-};
-
-consteval uint_least64_t make_const(uint_least64_t value)
-{
-    CONSTEVAL_STATIC_ASSERT((value >> 62) == 0, "Constant value out of range");
-    return value | 0x8000000000000000;
-}
-
-consteval uint_least64_t make_variable(toom_size_var value)
-{
-    return static_cast<uint_least64_t>(static_cast<unsigned short>(value)) | 0xC000000000000000;
-}
-
-struct toom_slot_layout
-{
-    toom_mem_kind kind;
-    //signed char sign;
-    unsigned short var;
-    unsigned short off_expr;
-    unsigned short cap_expr;
-};
-
-template <size_t>
-inline constexpr bool always_false_v = false;
-
-template <size_t N, size_t M>
-struct toom_stage_traits
-{
-    static_assert(always_false_v<N + M>, "Missing toom_stage_traits specialization for this (N,M)");
-};
-
-} // namespace numetron::limb_arithmetic::toom_runtime_detail

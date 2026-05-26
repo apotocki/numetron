@@ -13,19 +13,9 @@
 
 #include "uadd.hpp"
 #include "usub.hpp"
-#include "umul_basecase.hpp"
-#include "thresholds.hpp"
+//#include "umul_basecase.hpp"
 
 namespace numetron::limb_arithmetic {
-
-inline bool is_karatsuba_applicable(size_t un, size_t vn) noexcept
-{
-    assert(un >= vn);
-    // Condition is expressed in terms of vn so that Toom-k dispatch is uniform:
-    // each algorithm checks vn >= its threshold and un < k*vn (u fits in k pieces).
-    // For Karatsuba (k=2): vn >= threshold and un < 2*vn.
-    return vn >= NUMETRON_KARATSUBA_THRESHOLD && 2 * vn > un;
-}
 
 namespace detail {
 
@@ -83,28 +73,28 @@ LimbT* umul_karatsuba_impl(
 
 // Dispatch: use basecase below threshold, Karatsuba above.
 // Strips leading zeros, ensures un >= vn, then routes to the appropriate algorithm.
-template <std::unsigned_integral LimbT, typename AllocatorT>
-inline LimbT* umul_dispatch(
-    const LimbT* u, size_t un,
-    const LimbT* v, size_t vn,
-    LimbT* rb,
-    AllocatorT alloc)
-{
-    while (un > 0 && u[un - 1] == 0) --un;
-    while (vn > 0 && v[vn - 1] == 0) --vn;
-    if (un < vn) {
-        std::swap(u, v);
-        std::swap(un, vn);
-    }
-
-    if (is_karatsuba_applicable(un, vn)) {
-        //return umul_karatsuba_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
-    }
-    if (vn) {
-        return umul_basecase<LimbT>(u, un, v, vn, rb);
-    }
-    return rb;
-}
+//template <std::unsigned_integral LimbT, typename AllocatorT>
+//inline LimbT* umul_dispatch(
+//    const LimbT* u, size_t un,
+//    const LimbT* v, size_t vn,
+//    LimbT* rb,
+//    AllocatorT alloc)
+//{
+//    while (un > 0 && u[un - 1] == 0) --un;
+//    while (vn > 0 && v[vn - 1] == 0) --vn;
+//    if (un < vn) {
+//        std::swap(u, v);
+//        std::swap(un, vn);
+//    }
+//
+//    if (is_karatsuba_applicable(un, vn)) {
+//        //return umul_karatsuba_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
+//    }
+//    if (vn) {
+//        return umul_basecase<LimbT>(u, un, v, vn, rb);
+//    }
+//    return rb;
+//}
 
 // Karatsuba multiplication core (Toom-2).
 //
@@ -196,7 +186,7 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
         LimbT* c2e = umul_dispatch(d_u, d_buf_n, d_v, n2, c2_tmp, alloc);
         while (c2e != c2_tmp && !*(c2e - 1)) { --c2e; }
         c2_sz = c2e - c2_tmp;
-        print_limbs(c2_tmp, c2_sz, "c2_abs"sv);
+        //print_limbs(c2_tmp, c2_sz, "c2_abs"sv);
     }
 
     // -----------------------------------------------------------------------

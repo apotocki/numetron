@@ -13,9 +13,12 @@
 #include <cstring>
 #include <algorithm>
 
-#include "toom_core.hpp"
+#include "numetron/detail/scope_exit.hpp"
+
 #include "toom_2x2.hpp"
-#include "toom_3x3.hpp"
+//#include "toom_3x3.hpp"
+
+#include "numetron/limb_arithmetic/toom/slot.hpp"
 
 namespace numetron::limb_arithmetic::toom_runtime_detail {
 
@@ -38,25 +41,6 @@ struct stage_memory_state
     size_t slab_alloc_len:16 = 0;
     size_t slab_owned:1 = 0;
 };
-
-//template <std::unsigned_integral LimbT>
-//inline toom_slot<LimbT>* get_slots(stage_memory_state<LimbT>& mem)
-//{
-//    constexpr size_t slot_count = SlotCountV;
-//    if constexpr (slot_count == 0) {
-//        return nullptr;
-//    } else {
-//        NUMETRON_ASSERT(mem.slab != nullptr);
-//        NUMETRON_ASSERT(mem.slab_alloc_len >= mem.slab_len);
-//
-//        std::byte* slots_storage = reinterpret_cast<std::byte*>(mem.slab + mem.slab_len);
-//        size_t slots_storage_space = (mem.slab_alloc_len - mem.slab_len) * sizeof(LimbT);
-//        void* slots_ptr = slots_storage;
-//        slots_ptr = std::align(alignof(toom_slot<LimbT>), slot_count * sizeof(toom_slot<LimbT>), slots_ptr, slots_storage_space);
-//        NUMETRON_ASSERT(slots_ptr != nullptr);
-//        return static_cast<toom_slot<LimbT>*>(slots_ptr);
-//    }
-//}
 
 template <auto LayoutV, toom_mem_kind KindV>
 consteval size_t required_slot_count()
@@ -88,28 +72,30 @@ template <auto ExpressionsV, uint_least64_t ExprId>
 inline size_t eval_size_expr_ct(toom_size_eval_context const& c)
 {
     constexpr uint_least64_t expr_type = (ExprId >> 62) & 3;
-    if constexpr (expr_type == 1) {
+    if constexpr (expr_type == 0) {
         // Constant value
         return static_cast<size_t>(ExprId & 0x3FFFFFFFFFFFFFFF);
-    } else if constexpr (expr_type == 3) {
+    } else if constexpr (expr_type == 1) {
         // Variable
         return eval_size_var<static_cast<toom_size_var>(ExprId & 0x3FFFFFFFFFFFFFFF)>(c);
     } else {
-        static_assert(ExprId < ExpressionsV.size(), "Expression ID out of bounds");
-        constexpr toom_size_expr e = ExpressionsV[ExprId];
+        static_assert(expr_type == 2, "Unsupported expression handle tag");
+        constexpr size_t idx = static_cast<size_t>(ExprId & expr_payload_mask);
+        static_assert(idx < ExpressionsV.count, "Expression ID out of bounds");
+        constexpr expr_node e = ExpressionsV.nodes[idx];
         constexpr toom_size_expr_op op = e.op;
         if constexpr (op == toom_size_expr_op::constant) {
-            return static_cast<size_t>(e.a);
+            return eval_size_expr_ct<ExpressionsV, e.a.raw>(c);
         } else if constexpr (op == toom_size_expr_op::variable) {
-            return eval_size_var<static_cast<toom_size_var>(e.a)>(c);
+            return eval_size_expr_ct<ExpressionsV, e.a.raw>(c);
         } else if constexpr (op == toom_size_expr_op::add) {
-            return eval_size_expr_ct<ExpressionsV, e.a>(c) + eval_size_expr_ct<ExpressionsV, e.b>(c);
+            return eval_size_expr_ct<ExpressionsV, e.a.raw>(c) + eval_size_expr_ct<ExpressionsV, e.b.raw>(c);
         } else if constexpr (op == toom_size_expr_op::sub) {
-            return eval_size_expr_ct<ExpressionsV, e.a>(c) - eval_size_expr_ct<ExpressionsV, e.b>(c);
+            return eval_size_expr_ct<ExpressionsV, e.a.raw>(c) - eval_size_expr_ct<ExpressionsV, e.b.raw>(c);
         } else if constexpr (op == toom_size_expr_op::mul_const) {
-            return eval_size_expr_ct<ExpressionsV, e.a>(c) * static_cast<size_t>(e.b);
+            return eval_size_expr_ct<ExpressionsV, e.a.raw>(c) * eval_size_expr_ct<ExpressionsV, e.b.raw>(c);
         } else if constexpr (op == toom_size_expr_op::max2) {
-            return (std::max)(eval_size_expr_ct<ExpressionsV, e.a>(c), eval_size_expr_ct<ExpressionsV, e.b>(c));
+            return (std::max)(eval_size_expr_ct<ExpressionsV, e.a.raw>(c), eval_size_expr_ct<ExpressionsV, e.b.raw>(c));
         } else {
             static_assert(false, "Unsupported toom size expression op");
         }
@@ -121,10 +107,10 @@ template <auto ExpressionsV>
 inline size_t eval_size_expr_rt(toom_size_eval_context const& c, uint_least64_t expr_id)
 {
     uint_least64_t expr_type = (expr_id >> 62) & 3;
-    if (expr_type == 1) {
+    if (expr_type == 0) {
         // Constant value
         return static_cast<size_t>(expr_id & 0x3FFFFFFFFFFFFFFF);
-    } else if (expr_type == 3) {
+    } else if (expr_type == 1) {
         // Variable
         switch (static_cast<toom_size_var>(expr_id & 0x3FFFFFFFFFFFFFFF)) {
         case toom_size_var::un: return c.un;
@@ -136,33 +122,27 @@ inline size_t eval_size_expr_rt(toom_size_eval_context const& c, uint_least64_t 
         }
     }
 
-    constexpr auto const& exprs = ExpressionsV;
-    if (expr_id >= exprs.size()) {
-        return static_cast<size_t>(expr_id) * c.chunk;
+    if (expr_type != 2) {
+        return 0;
     }
 
-    const toom_size_expr e = exprs[expr_id];
+    constexpr auto const& exprs = ExpressionsV;
+    const size_t idx = static_cast<size_t>(expr_id & expr_payload_mask);
+    NUMETRON_ASSERT(idx < exprs.count);
+    const expr_node e = exprs.nodes[idx];
     switch (e.op) {
-    case toom_size_expr_op::constant:
-        return static_cast<size_t>(e.a);
-    case toom_size_expr_op::variable:
-        switch (static_cast<toom_size_var>(e.a)) {
-        case toom_size_var::un: return c.un;
-        case toom_size_var::vn: return c.vn;
-        case toom_size_var::chunk: return c.chunk;
-        case toom_size_var::u_hi: return c.u_hi;
-        case toom_size_var::v_hi: return c.v_hi;
-        case toom_size_var::d_buf_n: return c.d_buf_n;
-        }
-        return 0;
     case toom_size_expr_op::add:
-        return eval_size_expr_rt<ExpressionsV>(c, e.a) + eval_size_expr_rt<ExpressionsV>(c, e.b);
+        return eval_size_expr_rt<ExpressionsV>(c, e.a.raw) + eval_size_expr_rt<ExpressionsV>(c, e.b.raw);
     case toom_size_expr_op::sub:
-        return eval_size_expr_rt<ExpressionsV>(c, e.a) - eval_size_expr_rt<ExpressionsV>(c, e.b);
+        return eval_size_expr_rt<ExpressionsV>(c, e.a.raw) - eval_size_expr_rt<ExpressionsV>(c, e.b.raw);
     case toom_size_expr_op::mul_const:
-        return eval_size_expr_rt<ExpressionsV>(c, e.a) * static_cast<size_t>(e.b);
+        return eval_size_expr_rt<ExpressionsV>(c, e.a.raw) * eval_size_expr_rt<ExpressionsV>(c, e.b.raw);
     case toom_size_expr_op::max2:
-        return (std::max)(eval_size_expr_rt<ExpressionsV>(c, e.a), eval_size_expr_rt<ExpressionsV>(c, e.b));
+        return (std::max)(eval_size_expr_rt<ExpressionsV>(c, e.a.raw), eval_size_expr_rt<ExpressionsV>(c, e.b.raw));
+    case toom_size_expr_op::constant:
+        return eval_size_expr_rt<ExpressionsV>(c, e.a.raw);
+    case toom_size_expr_op::variable:
+        return eval_size_expr_rt<ExpressionsV>(c, e.a.raw);
     }
     return 0;
 }
@@ -179,11 +159,11 @@ inline void init_slot_state_entry(
     constexpr toom_slot_layout e = TraitsT::slot_layout[I];
 
     if constexpr (e.kind == toom_mem_kind::tmp) {
-        const size_t off = eval_size_expr_ct<exprs, e.off_expr>(size_ctx);
-        const size_t cap = eval_size_expr_ct<exprs, e.cap_expr>(size_ctx);
+        const size_t off = eval_size_expr_ct<exprs, e.off_expr.raw>(size_ctx);
+        const size_t cap = eval_size_expr_ct<exprs, e.cap_expr.raw>(size_ctx);
 #ifndef NDEBUG
-        NUMETRON_ASSERT((off == eval_size_expr_rt<exprs>(size_ctx, e.off_expr)));
-        NUMETRON_ASSERT((cap == eval_size_expr_rt<exprs>(size_ctx, e.cap_expr)));
+        NUMETRON_ASSERT((off == eval_size_expr_rt<exprs>(size_ctx, e.off_expr.raw)));
+        NUMETRON_ASSERT((cap == eval_size_expr_rt<exprs>(size_ctx, e.cap_expr.raw)));
 #endif
         NUMETRON_ASSERT(mem.slots != nullptr);
         NUMETRON_ASSERT(off + cap <= mem.slab_len);
@@ -193,11 +173,11 @@ inline void init_slot_state_entry(
         s.len = 0;
         s.sign = 0;
     } else if constexpr (e.kind == toom_mem_kind::rb) {
-        const size_t off = eval_size_expr_ct<exprs, e.off_expr>(size_ctx);
-        const size_t cap = eval_size_expr_ct<exprs, e.cap_expr>(size_ctx);
+        const size_t off = eval_size_expr_ct<exprs, e.off_expr.raw>(size_ctx);
+        const size_t cap = eval_size_expr_ct<exprs, e.cap_expr.raw>(size_ctx);
 #ifndef NDEBUG
-        NUMETRON_ASSERT((off == eval_size_expr_rt<exprs>(size_ctx, e.off_expr)));
-        NUMETRON_ASSERT((cap == eval_size_expr_rt<exprs>(size_ctx, e.cap_expr)));
+        NUMETRON_ASSERT((off == eval_size_expr_rt<exprs>(size_ctx, e.off_expr.raw)));
+        NUMETRON_ASSERT((cap == eval_size_expr_rt<exprs>(size_ctx, e.cap_expr.raw)));
 #endif
         NUMETRON_ASSERT(mem.slots != nullptr);
         NUMETRON_ASSERT(off + cap <= rsz);
@@ -249,117 +229,26 @@ inline void init_slot_state(
 }
 
 template <std::unsigned_integral LimbT>
-void slot_add_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> a, toom_slot<LimbT> b)
-{
-    slot_trim(a);
-    if (!a.sign) { slot_copy(dst, b); return; }
-    slot_trim(b);
-    if (!b.sign) { slot_copy(dst, a); return; }
-
-    if (a.sign == b.sign) {
-        NUMETRON_ASSERT(dst.cap >= a.len);
-        NUMETRON_ASSERT(dst.cap >= b.len);
-        dst.sign = a.sign;
-        size_t isz = (std::min)(dst.len, a.len);
-        LimbT const* aptr = a.ptr;
-        LimbT* dstptr = dst.ptr;
-        LimbT carry = uadd_partial_unchecked(aptr, b.ptr, b.ptr + isz, dstptr);
-        if (isz < a.len) {
-            std::memcpy(dstptr, aptr, (a.len - isz) * sizeof(LimbT));
-            dst.len = a.len;
-        } else if (isz < b.len) {
-            std::memcpy(dstptr, b.ptr + isz, (b.len - isz) * sizeof(LimbT));
-            dst.len = b.len;
-        } else {
-            dst.len = isz;
-        }
-        if (carry) {
-            carry = uadd_limb(dst.ptr + isz, dst.ptr + dst.len, carry);
-            if (carry) {
-                NUMETRON_ASSERT(dst.cap >= dst.len + 1);
-                if (dst.cap >= dst.len + 1) {
-                    dst.ptr[dst.len] = carry;
-                    ++dst.len;
-                }
-            }
-        }
-        return;
-    }
-
-    NUMETRON_ASSERT(a.len && b.len);
-    LimbT const* plast_a = a.ptr + a.len - 1;
-    LimbT const* plast_b = b.ptr + b.len - 1;
-
-    bool do_swap = false;
-    if (a.len == b.len) {
-        while (*plast_a == *plast_b) {
-            if (plast_a == a.ptr) {
-                dst.len = 0;
-                dst.sign = 0;
-                return;
-            }
-            --plast_a; --plast_b; --a.len;
-        }
-        b.len = a.len;
-        do_swap = *plast_a < *plast_b;
-    }
-    LimbT* dstptr = dst.ptr;
-    if ((a.len < b.len) ^ do_swap) {
-        std::swap(a, b);
-    }
-    LimbT const* aptr = a.ptr;
-    LimbT const* aptr_e = a.ptr + a.len;
-    NUMETRON_ASSERT(dst.cap >= a.len);
-    LimbT borrow = usub_partial_unchecked<LimbT>(aptr, b.ptr, b.ptr + b.len, dstptr);
-    if (borrow) {
-        borrow = usub_partial_limb(aptr, aptr_e, borrow, dstptr);
-        NUMETRON_ASSERT(!borrow);
-    }
-    dstptr = std::copy(aptr, aptr_e, dstptr);
-    dst.sign = a.sign;
-    dst.len = static_cast<size_t>(dstptr - dst.ptr);
-}
-
-template <std::unsigned_integral LimbT>
-void slot_inplace_add(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a)
-{
-    if (!a.sign) { return; }
-    
-    NUMETRON_ASSERT(dst.cap >= a.len);
-
-    if (dst.sign == a.sign) {
-        size_t isz = (std::min)(dst.len, a.len);
-        auto carry = uadd_inplace(dst.ptr, a.ptr, a.ptr + isz);
-
-        if (isz < a.len) {
-            std::memcpy(dst.ptr + isz, a.ptr + isz, (a.len - isz) * sizeof(LimbT));
-            dst.len = a.len;
-        }
-        if (carry) {
-            carry = uadd_limb(dst.ptr + isz, dst.ptr + dst.len, carry);
-            if (carry) {
-                // we can store the carry if there is a storage for it, but we don't require it
-                if (dst.cap >= dst.len + 1) {
-                    dst.ptr[dst.len] = static_cast<LimbT>(carry);
-                    ++dst.len;
-                }
-            }
-        }
-        return;
-    }
-    NUMETRON_ASSERT(dst.len > a.len);
-    auto borrow = usub_inplace(dst.ptr, a.ptr, a.ptr + a.len);
-    if (borrow) {
-        borrow = usub_limb(dst.ptr + a.len, dst.ptr + dst.len, borrow);
-        // just ignore the borrow
-        (void)borrow;
-    }
-}
-
-template <std::unsigned_integral LimbT>
 inline toom_slot<LimbT> make_positive_view(std::span<const LimbT> part) noexcept
 {
     return toom_slot<LimbT>{ const_cast<LimbT*>(part.data()), part.size(), part.size(), part.empty() ? 0 : 1 };
+}
+
+template <size_t Parts, std::unsigned_integral LimbT>
+inline std::span<const LimbT> resolve_input_part(std::span<const LimbT> src, size_t chunk, unsigned short part_id)
+{
+    const size_t idx = static_cast<size_t>(part_id);
+    const size_t start = idx * chunk;
+    if (start >= src.size()) {
+        return {};
+    }
+
+    if (idx + 1 < Parts) {
+        const size_t n = (std::min)(chunk, src.size() - start);
+        return { src.data() + start, n };
+    }
+
+    return { src.data() + start, src.size() - start };
 }
 
 template <toom_ref Ref, std::unsigned_integral LimbT, size_t N, size_t M>
@@ -476,7 +365,7 @@ inline void run_toom_stage(
     constexpr size_t slot_count = tmp_slot_count + rb_slot_count;
     stage_memory_state<LimbT> mem;
 
-    const size_t slab_len = eval_size_expr_ct<traits_t::size_exprs, traits_t::slab_size_expr_id>(size_ctx);
+    const size_t slab_len = eval_size_expr_ct<traits_t::size_exprs, traits_t::slab_size_expr_id.raw>(size_ctx);
     const size_t slots_bytes = (tmp_slot_count + rb_slot_count) * sizeof(toom_slot<LimbT>);
     const size_t slots_extra_bytes = slots_bytes + alignof(toom_slot<LimbT>) - 1;
     const size_t slots_extra_limbs = (slots_extra_bytes + sizeof(LimbT) - 1) / sizeof(LimbT);
@@ -519,14 +408,15 @@ namespace numetron::limb_arithmetic {
 template <size_t N, size_t M>
 struct toom_engine
 {
+    static_assert(M > 0, "toom_engine requires M > 0");
+
     template <std::unsigned_integral LimbT, typename AllocatorT>
     requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
     static std::tuple<LimbT*, size_t, size_t>
     umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
     {
         using namespace toom_runtime_detail;
-        static_assert(M > 0, "toom_engine requires M > 0");
-
+        
         const size_t un = u.size();
         const size_t vn = v.size();
 
@@ -552,6 +442,28 @@ struct toom_engine
             std::allocator_traits<AllocatorT>::deallocate(alloc, rb, alloc_sz);
             throw;
         }
+    }
+
+    template <std::unsigned_integral LimbT, typename AllocatorT>
+    static LimbT* umul(
+        const LimbT* u, size_t un,
+        const LimbT* v, size_t vn,
+        LimbT* rb,
+        AllocatorT alloc)
+    {
+        using namespace toom_runtime_detail;
+
+        NUMETRON_ASSERT(un > 0 && vn > 0 && un >= vn);
+
+        const size_t r_sz = un + vn;
+
+        const size_t chunk = (vn + (M - 1)) / M;
+        NUMETRON_ASSERT(chunk > 0);
+
+        std::memset(rb, 0, r_sz * sizeof(LimbT));
+        run_toom_stage<LimbT, N, M>(std::span{u, un}, std::span{v, vn}, rb, r_sz, chunk, alloc,
+            std::make_index_sequence<toom_stage_traits<N, M>::plan.size()>{});
+        return rb + r_sz;
     }
 };
 
