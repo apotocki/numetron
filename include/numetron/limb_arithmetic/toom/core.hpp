@@ -69,11 +69,11 @@ struct toom_instr
     // Destination ref (expected tmp for all ops except compose_shifted where dst is ignored)
     toom_ref dst;
     // Primary source ref
-    toom_ref src0;
+    toom_ref src0 = {};
     // Secondary source ref (used by binary ops)
-    toom_ref src1;
+    toom_ref src1 = {};
     // Immediate argument (small multiplier/divisor or compose shift index)
-    unsigned short imm;
+    unsigned short imm = 0;
     unsigned short imm2 = 0;
     unsigned short imm3 = 0;
 };

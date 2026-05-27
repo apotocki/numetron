@@ -16,7 +16,7 @@
 #include "numetron/detail/scope_exit.hpp"
 
 #include "toom_2x2.hpp"
-//#include "toom_3x3.hpp"
+#include "toom_3x3.hpp"
 
 #include "numetron/limb_arithmetic/toom/slot.hpp"
 
@@ -54,6 +54,19 @@ consteval size_t required_slot_count()
         }
     }
     return found ? static_cast<size_t>(max_idx) + 1 : 0;
+}
+
+template <auto LayoutV>
+consteval bool has_unique_slot_vars()
+{
+    for (size_t i = 0; i < LayoutV.size(); ++i) {
+        for (size_t j = i + 1; j < LayoutV.size(); ++j) {
+            if (LayoutV[i].var == LayoutV[j].var) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 template <toom_size_var V>
@@ -180,25 +193,20 @@ inline void init_slot_state_entry(
         NUMETRON_ASSERT((cap == eval_size_expr_rt<exprs>(size_ctx, e.cap_expr.raw)));
 #endif
         NUMETRON_ASSERT(mem.slots != nullptr);
-        NUMETRON_ASSERT(off + cap <= rsz);
         auto& s = mem.slots[e.var];
+        if (off >= rsz) {
+            s.ptr = rb + rsz;
+            s.cap = 0;
+            s.len = 0;
+            s.sign = 0;
+            return;
+        }
+
+        const size_t clamped_cap = (std::min)(cap, rsz - off);
         s.ptr = rb + off;
-        s.cap = cap;
-        s.len = cap;
-        s.sign = 1;
-
-        //if (off >= rsz) {
-        //    s.ptr = rb + rsz;
-        //    s.cap = 0;
-        //    s.len = 0;
-        //    s.sign = 0;
-        //    return;
-        //}
-
-        //s.ptr = rb + off;
-        //s.cap = (std::min)(rsz - off, 2 * size_ctx.chunk);
-        //s.len = 0;
-        //s.sign = 0;
+        s.cap = clamped_cap;
+        s.len = clamped_cap;
+        s.sign = clamped_cap ? 1 : 0;
     }
 }
 
@@ -256,8 +264,6 @@ inline toom_slot<LimbT> resolve_ref_read(
     stage_memory_state<LimbT>& mem,
     std::span<const LimbT> u,
     std::span<const LimbT> v,
-    LimbT* rb,
-    size_t rsz,
     size_t chunk)
 {
     constexpr toom_mem_kind kind = ref_kind(Ref);
@@ -296,44 +302,44 @@ inline void run_toom_op(
         slot_clear(dst);
     } else if constexpr (op.op == toom_op::copy) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_copy(dst, s0);
     } else if constexpr (op.op == toom_op::add) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
-        auto const s1 = resolve_ref_read<op.src1, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
+        auto const s1 = resolve_ref_read<op.src1, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_add_signed(dst, s0, s1);
     } else if constexpr (op.op == toom_op::inplace_add) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_inplace_add(dst, s0);
     } else if constexpr (op.op == toom_op::sub) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
-        auto const s1 = resolve_ref_read<op.src1, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
+        auto const s1 = resolve_ref_read<op.src1, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_add_signed(dst, s0, toom_slot<LimbT>{ s1.ptr, s1.len, s1.cap, -s1.sign });
     } else if constexpr (op.op == toom_op::inplace_sub) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_inplace_add(dst, toom_slot<LimbT>{ s0.ptr, s0.len, s0.cap, -s0.sign });
     } else if constexpr (op.op == toom_op::mul_small) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_mul_small(dst, s0, static_cast<LimbT>(op.imm));
     } else if constexpr (op.op == toom_op::divexact_small) {
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_divexact_small(dst, s0, static_cast<LimbT>(op.imm));
     } else if constexpr (op.op == toom_op::mul_block) {
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
-        auto const s1 = resolve_ref_read<op.src1, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
+        auto const s1 = resolve_ref_read<op.src1, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
         slot_mul_dispatch(dst, s0, s1, scratch_alloc);
     } else if constexpr (op.op == toom_op::compose_shifted) {
-        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.src0, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         slot_add_shifted_to_result(rb, rsz, s0, static_cast<size_t>(op.imm) * size_ctx.chunk);
     } else if constexpr (op.op == toom_op::print) {
-        auto const s0 = resolve_ref_read<op.dst, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, rb, rsz, size_ctx.chunk);
+        auto const s0 = resolve_ref_read<op.dst, LimbT, TraitsT::N, TraitsT::M>(mem, u, v, size_ctx.chunk);
         print_limbs(s0.ptr, s0.cap, "print"sv);
     } else {
         static_assert(op.op == toom_op::compose_shifted, "Unsupported toom op");
@@ -360,6 +366,8 @@ inline void run_toom_stage(
     };
 
     using traits_t = toom_stage_traits<N, M>;
+    static_assert(has_unique_slot_vars<traits_t::slot_layout>(),
+        "toom slot ids must be unique across slot_layout entries");
     constexpr size_t tmp_slot_count = required_slot_count<traits_t::slot_layout, toom_mem_kind::tmp>();
     constexpr size_t rb_slot_count = required_slot_count<traits_t::slot_layout, toom_mem_kind::rb>();
     constexpr size_t slot_count = tmp_slot_count + rb_slot_count;
@@ -408,7 +416,8 @@ namespace numetron::limb_arithmetic {
 template <size_t N, size_t M>
 struct toom_engine
 {
-    static_assert(M > 0, "toom_engine requires M > 0");
+    static_assert(N > 1, "toom_engine requires N > 1");
+    static_assert(M > 1, "toom_engine requires M > 1");
 
     template <std::unsigned_integral LimbT, typename AllocatorT>
     requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
@@ -430,7 +439,7 @@ struct toom_engine
             const size_t chunk = (vn + (M - 1)) / M;
             NUMETRON_ASSERT(chunk > 0);
 
-            std::memset(rb, 0, alloc_sz * sizeof(LimbT));
+            //std::memset(rb, 0, alloc_sz * sizeof(LimbT));
             run_toom_stage<LimbT, N, M>(u, v, rb, alloc_sz, chunk, alloc,
                 std::make_index_sequence<toom_stage_traits<N, M>::plan.size()>{});
             re = rb + alloc_sz;
@@ -460,7 +469,7 @@ struct toom_engine
         const size_t chunk = (vn + (M - 1)) / M;
         NUMETRON_ASSERT(chunk > 0);
 
-        std::memset(rb, 0, r_sz * sizeof(LimbT));
+        //std::memset(rb, 0, r_sz * sizeof(LimbT));
         run_toom_stage<LimbT, N, M>(std::span{u, un}, std::span{v, vn}, rb, r_sz, chunk, alloc,
             std::make_index_sequence<toom_stage_traits<N, M>::plan.size()>{});
         return rb + r_sz;

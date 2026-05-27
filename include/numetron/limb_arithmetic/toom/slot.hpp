@@ -173,13 +173,73 @@ template <std::unsigned_integral LimbT, typename ScratchAllocatorT>
 inline void slot_mul_dispatch(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, toom_slot<LimbT> const& b, ScratchAllocatorT scratch_alloc)
 {
     if (!a.sign || !b.sign) {
-        slot_clear(dst);
+        std::memset(dst.ptr, 0, dst.len * sizeof(LimbT));
+        dst.sign = 0;
         return;
     }
     NUMETRON_ASSERT(dst.cap >= a.len + b.len);
     LimbT* re = umul_dispatch(a.ptr, a.len, b.ptr, b.len, dst.ptr, scratch_alloc);
-    dst.len = static_cast<size_t>(re - dst.ptr);
-    dst.sign = a.sign * b.sign;
+    size_t result_len = static_cast<size_t>(re - dst.ptr);
+    if (dst.len > result_len) {
+        std::memset(dst.ptr + result_len, 0, (dst.len - result_len) * sizeof(LimbT));
+    } else {
+        dst.len = result_len;
+    }
+    dst.sign = a.sign * b.sign * !!result_len;
+}
+
+////////////
+
+template <std::unsigned_integral LimbT>
+inline void slot_mul_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, LimbT k)
+{
+    if (!a.sign || k == 0) {
+        slot_clear(dst);
+        return;
+    }
+    if (k == 1) {
+        slot_copy(dst, a);
+        return;
+    }
+    NUMETRON_ASSERT(dst.cap >= a.len + 1);
+    LimbT* out = dst.ptr;
+    LimbT hi = umul1<LimbT>(a.ptr, a.ptr + a.len, k, out);
+    dst.len = a.len;
+    if (hi) {
+        dst.ptr[dst.len++] = hi;
+    }
+    dst.sign = a.sign;
+    slot_trim(dst);
+}
+
+template <std::unsigned_integral LimbT>
+inline void slot_divexact_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, LimbT d)
+{
+    if (!a.sign) {
+        slot_clear(dst);
+        return;
+    }
+    NUMETRON_ASSERT(dst.cap >= a.len);
+    LimbT rem = udivby1<LimbT>(std::span<const LimbT>{a.ptr, a.len}, d, std::span<LimbT>{dst.ptr, a.len});
+    NUMETRON_ASSERT(rem == 0);
+    dst.len = a.len;
+    dst.sign = a.sign;
+    slot_trim(dst);
+}
+
+template <std::unsigned_integral LimbT>
+inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> const& c, size_t shift)
+{
+    if (!c.sign) return;
+    NUMETRON_ASSERT(c.sign > 0);
+    if (shift >= rsz) return;
+
+    const size_t avail = rsz - shift;
+    const size_t len = (std::min)(avail, c.len);
+    if (!len) return;
+
+    if (LimbT carry = uadd_inplace(rb + shift, c.ptr, c.ptr + len))
+        uadd_limb(rb + shift + len, rb + rsz, carry);
 }
 
 #if 0
@@ -278,59 +338,13 @@ inline void slot_set_positive(toom_slot<LimbT>& dst, std::span<const LimbT> src)
 //    }
 //}
 
-template <std::unsigned_integral LimbT>
-inline void slot_mul_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, LimbT k)
-{
-    if (!a.sign || k == 0) {
-        slot_clear(dst);
-        return;
-    }
-    if (k == 1) {
-        slot_copy(dst, a);
-        return;
-    }
-    NUMETRON_ASSERT(dst.cap >= a.len + 1);
-    LimbT* out = dst.ptr;
-    LimbT hi = umul1<LimbT>(a.ptr, a.ptr + a.len, k, out);
-    dst.len = a.len;
-    if (hi) {
-        dst.ptr[dst.len++] = hi;
-    }
-    dst.sign = a.sign;
-    slot_trim(dst);
-}
-
-template <std::unsigned_integral LimbT>
-inline void slot_divexact_small(toom_slot<LimbT>& dst, toom_slot<LimbT> const& a, LimbT d)
-{
-    if (!a.sign) {
-        slot_clear(dst);
-        return;
-    }
-    NUMETRON_ASSERT(dst.cap >= a.len);
-    LimbT rem = udivby1<LimbT>(std::span<const LimbT>{a.ptr, a.len}, d, std::span<LimbT>{dst.ptr, a.len});
-    NUMETRON_ASSERT(rem == 0);
-    dst.len = a.len;
-    dst.sign = a.sign;
-    slot_trim(dst);
-}
 
 
 
-template <std::unsigned_integral LimbT>
-inline void slot_add_shifted_to_result(LimbT* rb, size_t rsz, toom_slot<LimbT> const& c, size_t shift)
-{
-    if (!c.sign) return;
-    NUMETRON_ASSERT(c.sign > 0);
-    if (shift >= rsz) return;
 
-    const size_t avail = rsz - shift;
-    const size_t len = (std::min)(avail, c.len);
-    if (!len) return;
 
-    if (LimbT carry = uadd_inplace(rb + shift, c.ptr, c.ptr + len))
-        uadd_limb(rb + shift + len, rb + rsz, carry);
-}
+
+
 
 #endif
 }

@@ -97,7 +97,7 @@ void mul_subtest()
     integer_t r0 = u0 * v0;
     auto r0_limbs = r0.limbs().second;
     auto ref_limbs = ref.limbs().second;
-    for (int i = 0; i < r0.size(); ++i) {
+    for (size_t i = 0; i < r0.size(); ++i) {
         if (r0_limbs[i] != ref_limbs[i]) {
             std::cout << std::dec << "fail [" << i << "]= 0x" << std::hex << r0_limbs[i] << " != " << ref_limbs[i] << "\n";
         }

@@ -43,6 +43,10 @@ inline LimbT* umul_dispatch(
         std::swap(un, vn);
     }
 
+    if (is_toom3_applicable(un, vn)) {
+        return toom_engine<3, 3>::umul(u, un, v, vn, rb, std::move(alloc));
+    }
+
     if (is_karatsuba_applicable(un, vn)) {
 #ifndef NUMETRON_EXPLICIT_KARATSUBA
         return toom_engine<2, 2>::umul(u, un, v, vn, rb, std::move(alloc));

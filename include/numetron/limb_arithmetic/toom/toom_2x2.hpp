@@ -60,7 +60,7 @@ consteval auto make_toom2_spec()
     auto three_n2 = b.mul(n2, 3);
     auto four_n2 = b.mul(n2, 4);
     auto d_plus_n2 = b.add(d_buf_n, n2);
-    auto d_plus_2n2 = b.add(d_buf_n, two_n2);
+    //auto d_plus_2n2 = b.add(d_buf_n, two_n2);
     auto d_plus_3n2 = b.add(d_buf_n, three_n2);
     auto two_d = b.mul(d_buf_n, 2);
     auto slab = b.add(two_d, four_n2);
