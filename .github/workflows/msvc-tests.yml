@@ -26,10 +26,17 @@ jobs:
         id: msvc
         shell: pwsh
         run: |
-            $cl = (Get-Command cl.exe).Source
-            $ver = (Get-Item $cl).VersionInfo.ProductVersion
-            "version=$ver" >> $env:GITHUB_OUTPUT
-    
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $installPath) {
+                throw "Visual Studio with C++ tools not found"
+            }
+
+            $msvcDir = Join-Path $installPath "VC\Tools\MSVC"
+            $version = (Get-ChildItem $msvcDir | Sort-Object Name -Descending | Select-Object -First 1).Name
+
+            "version=$version" >> $env:GITHUB_OUTPUT
+        
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
