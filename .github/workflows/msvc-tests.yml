@@ -22,13 +22,22 @@ jobs:
       - name: Bootstrap vcpkg
         run: .\vcpkg\bootstrap-vcpkg.bat
         
+      - name: Get MSVC version
+        id: msvc
+        shell: pwsh
+        run: |
+            $cl = (Get-Command cl.exe).Source
+            $ver = (Get-Item $cl).VersionInfo.ProductVersion
+            "version=$ver" >> $env:GITHUB_OUTPUT
+    
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
             path: |
               ${{ github.workspace }}/vcpkg_installed
-            key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+            key: vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-${{ hashFiles('vcpkg.json') }}
             restore-keys: |
+              vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-
               vcpkg-${{ runner.os }}-
               
       - name: Install Dependencies
