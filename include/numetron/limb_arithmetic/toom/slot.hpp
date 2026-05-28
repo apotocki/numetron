@@ -69,7 +69,7 @@ void slot_add_signed(toom_slot<LimbT>& dst, toom_slot<LimbT> a, toom_slot<LimbT>
         NUMETRON_ASSERT(dst.cap >= a.len);
         NUMETRON_ASSERT(dst.cap >= b.len);
         dst.sign = a.sign;
-        size_t isz = (std::min)(dst.len, a.len);
+        size_t isz = (std::min)(a.len, b.len);
         LimbT const* aptr = a.ptr;
         LimbT* dstptr = dst.ptr;
         LimbT carry = uadd_partial_unchecked(aptr, b.ptr, b.ptr + isz, dstptr);

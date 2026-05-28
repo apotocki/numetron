@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 
 namespace numetron::limb_arithmetic::toom_runtime_detail {
 
@@ -154,33 +155,34 @@ struct expr_node
     expr_handle b;
 };
 
-template <size_t N>
+// Maximum number of nodes an expr_pack can hold.
+// Define NUMETRON_EXPR_PACK_MAX_NODES before including this header to override.
+#ifndef NUMETRON_EXPR_PACK_MAX_NODES
+#  define NUMETRON_EXPR_PACK_MAX_NODES 128
+#endif
+inline constexpr size_t expr_pack_max_nodes = NUMETRON_EXPR_PACK_MAX_NODES;
+
 struct expr_pack
 {
     // Fixed-capacity storage; only first 'count' nodes are valid.
-    std::array<expr_node, N> nodes{};
+    std::array<expr_node, expr_pack_max_nodes> nodes{};
     size_t count = 0;
     // Root expression handle for stage slab size.
     expr_handle root{};
 };
 
-template <size_t MaxNodes>
 struct expr_builder
 {
-    std::array<expr_node, MaxNodes> nodes{};
-    size_t count = 0;
-    // Precondition: number of emitted nodes must not exceed MaxNodes.
+    std::vector<expr_node> nodes{};
 
     [[nodiscard]] consteval expr_handle c(uint64_t v) { return expr_handle::constant(v); }
     [[nodiscard]] consteval expr_handle v(toom_size_var x) { return expr_handle::variable(x); }
 
     [[nodiscard]] consteval expr_handle emit(toom_size_expr_op op, expr_handle a, expr_handle b = {})
     {
-        if (count >= MaxNodes) {
-            throw "expr_builder overflow";
-        }
-        nodes[count] = expr_node{ op, a, b };
-        return expr_handle::index(count++);
+        if (nodes.size() >= expr_pack_max_nodes) throw "expr_builder: exceeded expr_pack_max_nodes";
+        nodes.push_back(expr_node{ op, a, b });
+        return expr_handle::index(nodes.size() - 1);
     }
 
     [[nodiscard]] consteval expr_handle add(expr_handle a, expr_handle b) { return emit(toom_size_expr_op::add, a, b); }
@@ -188,11 +190,11 @@ struct expr_builder
     [[nodiscard]] consteval expr_handle mul(expr_handle a, uint64_t k) { return emit(toom_size_expr_op::mul_const, a, c(k)); }
     [[nodiscard]] consteval expr_handle max2(expr_handle a, expr_handle b) { return emit(toom_size_expr_op::max2, a, b); }
 
-    [[nodiscard]] consteval auto finish(expr_handle root) const
+    [[nodiscard]] consteval expr_pack finish(expr_handle root) const
     {
-        expr_pack<MaxNodes> out{};
-        out.nodes = nodes;
-        out.count = count;
+        expr_pack out{};
+        for (size_t i = 0; i < nodes.size(); ++i) out.nodes[i] = nodes[i];
+        out.count = nodes.size();
         out.root = root;
         return out;
     }
@@ -209,6 +211,72 @@ struct toom_slot_layout
     expr_handle cap_expr;
 };
 
+// Maximum number of slots a slot_pack can hold.
+// Define NUMETRON_SLOT_PACK_MAX_SLOTS before including this header to override.
+#ifndef NUMETRON_SLOT_PACK_MAX_SLOTS
+#  define NUMETRON_SLOT_PACK_MAX_SLOTS 64
+#endif
+inline constexpr size_t slot_pack_max_slots = NUMETRON_SLOT_PACK_MAX_SLOTS;
+
+struct slot_pack
+{
+    std::array<toom_slot_layout, slot_pack_max_slots> slots{};
+    size_t count = 0;
+
+    // size() and operator[] make slot_pack compatible with engine range loops
+    // that use LayoutV.size() / LayoutV[i] on the NTTP value.
+    [[nodiscard]] constexpr size_t size() const noexcept { return count; }
+    [[nodiscard]] constexpr toom_slot_layout const& operator[](size_t i) const noexcept { return slots[i]; }
+    [[nodiscard]] constexpr toom_slot_layout const* begin() const noexcept { return slots.data(); }
+    [[nodiscard]] constexpr toom_slot_layout const* end()   const noexcept { return slots.data() + count; }
+};
+
+// slot_builder — consteval helper analogous to expr_builder.
+// Each call to tmp()/rb() registers a toom_slot_layout and returns a ready-to-use
+// toom_ref that can be embedded directly in toom_instr without repeating kind/id.
+// var ids are assigned sequentially (globally unique within one builder instance).
+// Static helpers u()/v() produce refs for u/v operand chunks.
+struct slot_builder
+{
+    std::vector<toom_slot_layout> slots{};
+
+    [[nodiscard]] consteval toom_ref add_slot(toom_mem_kind kind, expr_handle off, expr_handle cap)
+    {
+        if (slots.size() >= slot_pack_max_slots) throw "slot_builder: exceeded slot_pack_max_slots";
+        auto var = static_cast<unsigned short>(slots.size());
+        slots.push_back(toom_slot_layout{ kind, var, off, cap });
+        return make_ref(kind, var);
+    }
+
+    [[nodiscard]] consteval toom_ref tmp(expr_handle off, expr_handle cap)
+    {
+        return add_slot(toom_mem_kind::tmp, off, cap);
+    }
+
+    [[nodiscard]] consteval toom_ref rb(expr_handle off, expr_handle cap)
+    {
+        return add_slot(toom_mem_kind::rb, off, cap);
+    }
+
+    [[nodiscard]] static consteval toom_ref u(unsigned short idx)
+    {
+        return make_ref(toom_mem_kind::u, idx);
+    }
+
+    [[nodiscard]] static consteval toom_ref v(unsigned short idx)
+    {
+        return make_ref(toom_mem_kind::v, idx);
+    }
+
+    [[nodiscard]] consteval slot_pack finish() const
+    {
+        slot_pack out{};
+        for (size_t i = 0; i < slots.size(); ++i) out.slots[i] = slots[i];
+        out.count = slots.size();
+        return out;
+    }
+};
+
 template <size_t>
 inline constexpr bool always_false_v = false;
 
@@ -217,5 +285,18 @@ struct toom_stage_traits
 {
     static_assert(always_false_v<N + M>, "Missing toom_stage_traits specialization for this (N,M)");
 };
+
+template <size_t PlanSize>
+struct toom_full_spec
+{
+    expr_pack exprs{};
+    slot_pack slot_layout{};
+    expr_handle slab_expr{};
+    std::array<toom_instr, PlanSize> plan{};
+};
+
+// Deduction guide: toom_full_spec{ exprs, slots, slab, plan } deduces PlanSize from the array.
+template <size_t PlanSize>
+toom_full_spec(expr_pack, slot_pack, expr_handle, std::array<toom_instr, PlanSize>) -> toom_full_spec<PlanSize>;
 
 } // namespace numetron::limb_arithmetic::toom_runtime_detail

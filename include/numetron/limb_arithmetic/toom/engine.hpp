@@ -356,13 +356,14 @@ inline void run_toom_stage(
     ScratchAllocatorT scratch_alloc,
     std::index_sequence<Is...>)
 {
+    const size_t u_hi = u.size() - (N - 1) * chunk;
     const toom_size_eval_context size_ctx{
         u.size(),
         v.size(),
         chunk,
-        u.size() - chunk,
-        v.size() - chunk,
-        (std::max)(chunk, u.size() - chunk),
+        u_hi,
+        v.size() - (M - 1) * chunk,
+        (std::max)(chunk, u_hi),
     };
 
     using traits_t = toom_stage_traits<N, M>;
@@ -439,7 +440,7 @@ struct toom_engine
             const size_t chunk = (vn + (M - 1)) / M;
             NUMETRON_ASSERT(chunk > 0);
 
-            //std::memset(rb, 0, alloc_sz * sizeof(LimbT));
+            std::memset(rb, 0, alloc_sz * sizeof(LimbT));
             run_toom_stage<LimbT, N, M>(u, v, rb, alloc_sz, chunk, alloc,
                 std::make_index_sequence<toom_stage_traits<N, M>::plan.size()>{});
             re = rb + alloc_sz;
@@ -469,7 +470,7 @@ struct toom_engine
         const size_t chunk = (vn + (M - 1)) / M;
         NUMETRON_ASSERT(chunk > 0);
 
-        //std::memset(rb, 0, r_sz * sizeof(LimbT));
+        std::memset(rb, 0, r_sz * sizeof(LimbT));
         run_toom_stage<LimbT, N, M>(std::span{u, un}, std::span{v, vn}, rb, r_sz, chunk, alloc,
             std::make_index_sequence<toom_stage_traits<N, M>::plan.size()>{});
         return rb + r_sz;

@@ -64,9 +64,9 @@ template <std::unsigned_integral LimbT, typename AllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
 inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
 {
-    //if (is_toom3_applicable(u.size(), v.size())) {
-    //    return toom_engine<3, 3>::umul(u, v, std::move(alloc));
-    //}
+    if (is_toom3_applicable(u.size(), v.size())) {
+        return toom_engine<3, 3>::umul(u, v, std::move(alloc));
+    }
 
     if (is_karatsuba_applicable(u.size(), v.size())) {
 #ifndef NUMETRON_EXPLICIT_KARATSUBA
