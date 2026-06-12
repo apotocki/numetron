@@ -567,7 +567,7 @@ struct mul_base_plus_method<Base, limbs<T, accum...>, a0, args...> :
 template <std::integral T, T... accum, T Base>
 struct mul_base_plus_method<Base, limbs<T, accum...>> { using type = limbs<T, accum...>; };
 
-template <char... Chars> constexpr auto operator"" _W()
+template <char... Chars> constexpr auto operator""_W()
 {
     return typename mul_base_plus_method<uint64_t(10), limbs<uint64_t>, dec_char_to_digit(Chars) ...>::type{};
 }
@@ -721,7 +721,7 @@ template <typename T, char... Chars> constexpr auto generic_limb_literal()
     return detail::take_first(num, std::make_index_sequence<L>{});
 }
 
-template <char... Chars> constexpr auto operator"" _Z()
+template <char... Chars> constexpr auto operator""_Z()
 {
     return generic_limb_literal<uint64_t, Chars...>();
 }
