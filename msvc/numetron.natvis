@@ -40,4 +40,135 @@
     </Expand>
   </Type>
 
+
+  <!--
+    integer_holder<uint64, 1, *>  — overwritten_limb_flag = true
+    The pointer is stored as rotr(ptr,1) in inplace_limbs_[0].
+    Bit 63 of inplace_limbs_[0] = 1  →  inplace
+    Bit 62                            →  sign (inplace only)
+    Value bits [61:0]                 →  last_significand_limb_mask = 0x3FFFFFFFFFFFFFFF
+    Size is always 1 when inplace (significand_limb_count_bits = 0 for N=1).
+    Allocated: ldata = rotl(raw, 1) = (raw<<1)|(raw>>63); limbs at (uint64*)ldata + 1.
+  -->
+  <Type Name="numetron::detail::integer_holder&lt;unsigned __int64,1,*&gt;">
+    <!-- inplace, positive -->
+    <DisplayString Condition=" (inplace_limbs_[0] &amp; 0x8000000000000000ULL) &amp;&amp; !(inplace_limbs_[0] &amp; 0x4000000000000000ULL)">+{inplace_limbs_[0] &amp; 0x3FFFFFFFFFFFFFFFULL,h} [inplace]</DisplayString>
+    <!-- inplace, negative -->
+    <DisplayString Condition=" (inplace_limbs_[0] &amp; 0x8000000000000000ULL) &amp;&amp;  (inplace_limbs_[0] &amp; 0x4000000000000000ULL)">-{inplace_limbs_[0] &amp; 0x3FFFFFFFFFFFFFFFULL,h} [inplace]</DisplayString>
+    <!-- heap, positive -->
+    <DisplayString Condition="!(inplace_limbs_[0] &amp; 0x8000000000000000ULL) &amp;&amp; !((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63)))->sign">+[{((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63)))->size} limbs, heap]</DisplayString>
+    <!-- heap, negative -->
+    <DisplayString Condition="!(inplace_limbs_[0] &amp; 0x8000000000000000ULL) &amp;&amp;  ((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63)))->sign">-[{((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63)))->size} limbs, heap]</DisplayString>
+    <Expand>
+      <Item Name="[inplace]">!!(inplace_limbs_[0] &amp; 0x8000000000000000ULL)</Item>
+      <!-- inplace branch -->
+      <Item Name="[sign]" Condition=" (inplace_limbs_[0] &amp; 0x8000000000000000ULL)">
+        (inplace_limbs_[0] &amp; 0x4000000000000000ULL) ? -1 : 1
+      </Item>
+      <Item Name="[limb 0]" Condition=" (inplace_limbs_[0] &amp; 0x8000000000000000ULL)">
+        inplace_limbs_[0] &amp; 0x3FFFFFFFFFFFFFFFULL
+      </Item>
+      <!-- allocated branch -->
+      <Item Name="[sign]" Condition="!(inplace_limbs_[0] &amp; 0x8000000000000000ULL)">
+        ((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63)))->sign ? -1 : 1
+      </Item>
+      <ArrayItems Condition="!(inplace_limbs_[0] &amp; 0x8000000000000000ULL)">
+        <Size>((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63)))->size</Size>
+        <ValuePointer>(unsigned __int64*)((numetron::detail::limbs_data*)((inplace_limbs_[0] &lt;&lt; 1) | (inplace_limbs_[0] &gt;&gt; 63))) + 1</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!--
+    integer_holder<uint64, 2, *>  — overwritten_limb_flag = false
+    ctl = inplace_limbs_[1]
+    in_place_mask              = 0x8000000000000000
+    sign_mask                  = 0x4000000000000000
+    significand_limb_count_bits = 1
+    significand_limb_count_mask = 0x2000000000000000  (bit 61)
+    last_significand_limb_mask  = 0x1FFFFFFFFFFFFFFF
+    Inplace size = 1 + ((ctl >> 61) & 1)
+    Allocated: ldata = *(limbs_data**)inplace_limbs_; limbs at (uint64*)ldata + 1.
+  -->
+  <Type Name="numetron::detail::integer_holder&lt;unsigned __int64,2,*&gt;">
+    <DisplayString Condition=" (inplace_limbs_[1] &amp; 0x8000000000000000ULL) &amp;&amp; !(inplace_limbs_[1] &amp; 0x4000000000000000ULL)">+[{1 + (int)((inplace_limbs_[1] &amp; 0x2000000000000000ULL) &gt;&gt; 61)} limbs, inplace]</DisplayString>
+    <DisplayString Condition=" (inplace_limbs_[1] &amp; 0x8000000000000000ULL) &amp;&amp;  (inplace_limbs_[1] &amp; 0x4000000000000000ULL)">-[{1 + (int)((inplace_limbs_[1] &amp; 0x2000000000000000ULL) &gt;&gt; 61)} limbs, inplace]</DisplayString>
+    <DisplayString Condition="!(inplace_limbs_[1] &amp; 0x8000000000000000ULL) &amp;&amp; !(*(numetron::detail::limbs_data**)inplace_limbs_)->sign">+[{(*(numetron::detail::limbs_data**)inplace_limbs_)->size} limbs, heap]</DisplayString>
+    <DisplayString Condition="!(inplace_limbs_[1] &amp; 0x8000000000000000ULL) &amp;&amp;  (*(numetron::detail::limbs_data**)inplace_limbs_)->sign">-[{(*(numetron::detail::limbs_data**)inplace_limbs_)->size} limbs, heap]</DisplayString>
+    <Expand>
+      <Item Name="[inplace]">!!(inplace_limbs_[1] &amp; 0x8000000000000000ULL)</Item>
+      <!-- inplace branch -->
+      <Item Name="[sign]" Condition=" (inplace_limbs_[1] &amp; 0x8000000000000000ULL)">
+        (inplace_limbs_[1] &amp; 0x4000000000000000ULL) ? -1 : 1
+      </Item>
+      <Item Name="[size]" Condition=" (inplace_limbs_[1] &amp; 0x8000000000000000ULL)">
+        1 + (int)((inplace_limbs_[1] &amp; 0x2000000000000000ULL) &gt;&gt; 61)
+      </Item>
+      <Item Name="[limb 0]" Condition=" (inplace_limbs_[1] &amp; 0x8000000000000000ULL)">
+        inplace_limbs_[0]
+      </Item>
+      <Item Name="[limb 1]" Condition=" (inplace_limbs_[1] &amp; 0x8000000000000000ULL) &amp;&amp; (inplace_limbs_[1] &amp; 0x2000000000000000ULL)">
+        inplace_limbs_[1] &amp; 0x1FFFFFFFFFFFFFFFULL
+      </Item>
+      <!-- allocated branch -->
+      <Item Name="[sign]" Condition="!(inplace_limbs_[1] &amp; 0x8000000000000000ULL)">
+        (*(numetron::detail::limbs_data**)inplace_limbs_)->sign ? -1 : 1
+      </Item>
+      <ArrayItems Condition="!(inplace_limbs_[1] &amp; 0x8000000000000000ULL)">
+        <Size>(*(numetron::detail::limbs_data**)inplace_limbs_)->size</Size>
+        <ValuePointer>(unsigned __int64*)(*(numetron::detail::limbs_data**)inplace_limbs_) + 1</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!--
+    integer_holder<uint64, 4, *>  — overwritten_limb_flag = false
+    ctl = inplace_limbs_[3]
+    in_place_mask              = 0x8000000000000000
+    sign_mask                  = 0x4000000000000000
+    significand_limb_count_bits = 2
+    significand_limb_count_mask = 0x3000000000000000  (bits 61:60)
+    last_significand_limb_mask  = 0x0FFFFFFFFFFFFFFF
+    Inplace size = 1 + ((ctl >> 60) & 3)
+    Allocated: ldata = *(limbs_data**)inplace_limbs_; limbs at (uint64*)ldata + 1.
+  -->
+  <Type Name="numetron::detail::integer_holder&lt;unsigned __int64,4,*&gt;">
+    <DisplayString Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp; !(inplace_limbs_[3] &amp; 0x4000000000000000ULL)">+[{1 + (int)((inplace_limbs_[3] &amp; 0x3000000000000000ULL) &gt;&gt; 60)} limbs, inplace]</DisplayString>
+    <DisplayString Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp;  (inplace_limbs_[3] &amp; 0x4000000000000000ULL)">-[{1 + (int)((inplace_limbs_[3] &amp; 0x3000000000000000ULL) &gt;&gt; 60)} limbs, inplace]</DisplayString>
+    <DisplayString Condition="!(inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp; !(*(numetron::detail::limbs_data**)inplace_limbs_)->sign">+[{(*(numetron::detail::limbs_data**)inplace_limbs_)->size} limbs, heap]</DisplayString>
+    <DisplayString Condition="!(inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp;  (*(numetron::detail::limbs_data**)inplace_limbs_)->sign">-[{(*(numetron::detail::limbs_data**)inplace_limbs_)->size} limbs, heap]</DisplayString>
+    <Expand>
+      <Item Name="[inplace]">!!(inplace_limbs_[3] &amp; 0x8000000000000000ULL)</Item>
+      <!-- inplace branch -->
+      <Item Name="[sign]" Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL)">
+        (inplace_limbs_[3] &amp; 0x4000000000000000ULL) ? -1 : 1
+      </Item>
+      <Item Name="[size]" Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL)">
+        1 + (int)((inplace_limbs_[3] &amp; 0x3000000000000000ULL) &gt;&gt; 60)
+      </Item>
+      <Item Name="[limb 0]" Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL)">inplace_limbs_[0]</Item>
+      <Item Name="[limb 1]" Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp; ((inplace_limbs_[3] &amp; 0x3000000000000000ULL) &gt;&gt; 60) &gt;= 1">inplace_limbs_[1]</Item>
+      <Item Name="[limb 2]" Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp; ((inplace_limbs_[3] &amp; 0x3000000000000000ULL) &gt;&gt; 60) &gt;= 2">inplace_limbs_[2]</Item>
+      <Item Name="[limb 3]" Condition=" (inplace_limbs_[3] &amp; 0x8000000000000000ULL) &amp;&amp; ((inplace_limbs_[3] &amp; 0x3000000000000000ULL) &gt;&gt; 60) == 3">
+        inplace_limbs_[3] &amp; 0x0FFFFFFFFFFFFFFFULL
+      </Item>
+      <!-- allocated branch -->
+      <Item Name="[sign]" Condition="!(inplace_limbs_[3] &amp; 0x8000000000000000ULL)">
+        (*(numetron::detail::limbs_data**)inplace_limbs_)->sign ? -1 : 1
+      </Item>
+      <ArrayItems Condition="!(inplace_limbs_[3] &amp; 0x8000000000000000ULL)">
+        <Size>(*(numetron::detail::limbs_data**)inplace_limbs_)->size</Size>
+        <ValuePointer>(unsigned __int64*)(*(numetron::detail::limbs_data**)inplace_limbs_) + 1</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!-- basic_integer — thin wrapper, delegates visualisation to aholder_ -->
+  <Type Name="numetron::basic_integer&lt;*&gt;">
+    <DisplayString>{aholder_}</DisplayString>
+    <Expand>
+      <ExpandedItem>aholder_</ExpandedItem>
+    </Expand>
+  </Type>
+
 </AutoVisualizer>

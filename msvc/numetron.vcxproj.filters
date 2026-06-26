@@ -193,4 +193,7 @@
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="numetron.natvis" />
+  </ItemGroup>
 </Project>
