@@ -112,6 +112,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\usub.hpp" />
   </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="numetron.natvis" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
