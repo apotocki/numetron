@@ -489,10 +489,10 @@ LimbT usub(std::span<const LimbT> u, std::span<const LimbT> v, std::span<LimbT> 
 }
 
 template <std::unsigned_integral LimbT, typename AllocatorT>
-requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
-[[nodiscard]] std::tuple<std::remove_cv_t<LimbT>*, size_t, size_t, int> mul(composition<LimbT> const& l, composition<LimbT> const& r, AllocatorT alloc)
+requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_t<AllocatorT>>::value_type>)
+[[nodiscard]] std::tuple<std::remove_cv_t<LimbT>*, size_t, size_t, int> mul(composition<LimbT> const& l, composition<LimbT> const& r, AllocatorT&& alloc)
 {
-    using alloc_traits_t = std::allocator_traits<AllocatorT>;
+    using alloc_traits_t = std::allocator_traits<std::remove_cvref_t<AllocatorT>>;
 
     std::tuple<LimbT*, size_t, size_t, int> result;
 
