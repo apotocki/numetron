@@ -213,8 +213,8 @@ inline constexpr T uadd1ca(T a, T b, T& ca) noexcept
         return a;
 #endif
 #if defined(__clang__) && defined(__aarch64__)
-        ca += __builtin_uaddl_overflow(a, b, &a);
-        return a;
+    ca += __builtin_uaddll_overflow(a, b, &a);
+    return a;
 #endif
 #if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
         __asm__(
@@ -248,7 +248,7 @@ inline constexpr std::pair<unsigned char, T> uadd1(T a, T b) noexcept
     constexpr int bsz = std::numeric_limits<T>::digits;
     if (!std::is_constant_evaluated()) {
         if constexpr (bsz == 64) {
-            unsigned char carry = __builtin_uaddl_overflow(a, b, &a);
+            unsigned char carry = __builtin_uaddll_overflow(a, b, &a);
             return { carry, a };
         }
     }
@@ -290,8 +290,8 @@ inline constexpr std::pair<T, T> uadd1(T a, T b, T c) noexcept
     constexpr int bsz = std::numeric_limits<T>::digits;
     if (!std::is_constant_evaluated()) {
         if constexpr (bsz == 64) {
-            unsigned char carry = __builtin_uaddl_overflow(a, b, &a);
-            carry += __builtin_uaddl_overflow(a, c, &a);
+            unsigned char carry = __builtin_uaddll_overflow(a, b, &a);
+            carry += __builtin_uaddll_overflow(a, c, &a);
             return { carry, a };
         }
     }
