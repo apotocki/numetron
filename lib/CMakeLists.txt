@@ -48,3 +48,13 @@ else()
 endif()
 
 add_library(${LIBRARY_NAME} STATIC ${NUMETRON_LIB_SOURCES})
+
+# This target only ever compiles .s sources. Whichever project embeds it (annium-lang,
+# standalone or nested under sonia-ui) may set directory-scoped C++ flags/defines
+# (e.g. add_compile_definitions(SONIA_PRIME_STATIC ...)) that get inherited here even
+# though they're meaningless for a pure assembler compile - clang's assembler driver
+# flags every one of them as unused. Silence that rather than fighting CMake's
+# directory-scope flag inheritance from the parent project.
+if (CMAKE_ASM_COMPILER_ID MATCHES "Clang")
+    target_compile_options(${LIBRARY_NAME} PRIVATE -Wno-unused-command-line-argument)
+endif()
