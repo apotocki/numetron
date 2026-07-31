@@ -843,11 +843,45 @@ public:
 
     using storage_type = alloc_holder; // for debug
 
+#if 0
     explicit basic_decimal(basic_integer_view<LimbT> s, basic_integer_view<LimbT> exp = {}, AllocatorT const& alloc = AllocatorT{})
-        : aholder_{ [&s, &exp](storage_type& dh) { dh.init(s, exp); }, alloc }
-    {
-        // to do: normilize
-    }
+        : aholder_{ [&s, &exp, &alloc](storage_type& dh) {
+            if (!s) { dh.init(s, exp); return; } // avoid an infinite strip-trailing-zeros loop on 0, same as basic_decimal_view's integral constructor
+            // Unlike basic_decimal_view (a non-owning view, which can't always afford to compute a
+            // smaller significand -- see decimal_view.hpp), basic_decimal owns its storage and can
+            // freely reallocate, so there's no excuse for it to ever hold a non-canonical
+            // (not fully trailing-zero-stripped) representation. Matches the normalizing behavior of
+            // the T-integral constructor below and of basic_decimal_view's own T-integral/floating-
+            // point constructors.
+            basic_integer<LimbT, 1, AllocatorT> sig{ s, alloc };
+            basic_integer<LimbT, 1, AllocatorT> e{ exp, alloc };
+            while (!(sig % 10)) {
+                sig /= 10;
+                e += 1;
+            }
+            dh.init(sig, e);
+        }, alloc }
+    {}
+#endif
+    template <typename ForeignLimbT>
+    explicit basic_decimal(basic_integer_view<ForeignLimbT> s, basic_integer_view<ForeignLimbT> exp = {}, AllocatorT const& alloc = AllocatorT{})
+        : aholder_{ [&s, &exp, &alloc](storage_type& dh) {
+            if (!s) { dh.init_zero(); return; } // avoid an infinite strip-trailing-zeros loop on 0, same as basic_decimal_view's integral constructor
+            // Unlike basic_decimal_view (a non-owning view, which can't always afford to compute a
+            // smaller significand -- see decimal_view.hpp), basic_decimal owns its storage and can
+            // freely reallocate, so there's no excuse for it to ever hold a non-canonical
+            // (not fully trailing-zero-stripped) representation. Matches the normalizing behavior of
+            // the T-integral constructor below and of basic_decimal_view's own T-integral/floating-
+            // point constructors.
+            basic_integer<LimbT, 1, AllocatorT> sig{ s, alloc };
+            basic_integer<LimbT, 1, AllocatorT> e{ exp, alloc };
+            while (!(sig % 10)) {
+                sig /= 10;
+                e += 1;
+            }
+            dh.init(sig, e);
+        }, alloc }
+    {}
 
     explicit basic_decimal(basic_decimal_view<LimbT> dv, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ [&dv](storage_type& dh) { dh.init(dv.significand(), dv.exponent()); }, alloc }
@@ -1048,6 +1082,12 @@ inline bool operator== (basic_decimal<LimbT, NL, ExponentBitCountL, AllocatorTL>
     return lhs.exponent() == rhs.exponent() && lhs.significand() == rhs.significand();
 }
 
+template <std::unsigned_integral LimbT, size_t NL, size_t ExponentBitCountL, typename AllocatorTL>
+inline bool operator== (basic_decimal<LimbT, NL, ExponentBitCountL, AllocatorTL> const& lhs, basic_decimal_view<LimbT> const& rhs) noexcept
+{
+    return lhs.exponent() == rhs.exponent() && lhs.significand() == rhs.significand();
+}
+
 template <std::unsigned_integral LimbT, size_t N, size_t ExponentBitCount, typename AllocatorT, std::integral T>
 bool operator ==(basic_decimal<LimbT, N, ExponentBitCount, AllocatorT> const& lhs, T rhs) noexcept
 {
@@ -1105,7 +1145,9 @@ inline basic_decimal<LimbT, N, E, AllocatorT> operator+ (basic_decimal<LimbT, N,
         rs /= 10;
         re += 1;
     }
-    return basic_decimal<LimbT, N, E, AllocatorT>{ rs, re, l.allocator() };
+
+    using view_t = basic_integer_view<LimbT>;
+    return basic_decimal<LimbT, N, E, AllocatorT>{ (view_t)rs, (view_t)re, l.allocator() };
 }
 
 template <std::unsigned_integral LimbT, size_t N, size_t RN, size_t E, size_t RE, typename AllocatorT, typename AllocatorRT>

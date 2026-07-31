@@ -44,8 +44,10 @@ public:
     inline basic_decimal_view(T value) noexcept
     {
         uint8_t e = 0;
-        while (!(value % 10)) {
-            value /= 10; ++e;
+        if (value) {
+            while (!(value % 10)) {
+                value /= 10; ++e;
+            }
         }
         significand_ = value;
         exponent_ = e;
@@ -138,11 +140,21 @@ template <typename LimbT> struct is_basic_decimal_view<basic_decimal_view<LimbT>
 template <typename T> constexpr bool is_basic_decimal_view_v = is_basic_decimal_view<T>::value;
 
 
-// expected normilized value
+template <std::unsigned_integral LimbT>
+std::strong_ordering operator<=> (basic_decimal_view<LimbT> const& lhs, basic_decimal_view<LimbT> const& rhs);
+
 template <std::unsigned_integral LimbT>
 bool operator== (basic_decimal_view<LimbT> const& lhs, basic_decimal_view<LimbT> const& rhs) noexcept
 {
-    return lhs.exponent() == rhs.exponent() && lhs.significand() == rhs.significand();
+    // decimal_view is assumed always normalized (significand stripped of trailing decimal zeros) --
+    // every real producer of one (basic_decimal_view's own integral/floating constructors, from_blob<
+    // basic_decimal_view<LimbT>>, sonia-prime's invocation.hpp) upholds that invariant, normalizing even
+    // a bigint-sourced view rather than handing back an un-stripped (significand, exponent) pair -- so two
+    // views representing the same value always agree on both fields directly, with no need to align
+    // differing exponents the way operator<=> does for ordering. Comparing them directly here is both
+    // simpler and cheaper (no risk of the bad_alloc operator<=> can throw while aligning differently-scaled
+    // significands) than routing equality through operator<=>.
+    return lhs.significand() == rhs.significand() && lhs.exponent() == rhs.exponent();
 }
 
 template <std::unsigned_integral LimbT, std::integral T>
@@ -173,7 +185,7 @@ std::strong_ordering operator<=> (basic_decimal_view<LimbT> const& lhs, basic_de
         if (rhs.significand().sgn() <= 0) return std::strong_ordering::greater;
     }
 
-    auto r = basic_integer<LimbT, 1>{rhs.exponent() } - lhs.exponent(); // can throw bad_alloc
+    auto r = basic_integer<LimbT, 1>{ rhs.exponent() } - lhs.exponent(); // can throw bad_alloc
     constexpr size_t big_base_digits_per_limb = std::numeric_limits<LimbT>::digits10;
     constexpr LimbT big_base = numetron::arithmetic::ipow<LimbT>(10, big_base_digits_per_limb);
     if (!r) {
@@ -188,15 +200,30 @@ std::strong_ordering operator<=> (basic_decimal_view<LimbT> const& lhs, basic_de
     }
 
     basic_integer<LimbT, 2> operand; // for now div needs more space for result, so it's optimization for 1-limb values
-    
+
     if (lsa < rsa) return less_res;
     operand = lsa;
+    // Tracks whether every chunked division performed below has had a zero remainder. Scaling `operand`
+    // down by 10^r in chunks is only an exact match for `rsa` (rather than merely landing on the same
+    // floor()'d quotient) if *no* digit was ever discarded along the way -- a single nonzero remainder,
+    // anywhere in the chain, proves operand isn't a clean multiple of 10^r and the true (unrounded)
+    // comparison must be strictly greater than rsa*10^r, never equal to it.
+    bool exact = true;
     for (;;) {
         if (auto res = r <=> big_base_digits_per_limb; res == std::strong_ordering::less || res == std::strong_ordering::equal) {
-            operand /= (res == std::strong_ordering::equal ? big_base : numetron::arithmetic::ipow<LimbT>(10, (size_t)r)); // can throw bad_alloc
-            return operand >= rsa ? 0 <=> less_res : less_res;
+            LimbT divisor = (res == std::strong_ordering::equal ? big_base : numetron::arithmetic::ipow<LimbT>(10, (size_t)r));
+            if (operand % divisor) exact = false; // can throw bad_alloc
+            operand /= divisor; // can throw bad_alloc
+            if (operand == rsa) {
+                // Equal quotients alone aren't enough: if any division along the way (this one included)
+                // dropped a nonzero remainder, `operand` is a floor()'d approximation that merely landed
+                // on rsa by coincidence -- the true value was strictly greater before rounding down.
+                return exact ? std::strong_ordering::equal : (0 <=> less_res);
+            }
+            return operand > rsa ? (0 <=> less_res) : less_res;
         } else {
-            operand /= big_base;
+            if (operand % big_base) exact = false; // can throw bad_alloc
+            operand /= big_base; // can throw bad_alloc
             r -= big_base_digits_per_limb;
             if (operand < rsa) return less_res;
         }
