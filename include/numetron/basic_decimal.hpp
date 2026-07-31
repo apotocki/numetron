@@ -1141,6 +1141,11 @@ inline basic_decimal<LimbT, N, E, AllocatorT> operator+ (basic_decimal<LimbT, N,
         rs = l.significand(); rs += rv.significand();
         re = l.exponent();
     }
+    // a zero result can never be reduced by the trailing-zero-stripping loop below (0 % 10 == 0
+    // forever), so it needs its own path -- e.g. l + (-l) -- same reasoning as the zero guards in
+    // basic_decimal's own integral/basic_integer_view constructors.
+    if (!rs) return basic_decimal<LimbT, N, E, AllocatorT>{ 0, l.allocator() };
+
     while (!(rs % 10)) {
         rs /= 10;
         re += 1;
@@ -1154,6 +1159,116 @@ template <std::unsigned_integral LimbT, size_t N, size_t RN, size_t E, size_t RE
 inline basic_decimal<LimbT, N, E, AllocatorT> operator+ (basic_decimal<LimbT, N, E, AllocatorT> const& lv, basic_decimal<LimbT, RN, RE, AllocatorRT> const& rv)
 {
     return lv + (basic_decimal_view<LimbT>)rv;
+}
+
+// commutative form: basic_decimal + basic_decimal (both directions) is already symmetric since
+// both operands go through the same template above; only the decimal_view mixed-type case needs
+// an explicit reverse overload.
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator+ (basic_decimal_view<LimbT> lv, basic_decimal<LimbT, N, E, AllocatorT> const& r)
+{
+    return r + lv;
+}
+
+// #################### operator *
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal<LimbT, N, E, AllocatorT> const& l, basic_decimal_view<LimbT> rv)
+{
+    using view_t = basic_integer_view<LimbT>;
+
+    basic_integer<LimbT, N, AllocatorT> rs{ l.significand(), l.allocator() };
+    rs *= rv.significand();
+    // a zero significand can never be reduced by the trailing-zero-stripping loop below (0 % 10 == 0
+    // forever), so it needs its own path -- same reasoning as the zero guards in basic_decimal's own
+    // integral/basic_integer_view constructors.
+    if (!rs) return basic_decimal<LimbT, N, E, AllocatorT>{ 0, l.allocator() };
+
+    basic_integer<LimbT, N, AllocatorT> re{ l.exponent(), l.allocator() };
+    re += rv.exponent();
+
+    while (!(rs % 10)) {
+        rs /= 10;
+        re += 1;
+    }
+
+    return basic_decimal<LimbT, N, E, AllocatorT>{ (view_t)rs, (view_t)re, l.allocator() };
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t RN, size_t E, size_t RE, typename AllocatorT, typename AllocatorRT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal<LimbT, N, E, AllocatorT> const& lv, basic_decimal<LimbT, RN, RE, AllocatorRT> const& rv)
+{
+    return lv * (basic_decimal_view<LimbT>)rv;
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal<LimbT, N, E, AllocatorT> const& l, basic_integer_view<LimbT> r)
+{
+    using view_t = basic_integer_view<LimbT>;
+
+    basic_integer<LimbT, N, AllocatorT> rs{ l.significand(), l.allocator() };
+    rs *= r;
+    if (!rs) return basic_decimal<LimbT, N, E, AllocatorT>{ 0, l.allocator() };
+
+    basic_integer<LimbT, N, AllocatorT> re{ l.exponent(), l.allocator() };
+
+    while (!(rs % 10)) {
+        rs /= 10;
+        re += 1;
+    }
+
+    return basic_decimal<LimbT, N, E, AllocatorT>{ (view_t)rs, (view_t)re, l.allocator() };
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT, std::integral T>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal<LimbT, N, E, AllocatorT> const& l, T r)
+{
+    return l * basic_integer_view<LimbT>{ r };
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT, std::floating_point T>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal<LimbT, N, E, AllocatorT> const& l, T r)
+{
+    return l * basic_decimal_view<LimbT>{ r };
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal<LimbT, N, E, AllocatorT> const& l, float16 r)
+{
+    return l * basic_decimal_view<LimbT>{ r };
+}
+
+// commutative forms: basic_decimal * basic_decimal (both directions) is already symmetric since
+// both operands go through the same template above; every mixed-type rhs above needs an explicit
+// reverse overload.
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_decimal_view<LimbT> lv, basic_decimal<LimbT, N, E, AllocatorT> const& r)
+{
+    return r * lv;
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (basic_integer_view<LimbT> lv, basic_decimal<LimbT, N, E, AllocatorT> const& r)
+{
+    return r * lv;
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT, std::integral T>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (T lv, basic_decimal<LimbT, N, E, AllocatorT> const& r)
+{
+    return r * lv;
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT, std::floating_point T>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (T lv, basic_decimal<LimbT, N, E, AllocatorT> const& r)
+{
+    return r * lv;
+}
+
+template <std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
+inline basic_decimal<LimbT, N, E, AllocatorT> operator* (float16 lv, basic_decimal<LimbT, N, E, AllocatorT> const& r)
+{
+    return r * lv;
 }
 
 template <typename Elem, typename Traits, std::unsigned_integral LimbT, size_t N, size_t E, typename AllocatorT>
