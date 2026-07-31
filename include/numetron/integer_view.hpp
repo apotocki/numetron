@@ -407,6 +407,14 @@ public:
     }
 };
 
+template <std::unsigned_integral LimbLT, std::unsigned_integral LimbRT>
+requires(!std::is_same_v<LimbLT, LimbRT>)
+[[nodiscard]] inline bool operator ==(basic_integer_view<LimbLT> lhs, basic_integer_view<LimbRT> rhs) noexcept(std::is_same_v<LimbLT, LimbRT>)
+{
+    (void)lhs; (void)rhs;
+    throw std::logic_error("basic_integer_view: comparison of different limb types is not supported yet");
+}
+
 template <std::unsigned_integral LimbT>
 basic_integer_view(std::span<LimbT>, int sign) -> basic_integer_view<LimbT>;
 
