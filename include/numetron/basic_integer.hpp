@@ -18,6 +18,7 @@
 #include <iosfwd>
 #include <sstream>
 #include <cstring>
+#include <cmath>
 
 #include "integer_view.hpp"
 #include "integer_view_arithmetic.hpp"
@@ -264,8 +265,9 @@ struct integer_holder : AllocatorT
     template <bool ForceInplaceV>
     void init_copy(LimbT const* rhs_limbs, size_t sz, int sign, LimbT most_significant_limb_mask = no_mask)
     {
-        assert(sz);
-        if (ForceInplaceV || sz < N || (N == sz && (!(rhs_limbs[sz - 1] & most_significant_limb_mask & ~last_significand_limb_mask)))) {
+        if (!sz) {
+            init_zero();
+        } else if (ForceInplaceV || sz < N || (N == sz && (!(rhs_limbs[sz - 1] & most_significant_limb_mask & ~last_significand_limb_mask)))) {
             std::memcpy(inplace_limbs_, rhs_limbs, sizeof(LimbT) * sz);
             *(inplace_limbs_ + sz - 1) &= most_significant_limb_mask;
             if (N > sz) ctl_limb(inplace_limbs_) = 0;
@@ -726,7 +728,30 @@ public:
     basic_integer(T value, AllocatorT const& alloc = AllocatorT{})
         : aholder_{ value, alloc }
     {}
-    
+
+    // Exact integer value of a finite, whole-number floating value, via IEEE754 binary decomposition
+    // (frexp/ldexp) -- exact because it only ever scales the exact mantissa by a power of *2* (native
+    // to the float's own representation), never a lossy round-trip through the source type's own
+    // arithmetic. Throws for non-finite or fractional input: silently truncating here would defeat the
+    // point of an "exact" constructor -- callers wanting lossy truncation should go through a numeric
+    // cast instead.
+    template <std::floating_point T>
+    explicit basic_integer(T value, AllocatorT const& alloc = AllocatorT{})
+        : aholder_{ alloc } // init_zero
+    {
+        if (!std::isfinite(value) || std::trunc(value) != value) {
+            throw std::invalid_argument("basic_integer: value is not a finite whole number");
+        }
+        if (value == T{ 0 }) return;
+        int bexp;
+        T mantissa = std::frexp(value, &bexp); // value == mantissa * 2^bexp, |mantissa| in [0.5, 1)
+        auto mantissa_int = static_cast<std::int64_t>(std::ldexp(mantissa, std::numeric_limits<T>::digits)); // exact
+        *this = basic_integer{ mantissa_int, alloc };
+        int shift = bexp - std::numeric_limits<T>::digits;
+        if (shift >= 0) *this <<= static_cast<size_t>(shift);
+        else *this >>= static_cast<unsigned int>(-shift);
+    }
+
     explicit basic_integer(std::string_view str, int base = 0, AllocatorT const& alloc = AllocatorT{}) // base=0 means autodetection
         : aholder_{ [](alloc_holder& h) noexcept { h.init_zero(); }, alloc }
     {
@@ -1462,6 +1487,20 @@ template <std::unsigned_integral LimbT, size_t LN, std::unsigned_integral NT, ty
 inline basic_integer<LimbT, LN, AllocatorLT> pow(basic_integer<LimbT, LN, AllocatorLT> const& l, NT n)
 {
     return l.build_new([lv = (basic_integer_view<LimbT>)l, n](auto& ih) { ih.init(pow(lv, n, ih.inplace_allocator())); });
+}
+
+// Exact comparison between an arbitrary-width integer (native fixed-width int or bigint, viewed
+// through basic_integer_view) and a native floating value. A non-finite or fractional rhs can never
+// equal an integer; a whole-number rhs is converted to its exact bigint value (see the basic_integer(T)
+// floating-point constructor above) and compared exactly, rather than converting lhs to a lossy
+// double/float -- which would collide distinct values once they exceed the target float type's exact
+// mantissa range (e.g. two distinct u64/bigint values near 2^63).
+template <std::unsigned_integral LimbT, std::floating_point T>
+[[nodiscard]] inline bool operator== (basic_integer_view<LimbT> lhs, T rhs)
+{
+    if (!std::isfinite(rhs) || std::trunc(rhs) != rhs) return false;
+    basic_integer<LimbT> exact_rhs{ rhs };
+    return lhs == exact_rhs;
 }
 
 }
