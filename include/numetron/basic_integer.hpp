@@ -1486,7 +1486,7 @@ inline basic_integer<LimbT, LN, AllocatorLT> operator>> (basic_integer<LimbT, LN
 template <std::unsigned_integral LimbT, size_t LN, std::unsigned_integral NT, typename AllocatorLT>
 inline basic_integer<LimbT, LN, AllocatorLT> pow(basic_integer<LimbT, LN, AllocatorLT> const& l, NT n)
 {
-    return l.build_new([lv = (basic_integer_view<LimbT>)l, n](auto& ih) { ih.init(pow(lv, n, ih.inplace_allocator())); });
+    return l.build_new([lv = (basic_integer_view<LimbT>)l, n](auto& ih) { ih.init(pow(lv, static_cast<unsigned int>(n), ih.inplace_allocator())); });
 }
 
 // Exact comparison between an arbitrary-width integer (native fixed-width int or bigint, viewed
