@@ -46,9 +46,17 @@ class basic_decimal_view
     // Largest n such that 5^n fits in a native (single-limb-safe) divisor for this LimbT.
     static constexpr int max_pow5_step = []() constexpr {
         uint64_t v = 1;
-        uint64_t limit = (sizeof(LimbT) >= sizeof(uint64_t))
-            ? (std::numeric_limits<uint64_t>::max)()
-            : ((uint64_t{ 1 } << std::numeric_limits<LimbT>::digits) - 1);
+        uint64_t limit;
+        // `if constexpr`, not a runtime `?:` -- with a `?:` both branches are compiled for every
+        // LimbT (only which one *runs* depends on the condition), so for LimbT=uint64_t the
+        // untaken branch's `1 << digits` (`1 << 64`) is still a real, invalid shift-by-full-width
+        // expression the compiler warns about (C4293) even though it's dead. `if constexpr`
+        // discards the untaken branch entirely for each instantiation, so it's never compiled.
+        if constexpr (sizeof(LimbT) >= sizeof(uint64_t)) {
+            limit = (std::numeric_limits<uint64_t>::max)();
+        } else {
+            limit = (uint64_t{ 1 } << std::numeric_limits<LimbT>::digits) - 1;
+        }
         int steps = 0;
         while (v <= limit / 5) { v *= 5; ++steps; }
         return steps;
@@ -202,20 +210,20 @@ public:
         basic_integer<LimbT> q, r;
         auto compute_at = [&](int64_t pp) {
             if (pp >= 0) {
-                basic_integer<LimbT> dividend = num << static_cast<size_t>(pp);
+                basic_integer<LimbT> dividend = num << static_cast<unsigned int>(pp);
                 q = floor_div_pow5(dividend, k);
                 r = dividend - q * den5;
             } else {
                 uint64_t extra2 = static_cast<uint64_t>(-pp);
                 basic_integer<LimbT> q5 = floor_div_pow5(num, k);
                 basic_integer<LimbT> r5 = num - q5 * den5;
-                q = q5 >> static_cast<size_t>(extra2);
-                basic_integer<LimbT> shifted_out = q5 - (q << static_cast<size_t>(extra2));
+                q = q5 >> static_cast<unsigned int>(extra2);
+                basic_integer<LimbT> shifted_out = q5 - (q << static_cast<unsigned int>(extra2));
                 r = shifted_out * den5 + r5;
             }
         };
         auto divisor_at = [&](int64_t pp) -> basic_integer<LimbT> {
-            return pp >= 0 ? den5 : (den5 << static_cast<size_t>(-pp));
+            return pp >= 0 ? den5 : (den5 << static_cast<unsigned int>(-pp));
         };
 
         compute_at(p);

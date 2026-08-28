@@ -161,6 +161,13 @@ struct integer_holder : AllocatorT
             if (rhs_ldata->size < N || (rhs_ldata->size == N && !(rhs_limbs[rhs_ldata->size - 1] & ~last_significand_limb_mask))) {
                 // use inplace allocation
                 std::copy(rhs_limbs, rhs_limbs + rhs_ldata->size, inplace_limbs_);
+                // When rhs_ldata->size < N, the copy above doesn't touch every element of
+                // inplace_limbs_ -- in particular, for size == 0 (an allocated-but-zero rhs) it
+                // touches none of them, leaving ctl_limb(inplace_limbs_) (== inplace_limbs_[N-1])
+                // uninitialized right up until inplaced_set_masks reads it (`ctl & last_significand_
+                // limb_mask`, intending to preserve the just-copied value bits) -- reading garbage
+                // instead. init_copy (below) already guards this exact case the same way; mirror it.
+                if (N > rhs_ldata->size) integer_holder::ctl_limb(inplace_limbs_) = 0;
                 inplaced_set_masks(rhs_ldata->size, rhs_ldata->sign ? -1 : 1);
             } else {
                 LimbT* limbsdata = allocate(rhs_ldata->size + limbs_data_sizeof_in_limbs);
