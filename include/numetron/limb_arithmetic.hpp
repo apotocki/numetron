@@ -151,15 +151,31 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
     } else {
         bool do_swap = false;
         if (llimbs.size() == rlimbs.size()) {
+            // Strip leading limbs that are equal between the two operands (significant
+            // cancellation, e.g. subtracting two close-magnitude numbers that share the same
+            // most-significant digits) before comparing/subtracting the rest. Order matters here:
+            // check emptiness *first* (llimbs/rlimbs may already be empty on entry -- e.g. two
+            // single-limb operands whose one-and-only limb pair, last_l/last_r, is already equal --
+            // and size() - 1 on an empty span underflows to SIZE_MAX, turning the next .first() call
+            // into an out-of-bounds span); only once confirmed non-empty read .back() for the next
+            // limb pair (still valid, span not yet touched this iteration); *then* shrink both spans
+            // by exactly one element, each using its own current size (`rlimbs.size() - 1`, not
+            // `llimbs.size() - 1`, which -- since llimbs would already have been reassigned first --
+            // is one less than it should be and silently shrinks rlimbs by two elements instead of
+            // one, misaligning the two spans). Reaching size 0 here (the empty check firing) means
+            // every limb pair matched, including the one last_l/last_r already confirmed equal by the
+            // while condition -- i.e. the two operands are exactly equal, so a-b is exactly zero.
+            // Getting either half of this order wrong reads or slices out of bounds for any
+            // opposite-signed add whose operands share a leading limb -- see BUGFIXES.md.
             while (last_l == last_r) {
                 if (llimbs.empty()) {
                     result = { nullptr, 0, 0, 1 };
                     return result;
                 }
-                llimbs = llimbs.first(llimbs.size() - 1);
-                rlimbs = rlimbs.first(llimbs.size() - 1);
                 last_l = llimbs.back();
                 last_r = rlimbs.back();
+                llimbs = llimbs.first(llimbs.size() - 1);
+                rlimbs = rlimbs.first(rlimbs.size() - 1);
             }
             do_swap = last_l < last_r;
         }
