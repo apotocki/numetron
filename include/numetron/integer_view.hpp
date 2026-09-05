@@ -484,9 +484,39 @@ std::basic_ostream<Elem, Traits>& operator <<(std::basic_ostream<Elem, Traits>& 
     return os;
 }
 
+template <typename Elem, typename Traits, std::unsigned_integral LimbT>
+std::basic_ostream<Elem, Traits> & fancy_print(std::basic_ostream<Elem, Traits> &os, basic_integer_view<LimbT> const &iv, unsigned int base = 10, uint8_t group_sz = 3, std::basic_string_view<Elem> group_sep = " ", bool showbase = false)
+{
+    std::vector<Elem> result;
+
+    iv.with_limbs([&result, base](std::span<const LimbT> sp, int) {
+        bool reversed;
+        to_string(sp, std::back_inserter(result), reversed, base);
+        if (reversed) {
+            std::reverse(result.begin(), result.end());
+        }
+    });
+
+    if (iv.is_negative()) {
+        os << '-';
+    }
+    // formatting
+    if (!group_sz || group_sep.empty()) {
+        std::copy(result.begin(), result.end(), std::ostreambuf_iterator<Elem>(os));
+    } else {
+        for (size_t i = 0, sz = result.size(); i < sz; ++i) {
+            os << result[i];
+            if (size_t pos = sz - i - 1; pos && 0 == pos % group_sz) {
+                os << group_sep;
+            }
+        }
+    }
+
+    return os;
+}
 
 template <std::unsigned_integral LimbT>
-inline size_t hash_value(basic_integer_view<LimbT> const& v) noexcept
+inline size_t hash_value(basic_integer_view<LimbT> const &v) noexcept
 {
     size_t seed = 0;
 
