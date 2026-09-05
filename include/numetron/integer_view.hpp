@@ -500,6 +500,12 @@ std::basic_ostream<Elem, Traits> & fancy_print(std::basic_ostream<Elem, Traits> 
     if (iv.is_negative()) {
         os << '-';
     }
+    if (showbase) {
+        switch (base) {
+            case 8: os << '0'; break;
+            case 16: os << '0' << 'x'; break;
+        }
+    }
     // formatting
     if (!group_sz || group_sep.empty()) {
         std::copy(result.begin(), result.end(), std::ostreambuf_iterator<Elem>(os));
