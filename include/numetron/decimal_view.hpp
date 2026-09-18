@@ -610,6 +610,162 @@ inline std::string to_string(basic_decimal_view<LimbT> const& val)
     return result;
 }
 
+// Tie-break convention for to_fixed_string below. This library's own enum -- numetron has no
+// dependency on any host language, so it doesn't mirror any particular one's naming; a caller whose
+// own language has a symbolic rounding-mode type (e.g. Annium's bootstrap.ann `rounding_mode`)
+// converts at its own language boundary instead (Annium's own C++ code uses this enum directly,
+// with no separate mirror of it on the Annium side -- see numeric_promotion.hpp's
+// divide_decimal_rounded comment; only the runtime `.ann`/C++ boundary itself, which has no shared
+// symbolic enum type to begin with, crosses as a bare integer ordinal that gets cast straight to
+// this enum). Only half_even and half_up are implemented by either to_fixed_string overload below;
+// every other value is declared for a stable signature but throws std::runtime_error if selected --
+// same incremental-implementation approach limb_arithmetic::udiv's own "not implemented" case uses.
+enum class decimal_round_mode
+{
+    half_even,
+    half_up,
+    half_down,
+    up,
+    down,
+    ceiling,
+    floor,
+};
+
+namespace detail {
+
+// Formats a non-negative bigint magnitude `sig`, already scaled so it *is* the target value *
+// 10^digits (rounded), into a "int.frac" (or bare integer at digits == 0) string -- left-padding
+// the integer part with zeros so there's always at least one digit ahead of the decimal point
+// (e.g. sig == 5 at digits == 2 must read "0.05", not split "5" into nothing). Shared by both
+// to_fixed_string overloads below -- once a value's been rounded down to an exact bigint at the
+// target scale, the string layout is identical regardless of which base the rounding itself used.
+// `sig` is assumed non-negative (its sign is tracked separately via `negative`), so the existing
+// friend `to_string(basic_integer const&, base, show_base)` -- which would prepend its own '-' for
+// a negative operand -- never gets the chance to.
+template <std::unsigned_integral LimbT, size_t N, typename AllocatorT>
+std::string to_fixed_digits_string(basic_integer<LimbT, N, AllocatorT> const& sig, bool negative, int64_t digits)
+{
+    std::string digit_str = to_string(sig);
+
+    std::string result;
+    if (negative) result.push_back('-');
+
+    if (digits == 0) {
+        result += digit_str;
+        return result;
+    }
+
+    if (digit_str.size() <= static_cast<size_t>(digits)) {
+        digit_str.insert(0, static_cast<size_t>(digits) + 1 - digit_str.size(), '0');
+    }
+    size_t split = digit_str.size() - static_cast<size_t>(digits);
+    result += digit_str.substr(0, split);
+    result.push_back('.');
+    result += digit_str.substr(split);
+    return result;
+}
+
+} // namespace detail
+
+// Formats `d` to exactly `digits` fractional digits (zero-padded, never trimmed), correctly rounded
+// per `mode`, via exact bigint significand/exponent arithmetic (no double round-trip, so this stays
+// exact even for a significand too wide to survive a double conversion intact). `digits` must be
+// >= 0. Scales the significand to the target exponent `-digits`: an exact widening multiply if
+// `exponent + digits >= 0`; otherwise a narrowing bigint division with a remainder tie-break per
+// `mode` (`half_up`: `2r >= den` always rounds away from zero on a tie; `half_even`: `2r > den`
+// rounds up, `2r == den` checks the quotient's own parity).
+template <std::unsigned_integral LimbT>
+std::string to_fixed_string(basic_decimal_view<LimbT> const& d, int64_t digits, decimal_round_mode mode)
+{
+    if (mode != decimal_round_mode::half_even && mode != decimal_round_mode::half_up) {
+        throw std::runtime_error("to_fixed_string: only decimal_round_mode::half_even and ::half_up are implemented so far");
+    }
+
+    basic_integer<LimbT> sig{ d.significand().abs() };
+
+    int64_t e = (int64_t)d.exponent() + digits;
+    if (e >= 0) {
+        sig *= numetron::pow(basic_integer<LimbT>{ 10 }, static_cast<uint64_t>(e));
+    } else {
+        basic_integer<LimbT> den = numetron::pow(basic_integer<LimbT>{ 10 }, static_cast<uint64_t>(-e));
+        basic_integer<LimbT> q = sig / den;
+        basic_integer<LimbT> r = sig % den;
+        basic_integer<LimbT> twice_r = r * basic_integer<LimbT>{ 2 };
+        basic_integer_view<LimbT> twice_r_v{ twice_r };
+        basic_integer_view<LimbT> den_v{ den };
+        if (mode == decimal_round_mode::half_up) {
+            if (twice_r_v >= den_v) q += 1;
+        } else if (twice_r_v > den_v) {
+            q += 1;
+        } else if (twice_r_v == den_v && (q % 2)) {
+            q += 1; // exact tie, half_even: round to the even neighbor, and q is currently odd
+        }
+        sig = std::move(q);
+    }
+
+    return detail::to_fixed_digits_string(sig, d.is_negative(), digits);
+}
+
+// Rounds a finite floating-point value's *exact* binary value to `digits` fractional decimal
+// digits, honoring `mode`, entirely in base 2 -- deliberately not via an exact base-10 decimal
+// (this class's own floating-point constructor above uses Dragonbox, the *shortest*
+// round-tripping decimal, not the exact value; and even a genuinely exact base-10 conversion,
+// folding 2^binexp == 5^-binexp / 10^binexp the way the float16 constructor above does, keeps
+// *binexp itself* as the resulting decimal's exponent -- rounding that down to a handful of digits
+// then needs a base-10 divisor whose bit width is binexp's magnitude times log2(10), reliably
+// wider than one limb for any ordinary double, which is exactly what limb_arithmetic::udiv's
+// multi-limb-divisor case doesn't support). `value`'s bits are exactly int_mantissa * 2^binexp
+// (frexp/ldexp are exact for finite floats), so value * 10^digits == int_mantissa * 5^digits *
+// 2^(binexp + digits): when binexp + digits >= 0 that's an exact multiply (folded into a left
+// shift); otherwise it's a right shift by -(binexp + digits) bits, with the exact remainder
+// recovered by subtraction rather than a second division. Shifts operate directly on limbs (they
+// never call udiv), so this works for any magnitude -- unlike the equivalent base-10 division,
+// there's no "normal-range value only" caveat here.
+template <std::unsigned_integral LimbT = uint64_t, std::floating_point T>
+std::string to_fixed_string(T value, int64_t digits, decimal_round_mode mode)
+{
+    if (mode != decimal_round_mode::half_even && mode != decimal_round_mode::half_up) {
+        throw std::runtime_error("to_fixed_string: only decimal_round_mode::half_even and ::half_up are implemented so far");
+    }
+
+    bool negative = std::signbit(value);
+    if (value == T{ 0 }) {
+        return detail::to_fixed_digits_string(basic_integer<LimbT>{ 0 }, negative, digits);
+    }
+
+    int exp2;
+    T mantissa = std::frexp(value, &exp2);
+    constexpr int mantissa_bits = std::numeric_limits<T>::digits;
+    int64_t int_mantissa = static_cast<int64_t>(std::ldexp(std::fabs(mantissa), mantissa_bits));
+    int64_t binexp = static_cast<int64_t>(exp2) - mantissa_bits;
+
+    basic_integer<LimbT> sig{ int_mantissa };
+    sig *= numetron::pow(basic_integer<LimbT>{ 5 }, static_cast<uint64_t>(digits));
+
+    int64_t k = binexp + digits;
+    if (k >= 0) {
+        sig <<= static_cast<unsigned int>(k);
+    } else {
+        unsigned int shift = static_cast<unsigned int>(-k);
+        basic_integer<LimbT> q = sig >> shift;
+        basic_integer<LimbT> r = sig - (q << shift); // exact remainder -- subtraction, not division
+        basic_integer<LimbT> den = basic_integer<LimbT>{ 1 } << shift; // == 2^shift
+        basic_integer<LimbT> twice_r = r * basic_integer<LimbT>{ 2 };
+        basic_integer_view<LimbT> twice_r_v{ twice_r };
+        basic_integer_view<LimbT> den_v{ den };
+        if (mode == decimal_round_mode::half_up) {
+            if (twice_r_v >= den_v) q += 1;
+        } else if (twice_r_v > den_v) {
+            q += 1;
+        } else if (twice_r_v == den_v && (q % 2)) {
+            q += 1; // exact tie, half_even: round to the even neighbor, and q is currently odd
+        }
+        sig = std::move(q);
+    }
+
+    return detail::to_fixed_digits_string(sig, negative, digits);
+}
+
 template <typename Elem, typename Traits, std::unsigned_integral LimbT>
 inline std::basic_ostream<Elem, Traits>& operator <<(std::basic_ostream<Elem, Traits>& os, basic_decimal_view<LimbT> const& dv)
 {
