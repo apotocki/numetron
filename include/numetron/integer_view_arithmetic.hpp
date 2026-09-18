@@ -119,7 +119,13 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
             size_t margsz = llimbs.size() + rlimbs.size();
             get<2>(result) = margsz;
             limb_t * pls = alloc_traits_t::allocate(alloc, get<2>(result));
-            get<3>(result) = !(lsign + rsign) ? -1 : 1;
+            // Truncating (toward-zero) division: the remainder always carries the dividend's own
+            // sign (or 0 when the dividend is 0), never a function of the divisor's sign too --
+            // unlike the quotient, whose sign genuinely does flip whenever the operands' signs
+            // differ. Reusing div()'s "!(lsign + rsign) ? -1 : 1" quotient-sign formula here would
+            // be wrong for two of the four sign combinations (e.g. l=+7, r=-2: quotient is legally
+            // -3, but the remainder must stay +1 to satisfy l == q*r + rem, not -1).
+            get<3>(result) = lsign;
             std::span q{ pls + rlimbs.size(), llimbs.size() };
             std::span res{ pls, rlimbs.size() };
             limb_arithmetic::udiv<limb_t>(llimbs, rlimbs, q, res);
