@@ -42,13 +42,13 @@ jobs:
         with:
             path: |
               ${{ github.workspace }}/vcpkg_installed
-            key: vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-${{ hashFiles('vcpkg.json') }}
+            key: vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-${{ hashFiles('vcpkg.json', 'vcpkg-lock.json', 'triplets/x64-windows-cpp23.cmake') }}
             restore-keys: |
               vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-
               vcpkg-${{ runner.os }}-
               
       - name: Install Dependencies
-        run: .\vcpkg\vcpkg.exe install --triplet x64-windows-cpp23
+        run: .\vcpkg\vcpkg.exe install --triplet x64-windows-cpp23 --overlay-triplets="triplets"
                   
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
