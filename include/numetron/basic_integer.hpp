@@ -1496,6 +1496,22 @@ inline basic_integer<LimbT, LN, AllocatorLT> pow(basic_integer<LimbT, LN, Alloca
     return l.build_new([lv = (basic_integer_view<LimbT>)l, n](auto& ih) { ih.init(pow(lv, static_cast<unsigned int>(n), ih.inplace_allocator())); });
 }
 
+// Euclidean GCD. |a| and |b| may be any sign -- the loop only ever inspects `b`'s truthiness (zero
+// or not) and takes a modulus, both sign-agnostic in their effect on termination -- but the result
+// itself follows whatever sign basic_integer's own `%` produces (dividend's sign, see BUGFIXES.md's
+// "bigint `%` gave the wrong sign" entry), so callers after an *unsigned* GCD should pass already-
+// non-negative operands (every current caller does, via `.abs()`).
+template <std::unsigned_integral LimbT, size_t N, typename AllocatorT>
+inline basic_integer<LimbT, N, AllocatorT> gcd(basic_integer<LimbT, N, AllocatorT> a, basic_integer<LimbT, N, AllocatorT> b)
+{
+    while (b) {
+        basic_integer<LimbT, N, AllocatorT> r = a % b;
+        a = std::move(b);
+        b = std::move(r);
+    }
+    return a;
+}
+
 // Exact comparison between an arbitrary-width integer (native fixed-width int or bigint, viewed
 // through basic_integer_view) and a native floating value. A non-finite or fractional rhs can never
 // equal an integer; a whole-number rhs is converted to its exact bigint value (see the basic_integer(T)

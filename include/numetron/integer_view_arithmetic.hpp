@@ -113,7 +113,7 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
     using limb_t = std::remove_cv_t<LimbT>;
     using alloc_traits_t = std::allocator_traits<std::remove_cvref_t<AllocatorT>>;
     return l.with_limbs([r, &alloc](std::span<const LimbT> llimbs, int lsign) {
-        return r.with_limbs([llimbs, lsign, &alloc](std::span<const LimbT> rlimbs, int rsign) {
+        return r.with_limbs([llimbs, lsign, &alloc](std::span<const LimbT> rlimbs, int /* rsign */) {
             std::tuple<limb_t*, size_t, size_t, int> result;
 
             size_t margsz = llimbs.size() + rlimbs.size();

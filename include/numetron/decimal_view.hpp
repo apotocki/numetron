@@ -394,192 +394,180 @@ std::strong_ordering operator<=> (basic_decimal_view<LimbT> const& lhs, basic_de
     }
 }
 
-#if 1
-template <std::unsigned_integral LimbT>
-basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
-{
-    uint16_t bits = value.to_bits();
+namespace detail {
 
-    bool is_negative = (bits & 0x8000) != 0;
+// Computes the exact signed decimal value of a finite float16 as (significand, exponent), via
+// bit-decomposition (sign/exponent/mantissa, strip trailing binary zeros, fold 2^binary_exp into
+// decimal via 5^-binary_exp for a negative exponent). Returns bigint `basic_integer<LimbT>` rather
+// than a native integral type -- deliberately: the exact significand can need more bits than a
+// single LimbT (verified: float16's smallest-normal-exponent bucket with a fully-odd mantissa
+// needs ~67 bits for LimbT = uint64_t, e.g. exp_bits=1, mant_bits=0x3FF), which a fixed-width
+// uint64_t accumulator (an earlier version of this file's exact-value logic used one) silently
+// overflows for exactly that class of input -- see BUGFIXES.md. A bigint has nowhere to overflow
+// to. Shared by basic_decimal_view<LimbT>::basic_decimal_view(float16) below (the shortest-decimal
+// search needs the exact values of `value` and its neighbors to compare against) and
+// numetron::exact_decimal(float16) (basic_decimal.hpp), which just returns this directly.
+template <std::unsigned_integral LimbT>
+std::pair<basic_integer<LimbT>, int64_t> exact_signed_decimal_from_float16(float16 v)
+{
+    uint16_t bits = v.to_bits();
+    bool negative = (bits & 0x8000) != 0;
     uint16_t exp_bits = (bits >> 10) & 0x1F;
     uint16_t mant_bits = bits & 0x3FF;
-
     if (exp_bits == 0x1F) {
         throw std::invalid_argument("floating-point value must be finite");
     }
-
     if (exp_bits == 0 && mant_bits == 0) {
+        return { basic_integer<LimbT>{0}, 0 };
+    }
+
+    int binary_exp;
+    uint32_t significand;
+    if (exp_bits == 0) {
+        significand = mant_bits; // subnormal
+        binary_exp = -24;
+    } else {
+        significand = 1024 + mant_bits; // normal
+        binary_exp = static_cast<int>(exp_bits) - 25;
+    }
+    while ((significand & 1) == 0) { significand >>= 1; ++binary_exp; }
+
+    basic_integer<LimbT> sig{ significand };
+    int64_t decimal_exp = 0;
+    if (binary_exp >= 0) {
+        sig <<= static_cast<unsigned int>(binary_exp);
+    } else {
+        decimal_exp = binary_exp;
+        sig *= numetron::pow(basic_integer<LimbT>{5}, static_cast<unsigned int>(-binary_exp));
+    }
+    while (sig && !(sig % 10)) { sig /= 10; ++decimal_exp; }
+
+    if (negative) sig = -sig;
+    return { std::move(sig), decimal_exp };
+}
+
+} // namespace detail
+
+// Constructs the *shortest* decimal that still round-trips back to `value` -- the same guarantee
+// the templated (f32/f64) constructor above gets from Dragonbox, computed by hand here since
+// Dragonbox operates on IEEE-754 binary32/64 specifically, not this library's own float16. Unlike
+// widening to float/double first and running Dragonbox on *that*, shortest-for-float16 has to be
+// computed against float16's own (much coarser) neighbor spacing -- the shortest decimal that
+// round-trips to the widened float32 value is not generally the shortest one that round-trips to
+// the original float16 (see numetron::exact_decimal(float16), basic_decimal.hpp, for the *exact*,
+// non-shortened value, needed wherever exactness rather than brevity matters, e.g. numeric
+// comparisons).
+//
+// Algorithm: get the exact decimal value of `value` and of its immediate neighbors
+// (next_down()/next_up(), whichever are finite), align them to a common decimal exponent, and
+// search from the fewest significant digits upward for the first rounded candidate that still
+// falls strictly within the interval bounded by the midpoints to those neighbors -- any decimal in
+// that interval parses back to exactly `value`. A candidate landing exactly on a midpoint is
+// accepted only when `value`'s own raw bit pattern is even, matching IEEE round-half-to-even
+// (adjacent float16 bit patterns always alternate parity, so this is equivalent to, but cheaper
+// than, comparing mantissas). Every comparison here is an exact bigint comparison -- no float
+// re-parsing anywhere, unlike an earlier version of this constructor, which compared approximate
+// `float` reconstructions and could not fully guarantee round-trip correctness at a tie.
+template <std::unsigned_integral LimbT>
+basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
+{
+    using integer_t = basic_integer<LimbT>;
+    using view_t = basic_integer_view<LimbT>;
+
+    if (!value.is_finit()) {
+        throw std::invalid_argument("floating-point value must be finite");
+    }
+    if (value.to_bits() == 0 || value.to_bits() == 0x8000) { // +0 or -0
         significand_ = 0;
         exponent_ = 0;
         return;
     }
 
-    int binary_exp;
-    uint32_t significand;
+    bool value_wins_ties = (value.to_bits() & 1) == 0;
 
-    if (exp_bits == 0) {
-        // Subnormal
-        significand = mant_bits;
-        binary_exp = -24;
-    } else {
-        // Normal
-        significand = 1024 + mant_bits;
-        binary_exp = static_cast<int>(exp_bits) - 25;
+    auto [v_sig, v_exp] = detail::exact_signed_decimal_from_float16<LimbT>(value);
+
+    bool have_lo = value.next_down().is_finit();
+    bool have_hi = value.next_up().is_finit();
+
+    integer_t lo_sig{ 0 }; int64_t lo_exp = v_exp;
+    integer_t hi_sig{ 0 }; int64_t hi_exp = v_exp;
+    if (have_lo) std::tie(lo_sig, lo_exp) = detail::exact_signed_decimal_from_float16<LimbT>(value.next_down());
+    if (have_hi) std::tie(hi_sig, hi_exp) = detail::exact_signed_decimal_from_float16<LimbT>(value.next_up());
+
+    int64_t e = v_exp;
+    if (have_lo) e = (std::min)(e, lo_exp);
+    if (have_hi) e = (std::min)(e, hi_exp);
+
+    auto align = [e](integer_t sig, int64_t exp) {
+        if (exp > e) sig *= numetron::pow(integer_t{10}, static_cast<uint64_t>(exp - e));
+        return sig;
+    };
+
+    integer_t V = align(v_sig, v_exp);
+    integer_t twice_lower_mid = have_lo ? (integer_t)(V + align(lo_sig, lo_exp)) : integer_t{0};
+    integer_t twice_upper_mid = have_hi ? (integer_t)(V + align(hi_sig, hi_exp)) : integer_t{0};
+
+    bool neg_V = V.is_negative();
+
+    // Shorten one decimal digit at a time, starting from the exact value (`cur_mag`/`e`, always a
+    // valid answer -- it's the interval's own center) and stopping at the first digit removal that
+    // no longer satisfies the interval, keeping the last one that did. Deliberately never divides
+    // by anything wider than a single digit (`10`, always single-limb) -- an earlier version of
+    // this loop rounded straight to an arbitrary target scale (`magV / 10^drop`), which for a
+    // `drop` past ~19 is itself a multi-limb divisor and would have hit
+    // `numetron::limb_arithmetic::udiv`'s own "not implemented" case (see `BUGFIXES.md`), the exact
+    // failure mode this whole session's `to_fixed_string`/`divide_rounded` work went to some length
+    // to avoid elsewhere. Scaling a candidate back up to exponent `e` for the interval comparison is
+    // a multiply, not a divide, so it's unaffected by that limitation regardless of magnitude.
+    integer_t cur_mag = neg_V ? -V : V; // basic_integer has no .abs() -- that's a basic_integer_view-only method
+    int64_t cur_exp = e;
+    for (;;) {
+        integer_t next_mag = cur_mag / integer_t{10};
+        if (!next_mag) break; // fewer than two digits left -- can't shorten further
+
+        // Round this one digit off to nearest (ties broken arbitrarily -- half up -- since the
+        // interval check below is what actually decides correctness; getting this internal
+        // tie-break "wrong" only risks stopping one digit earlier than the true minimum, never
+        // producing a wrong answer).
+        if ((view_t)(cur_mag % integer_t{10}) >= view_t{5}) next_mag += 1;
+        int64_t next_exp = cur_exp + 1;
+
+        integer_t signed_candidate = neg_V ? -next_mag : next_mag;
+        integer_t twice_candidate = signed_candidate * integer_t{2};
+        if (next_exp > e) twice_candidate *= numetron::pow(integer_t{10}, static_cast<uint64_t>(next_exp - e));
+
+        bool lower_ok = !have_lo || (view_t)twice_candidate > (view_t)twice_lower_mid ||
+                        ((view_t)twice_candidate == (view_t)twice_lower_mid && value_wins_ties);
+        bool upper_ok = !have_hi || (view_t)twice_candidate < (view_t)twice_upper_mid ||
+                        ((view_t)twice_candidate == (view_t)twice_upper_mid && value_wins_ties);
+        if (!(lower_ok && upper_ok)) break;
+
+        cur_mag = std::move(next_mag);
+        cur_exp = next_exp;
     }
 
-    // Remove trailing binary zeros
-    while ((significand & 1) == 0) {
-        significand >>= 1;
-        ++binary_exp;
-    }
+    integer_t result_sig = neg_V ? -cur_mag : cur_mag;
+    int64_t result_exp = cur_exp;
 
-    int64_t decimal_exp = 0;
-    uint64_t sig = significand;
+    // Strip any incidental trailing zeros the rounding above may have introduced (e.g. rounding
+    // 95 to the nearest 10 gives 100) -- keeps the result normalized like every other producer in
+    // this file. Only ever divides by 10, same single-limb-safe reasoning as the search above.
+    while (result_sig && !(result_sig % 10)) { result_sig /= 10; ++result_exp; }
 
-    if (binary_exp >= 0) {
-        sig <<= binary_exp;
-    } else {
-        int neg_exp = -binary_exp;
-        decimal_exp = binary_exp;
-
-        // Compute 5^neg_exp (max neg_exp = 24, 5^24 fits in uint64_t)
-        static constexpr uint64_t pow5_table[] = {
-            1ULL, 5ULL, 25ULL, 125ULL, 625ULL, 3125ULL, 15625ULL, 78125ULL,
-            390625ULL, 1953125ULL, 9765625ULL, 48828125ULL, 244140625ULL,
-            1220703125ULL, 6103515625ULL, 30517578125ULL, 152587890625ULL,
-            762939453125ULL, 3814697265625ULL, 19073486328125ULL,
-            95367431640625ULL, 476837158203125ULL, 2384185791015625ULL,
-            11920928955078125ULL, 59604644775390625ULL
-        };
-        sig *= pow5_table[neg_exp];
-    }
-
-    // Remove trailing decimal zeros
-    while (sig && (sig % 10) == 0) {
-        sig /= 10;
-        ++decimal_exp;
-    }
-
-    significand_ = static_cast<LimbT>(sig);
-    if (is_negative) {
-        significand_ = -significand_;
-    }
-    exponent_ = decimal_exp;
+    // Assign via a plain scalar, not `(view_t)result_sig` -- `basic_integer::operator
+    // basic_integer_view()` returns a view wrapping `result_sig`'s *own* inplace limb storage
+    // (basic_integer.hpp's `significand()`), not a copy of it; `result_sig` is a local about to be
+    // destroyed when this constructor returns, so a view referencing its storage would dangle the
+    // moment it did (a real, Valgrind-caught bug the first version of this fix had). The shortest
+    // round-tripping decimal for a float16 is always a handful of digits, comfortably within a
+    // native `int64_t`, so extracting it as a scalar and letting `basic_integer_view`'s own
+    // integral constructor copy *that* into its inplace storage (exactly how the exponent below,
+    // and the original pre-rewrite version of this constructor, already did it) is both safe and
+    // sufficient -- never a case of the value being too wide to fit.
+    significand_ = static_cast<int64_t>(result_sig);
+    exponent_ = result_exp;
 }
-
-#else
-
-template <std::unsigned_integral LimbT>
-basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
-{
-    // Compute 5^neg_exp (max neg_exp = 24, 5^24 fits in uint64_t)
-    static constexpr uint64_t pow5_table[] = {
-        1ULL, 5ULL, 25ULL, 125ULL, 625ULL, 3125ULL, 15625ULL, 78125ULL,
-        390625ULL, 1953125ULL, 9765625ULL, 48828125ULL, 244140625ULL,
-        1220703125ULL, 6103515625ULL, 30517578125ULL, 152587890625ULL,
-        762939453125ULL, 3814697265625ULL, 19073486328125ULL,
-        95367431640625ULL, 476837158203125ULL, 2384185791015625ULL,
-        11920928955078125ULL, 59604644775390625ULL
-    };
-
-    auto exact = [](float16 v) -> std::tuple<uint64_t, int64_t, bool> {
-        uint16_t bits = v.to_bits();
-        bool is_negative = (bits & 0x8000) != 0;
-        uint16_t exp_bits = (bits >> 10) & 0x1F;
-        
-        if (exp_bits == 0x1F) {
-            throw std::invalid_argument("floating-point value must be finite");
-        }
-
-        uint16_t mant_bits = bits & 0x3FF;
-        
-        if (exp_bits == 0 && mant_bits == 0) return { 0, 0, false };
-
-        int binary_exp;
-        uint32_t significand;
-
-        if (exp_bits == 0) {
-            // Subnormal
-            significand = mant_bits;
-            binary_exp = -24;
-        } else {
-            // Normal
-            significand = 1024 + mant_bits;
-            binary_exp = static_cast<int>(exp_bits) - 25;
-        }
-
-        // Remove trailing binary zeros
-        while ((significand & 1) == 0) {
-            significand >>= 1;
-            ++binary_exp;
-        }
-
-        int64_t decimal_exp = 0;
-        uint64_t sig = significand;
-
-        if (binary_exp >= 0) {
-            sig <<= binary_exp;
-        } else {
-            int neg_exp = -binary_exp;
-            decimal_exp = binary_exp;
-            sig *= pow5_table[neg_exp];
-        }
-
-        return { sig, decimal_exp, is_negative };
-    };
-
-    auto to_float = [](uint64_t s, int64_t e, bool is_negative) -> float {
-        float val = static_cast<float>(s);
-        if (e > 0) {
-            for (int64_t i = 0; i < e; ++i) val *= 10.0f;
-        } else {
-            for (int64_t i = 0; i < -e; ++i) val /= 10.0f;
-        }
-        return is_negative ? -val : val;
-    };
-
-    auto [sig, decimal_exp, is_negative] = exact(value); // get exact decimal representation first
-    float orig = to_float(sig, decimal_exp, is_negative);
-
-    // Try to shorten by removing last digit
-    while (sig >= 10) {
-        uint64_t base = sig / 10;
-        int remainder = sig % 10;
-        int64_t new_exp = decimal_exp + 1;
-        if (!remainder) {
-            sig = base;
-            decimal_exp = new_exp;
-            continue;
-        } else if (remainder >= 5) {
-            float16 nup = is_negative ? value.next_down() : value.next_up();
-            if (!nup.is_finit()) break;
-            if (std::abs((float)nup - orig) < to_float(1, decimal_exp, false)) break;
-            float rounded = to_float(base + 1, new_exp, is_negative);
-            
-            if (std::abs(rounded - orig) > std::abs(orig - (float)nup) / 2) break;
-            sig = base + 1;
-            decimal_exp = new_exp;
-            continue;
-        } else { // remainder < 5
-            float16 ndown = is_negative ? value.next_up() : value.next_down();
-            if (!ndown.is_finit()) break;
-            if (std::abs((float)ndown - orig) < to_float(1, decimal_exp, false)) break;
-            float rounded = to_float(base, new_exp, is_negative);
-            if (std::abs(rounded - orig) > std::abs(orig - (float)ndown) / 2) break;
-            sig = base;
-            decimal_exp = new_exp;
-            continue;
-        }
-    }
-
-    significand_ = sig;
-    if (is_negative) {
-        significand_ = -significand_;
-    }
-    exponent_ = decimal_exp;
-}
-
-#endif
 
 template <std::unsigned_integral LimbT>
 inline std::string to_string(basic_decimal_view<LimbT> const& val)

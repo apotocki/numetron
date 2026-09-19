@@ -16,6 +16,9 @@
 #include <bit>
 #include <sstream>
 #include <cstring>
+#include <optional>
+#include <stdexcept>
+#include <cmath>
 
 #include "arithmetic.hpp"
 #include "limbs_from_integral.hpp"
@@ -1299,5 +1302,182 @@ std::string to_scientific_string(basic_decimal<LimbT, N, E, AllocatorT> const& v
 }
 
 using decimal = basic_decimal<uint64_t, 1, 8>;
+
+// The *exact* decimal value of a finite float16 -- not the plain constructor
+// (`basic_decimal_view<LimbT>::basic_decimal_view(float16)`, decimal_view.hpp), which deliberately
+// gives the *shortest* decimal that still round-trips back to the same float16 (matching the
+// templated f32/f64 constructor's own Dragonbox-based behavior) -- the right choice for printing,
+// the wrong one for anything that needs the value itself, e.g. comparing against an unrelated
+// `decimal` (see RESOLVED.md's "`decimal` vs. `f32`/`f64` comparisons used the wrong
+// (shortest-round-trip, not exact) decimal conversion; float16 given a matching exact/shortest
+// split" entry, which this function and its `std::floating_point` overload below exist to let that
+// comparison code fix). Returns an *owning* `basic_decimal` rather than a view for the same reason
+// `try_divide_exact`/`divide_rounded` do -- the exact significand can need more bits than a single
+// LimbT holds (see detail::exact_signed_decimal_from_float16's own comment, decimal_view.hpp), and
+// only an owning type can allocate wider storage for that.
+template <std::unsigned_integral LimbT = uint64_t, size_t N = 1, size_t ExponentBitCount = 8, typename AllocatorT = std::allocator<LimbT>>
+basic_decimal<LimbT, N, ExponentBitCount, AllocatorT> exact_decimal(float16 value)
+{
+    using view_t = basic_integer_view<LimbT>;
+    auto [sig, exp] = detail::exact_signed_decimal_from_float16<LimbT>(value);
+    return basic_decimal<LimbT, N, ExponentBitCount, AllocatorT>{ (view_t)sig, view_t{ exp } };
+}
+
+// The *exact* decimal value of a finite native float/double -- not `basic_decimal_view<LimbT>`'s
+// own templated floating-point constructor, which goes through Dragonbox and deliberately produces
+// the *shortest* decimal string that still round-trips back to `value`, not the exact one. `value`'s
+// bits are exactly `int_mantissa * 2^binexp` (frexp/ldexp are exact for finite floats); folding the
+// 2^binexp factor into a decimal is exact too -- into the significand when binexp >= 0 (a left
+// shift), or via 2^binexp = 5^-binexp / 10^binexp when binexp < 0 (same "split off the base-5 part,
+// the base-2 part is exact" trick `basic_decimal_view<LimbT>::basic_decimal_view(float16)` uses,
+// just inverted, and the same trick `exact_decimal(float16)` above's helper uses for its own
+// negative binary exponents).
+template <std::unsigned_integral LimbT = uint64_t, size_t N = 1, size_t ExponentBitCount = 8, typename AllocatorT = std::allocator<LimbT>, std::floating_point T>
+basic_decimal<LimbT, N, ExponentBitCount, AllocatorT> exact_decimal(T value)
+{
+    using integer_t = basic_integer<LimbT, N, AllocatorT>;
+    using result_t = basic_decimal<LimbT, N, ExponentBitCount, AllocatorT>;
+    using view_t = basic_integer_view<LimbT>;
+
+    if (!std::isfinite(value)) {
+        throw std::invalid_argument("floating-point value must be finite");
+    }
+    if (value == T{ 0 }) return result_t{ 0 };
+
+    int exp2;
+    T mantissa = std::frexp(value, &exp2);
+    constexpr int mantissa_bits = std::numeric_limits<T>::digits;
+    int64_t int_mantissa = static_cast<int64_t>(std::ldexp(mantissa, mantissa_bits));
+    int64_t binexp = static_cast<int64_t>(exp2) - mantissa_bits;
+
+    integer_t sig{ int_mantissa };
+    if (binexp >= 0) {
+        sig <<= static_cast<unsigned int>(binexp);
+        return result_t{ (view_t)sig, view_t{ 0 } };
+    } else {
+        sig *= numetron::pow(integer_t{ 5 }, static_cast<unsigned int>(-binexp));
+        return result_t{ (view_t)sig, view_t{ binexp } };
+    }
+}
+
+// Attempts an exact `lhs / rhs` division. Most quotients (e.g. 1/3) don't have a finite base-10
+// representation; this returns a result only when the reduced fraction's denominator's sole prime
+// factors are 2 and 5 (so its base-10 expansion terminates) -- computed by clearing the denominator
+// to an exact power of 10 via gcd (basic_integer.hpp) + repeated factoring-out of 2s and 5s, never
+// by rounding or long division. Returns std::nullopt for division by zero or a non-terminating
+// (repeating) quotient.
+//
+// Templated on the full `basic_decimal` shape (`N`/`ExponentBitCount`/`AllocatorT`, all defaulted
+// to `decimal`'s own choices), not just `LimbT`, matching every other free function in this file --
+// `lhs`/`rhs` are views (`basic_decimal_view<LimbT>` carries no `N`/`ExponentBitCount` of its own to
+// deduce from), so the *result*'s shape is a genuine choice, not something inferable from the
+// arguments; a caller happy with `decimal`'s own shape (nearly everyone -- it's the only
+// instantiation anywhere in this codebase today) gets it for free from the defaults, exactly as
+// `numetron::try_divide_exact(a_decimal_view, b_decimal_view)` already did before this was
+// genericized -- LimbT still deduces from the arguments either way.
+template <std::unsigned_integral LimbT, size_t N = 1, size_t ExponentBitCount = 8, typename AllocatorT = std::allocator<LimbT>>
+std::optional<basic_decimal<LimbT, N, ExponentBitCount, AllocatorT>> try_divide_exact(basic_decimal_view<LimbT> lhs, basic_decimal_view<LimbT> rhs)
+{
+    using integer_t = basic_integer<LimbT, N, AllocatorT>;
+    using result_t = basic_decimal<LimbT, N, ExponentBitCount, AllocatorT>;
+    using view_t = basic_integer_view<LimbT>;
+
+    integer_t den{ rhs.significand().abs() };
+    if (!den) return std::nullopt; // division by zero
+
+    integer_t num{ lhs.significand().abs() };
+    if (!num) return result_t{ 0 }; // 0 / (nonzero) == 0
+
+    integer_t g = numetron::gcd(num, den);
+    num /= g;
+    den /= g;
+
+    // Strip all factors of 2 and 5 out of the (now coprime with num) denominator -- if anything
+    // other than 1 is left, the reduced fraction's denominator has some other prime factor, so its
+    // base-10 expansion repeats forever and there's no exact decimal result.
+    int e2 = 0;
+    while (!(den % 2)) { den /= 2; ++e2; }
+    int e5 = 0;
+    while (!(den % 5)) { den /= 5; ++e5; }
+    if (!(den == 1)) return std::nullopt;
+
+    // num/den == num / (2^e2 * 5^e5); multiplying num by the missing powers of 2 and 5 turns the
+    // denominator into an exact 10^k, so the quotient becomes an exact integer significand over
+    // 10^k -- no rounding anywhere in this computation.
+    int k = (std::max)(e2, e5);
+    integer_t multiplier = numetron::pow(integer_t{ 2 }, static_cast<unsigned int>(k - e2))
+                          * numetron::pow(integer_t{ 5 }, static_cast<unsigned int>(k - e5));
+    integer_t result_sig = num * multiplier;
+    if (lhs.is_negative() != rhs.is_negative()) result_sig = -result_sig;
+
+    integer_t result_exp{ lhs.exponent() };
+    result_exp -= rhs.exponent();
+    result_exp -= k;
+
+    return result_t{ (view_t)result_sig, (view_t)result_exp };
+}
+
+// Divides two decimal values, rounded to at most `scale` digits after the decimal point (trailing
+// zeros stripped afterward -- this library's decimal type has no way to print a non-significant
+// trailing zero, so an exact `scale`-digit padding wouldn't be observable anyway). Unlike
+// try_divide_exact, this never rejects a non-terminating quotient -- it always produces a result,
+// by rounding. Returns std::nullopt for division by zero. Only decimal_round_mode::half_even is
+// implemented so far; every other mode throws std::runtime_error, same incremental-implementation
+// approach to_fixed_string (decimal_view.hpp) and limb_arithmetic::udiv both use.
+//
+// Genericized the same way and for the same reason as try_divide_exact above.
+template <std::unsigned_integral LimbT, size_t N = 1, size_t ExponentBitCount = 8, typename AllocatorT = std::allocator<LimbT>>
+std::optional<basic_decimal<LimbT, N, ExponentBitCount, AllocatorT>> divide_rounded(basic_decimal_view<LimbT> lhs, basic_decimal_view<LimbT> rhs, uint32_t scale, decimal_round_mode mode)
+{
+    if (mode != decimal_round_mode::half_even) {
+        throw std::runtime_error("divide_rounded: only decimal_round_mode::half_even is implemented so far");
+    }
+
+    using integer_t = basic_integer<LimbT, N, AllocatorT>;
+    using result_t = basic_decimal<LimbT, N, ExponentBitCount, AllocatorT>;
+    using view_t = basic_integer_view<LimbT>;
+
+    integer_t den{ rhs.significand().abs() };
+    if (!den) return std::nullopt; // division by zero
+
+    integer_t num{ lhs.significand().abs() };
+    if (!num) return result_t{ 0 };
+
+    // num/den * 10^scale, scaled by the operands' own exponent difference -- push the whole 10^e
+    // factor onto whichever side (numerator or denominator) keeps it a positive power, so the
+    // division below is always an exact-integer numerator over an exact-integer denominator.
+    int64_t e = (int64_t)lhs.exponent() - (int64_t)rhs.exponent() + (int64_t)scale;
+    if (e >= 0) {
+        num *= numetron::pow(integer_t{ 10 }, static_cast<uint64_t>(e));
+    } else {
+        den *= numetron::pow(integer_t{ 10 }, static_cast<uint64_t>(-e));
+    }
+
+    integer_t q = num / den; // truncated (toward zero) magnitude quotient
+    integer_t r = num % den;
+
+    // round-half-even tie-break on the discarded remainder, compared against half the denominator
+    // (via 2*r instead of den/2 -- den isn't necessarily even, so this avoids integer-dividing it).
+    integer_t twice_r = r * integer_t{ 2 };
+    view_t twice_r_v = (view_t)twice_r;
+    view_t den_v = (view_t)den;
+    if (twice_r_v > den_v) {
+        q += 1;
+    } else if (twice_r_v == den_v && (q % 2)) {
+        q += 1; // exact tie: round to the even neighbor, and q is currently odd
+    }
+
+    if (lhs.is_negative() != rhs.is_negative()) q = -q;
+
+    integer_t result_exp{ -static_cast<int64_t>(scale) };
+    if (q) {
+        // Strip trailing zeros -- same normalization every other decimal arithmetic result already
+        // gets (see e.g. operator* above), so a `scale` larger than the quotient actually needs
+        // doesn't leave fake extra precision sitting in the significand.
+        while (!(q % 10)) { q /= 10; result_exp += 1; }
+    }
+
+    return result_t{ (view_t)q, (view_t)result_exp };
+}
 
 }
