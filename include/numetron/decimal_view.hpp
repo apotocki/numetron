@@ -446,6 +446,17 @@ std::pair<basic_integer<LimbT>, int64_t> exact_signed_decimal_from_float16(float
     return { std::move(sig), decimal_exp };
 }
 
+// Binary exponent of `v`'s least-significant mantissa bit -- what the function above computes as
+// `binary_exp` *before* its trailing-zero-stripping loop runs. Needed separately by
+// basic_decimal_view<LimbT>::basic_decimal_view(float16) below to size the *analytic* neighbor at
+// the extremal (max/lowest finite) values, where the real neighbor one step further from zero
+// overflows to infinity rather than existing as a finite float16.
+inline int raw_binary_exponent_of_float16(float16 v)
+{
+    uint16_t exp_bits = (v.to_bits() >> 10) & 0x1F;
+    return exp_bits == 0 ? -24 : static_cast<int>(exp_bits) - 25;
+}
+
 } // namespace detail
 
 // Constructs the *shortest* decimal that still round-trips back to `value` -- the same guarantee
@@ -494,6 +505,45 @@ basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
     integer_t hi_sig{ 0 }; int64_t hi_exp = v_exp;
     if (have_lo) std::tie(lo_sig, lo_exp) = detail::exact_signed_decimal_from_float16<LimbT>(value.next_down());
     if (have_hi) std::tie(hi_sig, hi_exp) = detail::exact_signed_decimal_from_float16<LimbT>(value.next_up());
+
+    if (!have_lo || !have_hi) {
+        // `value` is the largest-magnitude finite float16 of its sign -- the neighbor one step
+        // further from zero doesn't exist (it overflows to +/-infinity), but the boundary that
+        // decides what still round-trips to `value` is well-defined regardless: it's exactly one
+        // ULP away, same as if that neighbor *were* representable (IEEE overflow-to-infinity is
+        // itself defined by rounding against that same, merely non-representable, extrapolated
+        // value). Compute it analytically rather than leaving that side of the interval
+        // unconstrained -- an earlier version did exactly that, via `!have_lo ||`/`!have_hi ||`
+        // unconditionally satisfying its own side of the interval check, which let the
+        // shortest-digit search shorten without limit there: float16::max() (65504) came out as
+        // "70000", which overflows back to infinity on parsing instead of round-tripping to
+        // 65504 -- caught by CI, not local testing; see BUGFIXES.md.
+        int raw_exp = detail::raw_binary_exponent_of_float16(value);
+        integer_t delta_sig{ 1 };
+        int64_t delta_exp = 0;
+        if (raw_exp >= 0) {
+            delta_sig <<= static_cast<unsigned int>(raw_exp);
+        } else {
+            delta_exp = raw_exp;
+            delta_sig *= numetron::pow(integer_t{ 5 }, static_cast<unsigned int>(-raw_exp));
+        }
+
+        int64_t align_exp = (std::min)(v_exp, delta_exp);
+        integer_t v_aligned = v_sig;
+        if (v_exp > align_exp) v_aligned *= numetron::pow(integer_t{ 10 }, static_cast<uint64_t>(v_exp - align_exp));
+        integer_t delta_aligned = delta_sig;
+        if (delta_exp > align_exp) delta_aligned *= numetron::pow(integer_t{ 10 }, static_cast<uint64_t>(delta_exp - align_exp));
+
+        if (!have_hi) { // value > 0: missing neighbor is further from zero, i.e. larger
+            hi_sig = v_aligned + delta_aligned;
+            hi_exp = align_exp;
+            have_hi = true;
+        } else { // value < 0: missing neighbor is further from zero, i.e. more negative
+            lo_sig = v_aligned - delta_aligned;
+            lo_exp = align_exp;
+            have_lo = true;
+        }
+    }
 
     int64_t e = v_exp;
     if (have_lo) e = (std::min)(e, lo_exp);
