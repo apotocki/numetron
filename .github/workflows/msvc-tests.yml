@@ -48,7 +48,7 @@ jobs:
               vcpkg-${{ runner.os }}-
               
       - name: Install Dependencies
-        run: .\vcpkg\vcpkg.exe install --triplet x64-windows
+        run: .\vcpkg\vcpkg.exe install --triplet x64-windows-cpp23
                   
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -59,5 +59,5 @@ jobs:
       - name: Run tests
         run: |
           cd x64/Release
-          $env:PATH += ";${{ github.workspace }}\vcpkg_installed\x64-windows\bin"
+          $env:PATH += ";${{ github.workspace }}\vcpkg_installed\x64-windows-cpp23\bin"
           .\numetron_tests.exe

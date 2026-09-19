@@ -7,3 +7,7 @@
 /build
 /build.cmd
 /build.sh
+/plans
+/*.md
+/.github/*.md
+/testdata
