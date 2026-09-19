@@ -25,6 +25,29 @@
 
 namespace numetron {
 
+// Which "shortest round-trip" is meant for a float16/float32 source (see basic_decimal_view<LimbT>'s
+// float16 and float constructors below): a narrower float format's own resolution can be coarse
+// enough that a decimal shorter than the "obvious" one still validly round-trips back to the same
+// value, e.g. "65500" for float16::max() (65504) -- both round-trip correctly, but "65500" has fewer
+// significant digits (see BUGFIXES.md/RESOLVED.md). `widened` widens to `double` first and prints
+// *its* shortest round-trip, whose much finer resolution near the same value essentially always
+// reproduces the "obvious" decimal instead. `native` is the honest "fewest digits that round-trip
+// through the source type's own resolution" variant.
+//
+// The right default differs by type, which is why each constructor picks its own rather than this
+// enum picking one: for float16, `widened` is the default -- virtually no float16 library actually
+// implements a native-resolution shortest-round-trip algorithm, they all widen first, so `widened`
+// is what matches real-world expectations (e.g. seeing "65504" rather than "65500"). For float32,
+// it's the reverse: Dragonbox itself operates directly on float32's own resolution, and that *is*
+// what every mainstream float32 pretty-printer already does (there's no widen-first convention to
+// match), so `native` is the default there -- and also the pre-existing behavior, so adding this
+// parameter changes nothing for existing callers. float64 gets no such parameter at all: `double` is
+// already the widest floating type this library deals with, so there's nothing to widen *to*.
+enum class decimal_shortest_mode {
+    native,
+    widened,
+};
+
 template <std::unsigned_integral LimbT>
 class basic_decimal_view
 {
@@ -107,24 +130,28 @@ public:
         exponent_ = e;
     }
 
+    // Shared by the templated floating-point constructor below and by the float16/float
+    // constructors' `decimal_shortest_mode::widened` path (which widens to double and delegates
+    // here) -- factored out so every path goes through the exact same Dragonbox call rather than
+    // duplicating it.
     template <std::floating_point T>
-    explicit basic_decimal_view(T value)
+    inline void init_dragonbox_shortest(T value)
     {
         if (!std::isfinite(value)) {
             throw std::invalid_argument("floating-point value must be finite");
         }
-        
-        if (value == 0.0) {
+
+        if (value == T{0}) {
             significand_ = 0;
             exponent_ = 0;
             return;
         }
-        
+
         auto result = jkj::dragonbox::to_decimal(value, jkj::dragonbox::policy::trailing_zero::remove);
-        
+
         auto sig = result.significand;
         int64_t exp = result.exponent;
-        
+
         significand_ = sig;
         if (result.is_negative) {
             significand_ = -significand_;
@@ -132,7 +159,30 @@ public:
         exponent_ = exp;
     }
 
-    explicit basic_decimal_view(float16 value);
+    template <std::floating_point T>
+    explicit basic_decimal_view(T value)
+    {
+        init_dragonbox_shortest(value);
+    }
+
+    // Dedicated (non-template) overload for `float` specifically -- preferred by overload
+    // resolution over the templated constructor above for an actual `float` argument (a non-template
+    // function wins over an equally-good template specialization), so this is the one that actually
+    // runs for `float`; the template above still handles `double` (and any other floating type this
+    // library might gain). Defaults to `native`, matching both the pre-existing behavior (Dragonbox
+    // on `float` directly) and what every mainstream float32 pretty-printer already does -- see
+    // decimal_shortest_mode's own comment above for why float32's default is the opposite of
+    // float16's.
+    explicit basic_decimal_view(float value, decimal_shortest_mode mode = decimal_shortest_mode::native)
+    {
+        if (mode == decimal_shortest_mode::widened) {
+            init_dragonbox_shortest(static_cast<double>(value));
+        } else {
+            init_dragonbox_shortest(value);
+        }
+    }
+
+    explicit basic_decimal_view(float16 value, decimal_shortest_mode mode = decimal_shortest_mode::widened);
     
     inline bool is_negative() const noexcept { return significand_.is_negative(); }
     inline int sgn() const noexcept { return significand_.sgn(); }
@@ -460,16 +510,20 @@ inline int raw_binary_exponent_of_float16(float16 v)
 } // namespace detail
 
 // Constructs the *shortest* decimal that still round-trips back to `value` -- the same guarantee
-// the templated (f32/f64) constructor above gets from Dragonbox, computed by hand here since
-// Dragonbox operates on IEEE-754 binary32/64 specifically, not this library's own float16. Unlike
-// widening to float/double first and running Dragonbox on *that*, shortest-for-float16 has to be
-// computed against float16's own (much coarser) neighbor spacing -- the shortest decimal that
-// round-trips to the widened float32 value is not generally the shortest one that round-trips to
-// the original float16 (see numetron::exact_decimal(float16), basic_decimal.hpp, for the *exact*,
-// non-shortened value, needed wherever exactness rather than brevity matters, e.g. numeric
-// comparisons).
+// the templated (f32/f64) constructor above gets from Dragonbox. `mode` picks which "shortest" is
+// meant (see decimal_shortest_mode above this class): `widened` (the default, matching what most
+// other float16 tooling does) widens to double and delegates to the same Dragonbox call the
+// templated constructor uses, via `init_dragonbox_shortest` -- double's resolution near any float16
+// value is so much finer than float16's own that this always reproduces the value's "obvious"
+// decimal, e.g. "65504" for float16::max(). `native` instead computes the true fewest-digit
+// decimal that round-trips through float16's own (much coarser) resolution, which can legitimately
+// be shorter yet still round-trip correctly, e.g. "65500" for that same value (see
+// BUGFIXES.md/RESOLVED.md) -- computed by hand since Dragonbox itself only targets IEEE-754
+// binary32/64, not this library's float16. (Either way, see numetron::exact_decimal(float16),
+// basic_decimal.hpp, for the *exact*, non-shortened value, needed wherever exactness rather than
+// brevity matters, e.g. numeric comparisons.)
 //
-// Algorithm: get the exact decimal value of `value` and of its immediate neighbors
+// `native` algorithm: get the exact decimal value of `value` and of its immediate neighbors
 // (next_down()/next_up(), whichever are finite), align them to a common decimal exponent, and
 // search from the fewest significant digits upward for the first rounded candidate that still
 // falls strictly within the interval bounded by the midpoints to those neighbors -- any decimal in
@@ -480,7 +534,7 @@ inline int raw_binary_exponent_of_float16(float16 v)
 // re-parsing anywhere, unlike an earlier version of this constructor, which compared approximate
 // `float` reconstructions and could not fully guarantee round-trip correctness at a tie.
 template <std::unsigned_integral LimbT>
-basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
+basic_decimal_view<LimbT>::basic_decimal_view(float16 value, decimal_shortest_mode mode)
 {
     using integer_t = basic_integer<LimbT>;
     using view_t = basic_integer_view<LimbT>;
@@ -491,6 +545,10 @@ basic_decimal_view<LimbT>::basic_decimal_view(float16 value)
     if (value.to_bits() == 0 || value.to_bits() == 0x8000) { // +0 or -0
         significand_ = 0;
         exponent_ = 0;
+        return;
+    }
+    if (mode == decimal_shortest_mode::widened) {
+        init_dragonbox_shortest(static_cast<double>(value));
         return;
     }
 

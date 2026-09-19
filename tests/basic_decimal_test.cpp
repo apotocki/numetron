@@ -1,4 +1,4 @@
-// Numetron — Compile-time and runtime arbitrary-precision arithmetic
+// Numetron ï¿½ Compile-time and runtime arbitrary-precision arithmetic
 // (c) 2025 Alexander Pototskiy
 // Licensed under the MIT License. See LICENSE file for details.
 
@@ -135,9 +135,31 @@ void basic_decimal_test0()
     CHECK_EQUAL(to_string(decv_t{ float16{16.0f} }), "16");
     CHECK_EQUAL(to_string(decv_t{ float16{0.0625f} }), "0.0625"); // 1/16
     
-    // Special float16 values - max finite value (65504)
+    // Special float16 values - max finite value (65504). Default mode is `widened` (widen to
+    // double, print double's own shortest round-trip), matching what most other float16 tooling
+    // does, so this reproduces the "obvious" value.
     CHECK_EQUAL(to_string(decv_t{ (float16::max)() }), "65504");
     CHECK_EQUAL(to_string(decv_t{ float16::lowest() }), "-65504");
+
+    // `native` computes the fewest-digit decimal that round-trips through float16's own (much
+    // coarser) resolution instead: the next representable float16 below 65504 is 65472, and
+    // the next one up would be 65536 (which instead overflows to infinity), so any decimal in
+    // (65488, 65520) round-trips back to 65504 -- and "65500" is the fewest-significant-digit value
+    // in that range (no 2-significant-digit decimal fits a window that narrow), so it's genuinely
+    // shorter than "65504" while still round-tripping correctly. `numetron::exact_decimal` (not
+    // this constructor, either mode) is what recovers the exact "65504" -- see
+    // BUGFIXES.md/RESOLVED.md for the exact/shortest split this constructor followed.
+    CHECK_EQUAL(to_string(decv_t{ (float16::max)(), numetron::decimal_shortest_mode::native }), "65500");
+    CHECK_EQUAL(to_string(decv_t{ float16::lowest(), numetron::decimal_shortest_mode::native }), "-65500");
+
+    // float32 gets the same `decimal_shortest_mode` parameter, but defaulted the other way
+    // (`native`) since that's both the pre-existing behavior and what mainstream float32 tooling
+    // already does -- Dragonbox itself operates on float32's own resolution directly, so `native`
+    // needs no hand-written algorithm the way float16's does. `widened` is available for parity but
+    // rarely differs in practice: float32's own resolution is already fine enough that a shorter
+    // decimal essentially never exists within its round-trip interval the way it can for float16.
+    CHECK_EQUAL(to_string(decv_t{ 1.5f }), "1.5");
+    CHECK_EQUAL(to_string(decv_t{ 1.5f, numetron::decimal_shortest_mode::widened }), "1.5");
     
     // Small values near min normal
     auto min_normal = (float16::min)();
