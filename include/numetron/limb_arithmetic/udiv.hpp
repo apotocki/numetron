@@ -23,7 +23,7 @@ std::pair<LimbT, LimbT> udiv_bc_unorm(LimbT* puhh, LimbT* puh, std::span<LimbT>&
         small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> daux{ dl.size() + 1, alloc };
 
 #if defined(NUMETRON_ARITHMETIC_USE_INVINT_DIV)
-        auto [dinv, _] = numetron::arithmetic::udiv2by1<LimbT>(~dh + 1, 0, dh);
+        LimbT dinv = numetron::arithmetic::udiv2by1_reciprocal<LimbT>(dh);
 #endif
         do {
             LimbT dummy;
@@ -292,8 +292,12 @@ inline void udiv_dv(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, std::span<Lim
     LimbT c = usub<LimbT>(r1h, ul2, { q1d0, q1d0sz });
 }
 
+// svoboda_threshold is the quotient length from which Svoboda's division is used; it defaults to
+// the NUMETRON_SVOBODA_DIV_THRESHOLD tunable and is an argument so that a caller (a test, a
+// benchmark) can pick the algorithm without rebuilding the world
 template <std::unsigned_integral LimbT, typename QOutputIteratorT, typename AllocatorT>
-LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT && alloc)
+LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT && alloc,
+    size_t svoboda_threshold = NUMETRON_SVOBODA_DIV_THRESHOLD)
 {
     //using allocator_type = std::remove_cvref_t<AllocatorT>;
     //using alloc_traits_t = std::allocator_traits<allocator_type>;
@@ -340,7 +344,7 @@ LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, 
     } else {
         *qit = qtop; --qit;
     }
-    auto [rhh, rh] = (ul.size() + 1 - dl.size() >= NUMETRON_SVOBODA_DIV_THRESHOLD)
+    auto [rhh, rh] = (ul.size() + 1 - dl.size() >= svoboda_threshold)
         ? udiv_svoboda_unorm<LimbT>(puhh, puh, ul, dh, dnorm, std::move(qit), alloc)
         : udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dnorm, std::move(qit), alloc);
 
@@ -440,7 +444,7 @@ LimbT udiv2(LimbT& uh, std::span<LimbT> & ul, std::span<LimbT> d, std::span<Limb
         auto dauxsp = daux.first(daux.size() - 1);
 
 #if defined(NUMETRON_ARITHMETIC_USE_INVINT_DIV)
-        auto [dinv, _] = numetron::arithmetic::udiv2by1<LimbT>(~d.back() + 1, 0, d.back());
+        LimbT dinv = numetron::arithmetic::udiv2by1_reciprocal<LimbT>(d.back());
 #endif
         do {
             LimbT dummy;
@@ -513,7 +517,8 @@ LimbT udiv2(LimbT& uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl
 // u / v -> q, u % v -> r; q and r are fully written (zero padded above the significant limbs)
 // prereqs: q.size() >= u.size(), r.size() >= v.size()
 template <std::unsigned_integral LimbT>
-inline void udiv(std::span<const LimbT> u, std::span<const LimbT> v, std::span<LimbT> q, std::span<LimbT> r)
+inline void udiv(std::span<const LimbT> u, std::span<const LimbT> v, std::span<LimbT> q, std::span<LimbT> r,
+    size_t svoboda_threshold = NUMETRON_SVOBODA_DIV_THRESHOLD)
 {
     assert(q.size() >= u.size() && r.size() >= v.size());
 
@@ -548,7 +553,7 @@ inline void udiv(std::span<const LimbT> u, std::span<const LimbT> v, std::span<L
 
     size_t const qsz = usz - vsz + 1;
     std::span<LimbT> ul = uaux.first(usz - 1);
-    LimbT rh = udiv<LimbT>(uaux.back(), ul, *(ve - 1), { vb, vsz - 1 }, q.data() + qsz - 1, alloc_t{});
+    LimbT rh = udiv<LimbT>(uaux.back(), ul, *(ve - 1), { vb, vsz - 1 }, q.data() + qsz - 1, alloc_t{}, svoboda_threshold);
 
     std::memset(q.data() + qsz, 0, (q.size() - qsz) * sizeof(LimbT));
 

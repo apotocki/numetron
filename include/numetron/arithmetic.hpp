@@ -650,6 +650,17 @@ constexpr auto udiv2by1(T u1, T u0, T d) noexcept -> std::pair<T, T>
     }
 }
 
+// The reciprocal udiv2by1() above expects: v = floor((B^2 - 1) / d) - B, d normalized.
+// Note that floor(B^2 / d) - B, which is the cheaper thing to compute when d is known not to be a
+// power of two (see udivby1(), which special-cases those before getting here), is the same value
+// for every other d but overflows for d = B / 2.
+template <std::unsigned_integral T>
+inline constexpr T udiv2by1_reciprocal(T d) noexcept
+{
+    assert(d >= (((T)1) << (std::numeric_limits<T>::digits - 1)));
+    return udiv2by1norm<T>(~d, (std::numeric_limits<T>::max)(), d).first;
+}
+
 template <std::unsigned_integral T>
 inline constexpr T sqrt(T m) noexcept // returns floor(sqrt(m))
 {

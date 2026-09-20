@@ -30,12 +30,20 @@ void to_mpz(mpz_t r, std::span<const limb_t> v)
     mpz_import(r, v.size(), -1, sizeof(limb_t), 0, 0, v.data());
 }
 
+// Svoboda is off by default, so the tests that cover it pass a threshold of their own rather than
+// relying on the tunable. Doing it with a macro would not work: udiv() is an inline template, and
+// redefining the tunable in this translation unit alone leaves the linker free to pick another
+// one's body.
+constexpr size_t svoboda_always = 2;
+constexpr size_t svoboda_default = NUMETRON_SVOBODA_DIV_THRESHOLD;
+
 // u / d and u % d against GMP; q and r carry a guard limb to catch out-of-range writes
-void check_division(std::vector<limb_t> const& u, std::vector<limb_t> const& d)
+void check_division(std::vector<limb_t> const& u, std::vector<limb_t> const& d,
+    size_t svoboda_threshold = svoboda_default)
 {
     std::vector<limb_t> q(u.size() + 1, guard_value), r(d.size() + 1, guard_value);
     limb_arithmetic::udiv<limb_t>({ u.data(), u.size() }, { d.data(), d.size() },
-        { q.data(), u.size() }, { r.data(), d.size() });
+        { q.data(), u.size() }, { r.data(), d.size() }, svoboda_threshold);
 
     CHECK_EQUAL(q.back(), guard_value);
     CHECK_EQUAL(r.back(), guard_value);
@@ -101,12 +109,12 @@ void check_svoboda_carry(std::mt19937_64& rng, size_t n, size_t m1)
         mpz_mul(u, q1, d1);
         mpz_add(u, u, r);
         from_mpz(u, tmp);
-        check_division(tmp, d); // the last step ends holding the extra limb
+        check_division(tmp, d, svoboda_always); // the last step ends holding the extra limb
 
         mpz_mul_2exp(u, u, 2 * limb_bits);
         mpz_add_ui(u, u, static_cast<unsigned long>(rng() & 0xFFFFFFFFu));
         from_mpz(u, tmp);
-        check_division(tmp, d); // ... and here a later step consumes it
+        check_division(tmp, d, svoboda_always); // ... and here a later step consumes it
     }
 
     mpz_clears(md, bn1, k, d1, window, r, q1, u, nullptr);
@@ -149,21 +157,25 @@ void udiv_test()
         }
     }
 
-    // Quotients at least NUMETRON_SVOBODA_DIV_THRESHOLD limbs long take the Svoboda path
-    if constexpr (NUMETRON_SVOBODA_DIV_THRESHOLD <= 256) {
-        constexpr size_t big = NUMETRON_SVOBODA_DIV_THRESHOLD + 2;
-        for (size_t dsz : { size_t{ 2 }, size_t{ 3 }, size_t{ 9 } }) {
-            for (int iter = 0; iter < 6; ++iter) {
-                std::vector<limb_t> u, d;
-                random_limbs(rng, u, dsz + big + (rng() % 4));
-                random_limbs(rng, d, dsz);
-                if (iter % 2) d.back() = 1; // maximal normalization shift
-                if (!u.back()) u.back() = 1;
-                if (!d.back()) d.back() = 1;
-                check_division(u, d);
+    // the same through Svoboda's division, including its rare extra-limb branch
+    for (size_t dsz : { size_t{ 2 }, size_t{ 3 }, size_t{ 9 } }) {
+        for (int iter = 0; iter < 8; ++iter) {
+            std::vector<limb_t> u, d;
+            random_limbs(rng, u, dsz + 2 + (rng() % 40));
+            random_limbs(rng, d, dsz);
+            switch (iter % 4) {
+            case 1: d.back() = 1; break;                            // maximal normalization shift
+            case 2: std::fill(d.begin(), d.end(), ~limb_t{ 0 }); break;
+            case 3:                                                 // scaled divisor is exact: k * d == B^(n+1)
+                std::fill(d.begin(), d.end() - 1, limb_t{ 0 });
+                d.back() = limb_t{ 1 } << 63;
+                break;
             }
-            for (int iter = 0; iter < 4; ++iter) check_svoboda_carry(rng, dsz, big);
+            if (!u.back()) u.back() = 1;
+            if (!d.back()) d.back() = 1;
+            check_division(u, d, svoboda_always);
         }
+        for (int iter = 0; iter < 4; ++iter) check_svoboda_carry(rng, dsz, 8);
     }
 
     // u < d with equal limb counts: quotient 0, remainder u

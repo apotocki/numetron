@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <limits>
 #include <span>
 #include <tuple>
 
@@ -32,13 +33,21 @@
 #   define NUMETRON_INPLACE_LIMB_RESERVE_COUNT 8
 #endif
 
+// Estimate the quotient digits in udiv() with a precomputed reciprocal (Möller-Granlund) instead
+// of a hardware 2/1 division per digit. Measured on x86-64 that is 10-38% faster over the whole
+// size range, most of it on small divisors. Define NUMETRON_ARITHMETIC_NO_INVINT_DIV to opt out.
+#if !defined(NUMETRON_ARITHMETIC_NO_INVINT_DIV) && !defined(NUMETRON_ARITHMETIC_USE_INVINT_DIV)
+#   define NUMETRON_ARITHMETIC_USE_INVINT_DIV
+#endif
+
 // Quotient length, in limbs, from which udiv() switches from the plain basecase division to
 // Svoboda's. Svoboda trades the per-digit 2/1 division for an O(n) scaling of the divisor plus a
-// wider per-digit subtraction and a much higher correction rate, so it only pays off for long
-// quotients: measured on x86-64 it is 1.2x-2.3x slower below ~32 limbs, breaks even around 32-64
-// and reaches ~10-25% faster at 128. Raise it past any realistic size to disable Svoboda.
+// wider per-digit subtraction and a ~20% correction rate. The reciprocal above already removes
+// that division, which leaves Svoboda ahead only for divisors of 32+ limbs with quotients of 64+,
+// and only by 4-12%, while it loses up to 16% elsewhere -- so it is off by default. Set this to a
+// real quotient length to opt in (udiv() also takes it as an argument).
 #ifndef NUMETRON_SVOBODA_DIV_THRESHOLD
-#   define NUMETRON_SVOBODA_DIV_THRESHOLD 64
+#   define NUMETRON_SVOBODA_DIV_THRESHOLD ((std::numeric_limits<size_t>::max)())
 #endif
 
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
