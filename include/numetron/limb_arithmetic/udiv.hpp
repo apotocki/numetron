@@ -115,139 +115,136 @@ std::pair<LimbT, LimbT> udiv_bc(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, L
     return udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dl, std::move(qit), alloc);
 }
 
-// Svoboda division: work in progress, NOT wired into udiv() and currently not even compilable.
-// Before it can replace udiv_bc() the following has to be addressed:
-//  - the umul(ub, ue, vb, ve, r) overload it calls is disabled (#if 0 in umul.hpp); umul_basecase()
-//    is the live equivalent, but it requires un >= vn, so the operand order has to be picked;
-//  - the correction loop below exits on the carry out of *puh instead of the carry out of the top
-//    position, which makes it spin forever;
-//  - "*puhh = 0" after a correction drops a limb: the corrected remainder is only known to be
-//    below d1 > B^(n+1), so its top limb can be 1. That extra limb has to be carried into the next
-//    iteration (and makes the digit estimate B-1 there) and into the final udiv_bc();
-//  - m1 == 0 (i.e. size(u) == size(d)) is not handled: q1 is empty and the product below is
-//    computed over an empty range. In that case the quotient is just q0.
+// Svoboda division: same contract as udiv_bc_unorm(), but scales the divisor up front so that the
+// per-digit 2/1 division disappears -- the top limb of the partial remainder *is* the digit
+// estimate. k = ceil(B^(n+1) / d) gives d1 = k * d with B^(n+1) <= d1 < B^(n+1) + B^n, u / d1 is
+// computed digit by digit, and the result is unscaled at the end via q = k * q1 + (r1 / d).
+// prereqs: u < d * B^m, d normalized, where m = size(u) - size(d) + 1 in limbs
+// returns {rhh, rh}; [rl] -> u
 template <std::unsigned_integral LimbT, typename QOutputIteratorT, typename AllocatorT>
-std::pair<LimbT, LimbT> udiv_svoboda(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT& alloc)
+std::pair<LimbT, LimbT> udiv_svoboda_unorm(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT& alloc)
 {
-    //using allocator_type = std::remove_cvref_t<AllocatorT>;
-    //using alloc_traits_t = std::allocator_traits<allocator_type>;
+    assert(*puhh <= dh);
 
-    *qit-- = do_udiv_unorm(puhh, puh, ul, dh, dl);
+    size_t const nl = dl.size();
+    size_t const n = nl + 1;             // divisor size in limbs
+    size_t const m = ul.size() + 1 - nl; // quotient digits to produce
 
-    size_t m = ul.size() + 1 - dl.size();
-    if (!m) return { *puhh, *puh };
+    // scaling the divisor costs O(n); with a single digit there is nothing to amortize it over
+    if (m < 2) return udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dl, std::move(qit), alloc);
 
-    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> auxbuff(dl.size() + 1 /*dh*/ + 2, alloc);
-    std::fill(auxbuff.begin(), auxbuff.end() - 1, 0);
-    auxbuff.back() = 1;
-    
+    // aux holds d1 (n + 2 limbs, initially B^(n+1)) followed by a contiguous copy of d
+    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> aux(2 * n + 2, alloc);
+    auto d1 = aux.first(n + 2);
+    auto dfull = aux.last(n);
+    std::copy(dl.begin(), dl.end(), dfull.data());
+    dfull[nl] = dh;
+
+    // k = ceil(B^(n+1) / d); d normalized means B^n / 2 <= d < B^n, so B < k <= 2 * B
     LimbT k[3];
-    auto tmpsp = auxbuff.span().first(dl.size() + 1);
-    udiv_bc(&auxbuff.back(), &auxbuff.back() - 1, tmpsp, dh, dl, k + 2, alloc);
-    // ceiling: if reminder != 0 => k = k+1
-    for (LimbT const* pr = tmpsp.data() + dl.size();;) {
-        if (*pr) {
-            LimbT uc;
-            std::tie(uc, k[0]) = numetron::arithmetic::uadd1<LimbT>(k[0], 1);
-            if (uc) ++k[1];
-            break;
-        }
-        if (pr == tmpsp.data()) break;
-        --pr;
-    }
-
-    //d1 = k*d, reuse auxbuff for d1
-    auto d1 = auxbuff.span();
-    
-    //(dh*B^(dl.size()) + dl) * k = dh * k + dl * k
-    LimbT kdh[3];
-    umul<LimbT>(dl.data(), dl.data() + dl.size(), k, k + 2, d1.data()); // dl * k
-    kdh[2] = umul1<LimbT>(k, k + 2, dh, (LimbT*)kdh);
-    uadd<LimbT>({ d1.data() + dl.size(), d1.size() - dl.size() }, { kdh, 3 });
-    if (d1[dl.size() + 1] != 0) {
-        assert(d1[dl.size() + 1] == 0);
-    }
-    assert(d1[dl.size() + 1] == 0);
-    assert(d1[dl.size() + 2] == 1);
-    auto d1l = std::span{ d1.data(), d1.size() - 2 };
-    //LimbT d1h = d1.back();
-
-    size_t m1 = m - 1;
-    
-    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> q1{ m1, alloc };
-    if (m1) {
-        LimbT* pq1 = &q1.back();
-        auto q1sp = q1.span();
-
-        // daux stores qj * d1
-        small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> daux{ d1.size(), alloc };
-        LimbT& dauxhh = daux.back();
-        LimbT& dauxh = *(&dauxhh - 1);
-        auto dauxl = daux.first(d1.size() - 2);
-
-        for (;;) {
-            // q(j) = a(n+j)
-            LimbT qj = *puhh;
-        
-            // A <- A - qj*d1*B^(j-1)
-            LimbT* tmpr = dauxl.data();
-            LimbT uc = umul1<LimbT>(d1.data(), d1.data() + d1.size(), qj, tmpr);
-            assert(!uc);
-        
-            auto usp = ul.last(dauxl.size());
-        
-            uc = usub<LimbT>(usp, dauxl, usp);
-            std::tie(uc, *puh) = numetron::arithmetic::usub1c(*puh, dauxh, uc);
-            std::tie(uc, *puhh) = numetron::arithmetic::usub1c(*puhh, dauxhh, uc);
-#if 0 // my version
-            if (*puhh) { // <=> if uc != 0 then gj <- gj - 1, A <- A + d1*B^(j-1)
-                --qj;
-                uc = uadd<LimbT>(usp, d1l, usp);
-                std::tie(uc, *puh) = numetron::arithmetic::uadd1<LimbT>(*puh, uc); // d1h = 0
-                //std::tie(uc, *puhh) = numetron::arithmetic::uadd1c<LimbT>(*puhh, 1, uc); // d1hh = 1
-                //assert(uc);
-                *puhh = 0;
+    std::fill(d1.begin(), d1.end() - 1, LimbT{ 0 });
+    d1.back() = 1;
+    {
+        auto tmpsp = d1.first(n);
+        udiv_bc<LimbT>(&d1.back(), d1.data() + n, tmpsp, dh, dl, k + 2, alloc);
+        assert(!k[2]);
+        // round up: a non-zero remainder, left in d1[0 .. n), means k = floor(...) + 1
+        for (LimbT const* pr = d1.data() + n; pr-- != d1.data();) {
+            if (*pr) {
+                LimbT c;
+                std::tie(c, k[0]) = numetron::arithmetic::uadd1<LimbT>(k[0], 1);
+                k[1] += c;
+                break;
             }
-#else // gpt fix
-            if (uc) {
-                do {
-                    --qj;
-                    uc = uadd<LimbT>(usp, d1l, usp);
-                    std::tie(uc, *puh) = numetron::arithmetic::uadd1<LimbT>(*puh, uc); // d1h = 0
-                    //std::tie(uc, *puhh) = numetron::arithmetic::uadd1c<LimbT>(*puhh, 1, uc); // d1hh = 1
-                    //assert(uc);
-                    *puhh = 0;
-                } while (!uc);
-            }
-#endif
-            puhh = puh;
-            puh = &ul.back();
-            ul = ul.first(ul.size() - 1);
-            *pq1 = qj;
-            if (pq1 == q1.data()) break;
-            --pq1;
         }
     }
-    // q0 = r1 div d
-    LimbT q0arr[2];
-    auto qr = udiv_bc<LimbT>(puhh, puh, ul, dh, dl, q0arr + 1, alloc);
-    
-    // q = k * q1, we need aux buffer for q to reorder q limbs
-    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> q(m1 + 2, alloc);
-    LimbT* qb = q.data();
-    LimbT *qe = umul<LimbT>(q1.data(), q1.data() + q1.size(), k, k + 2, qb) - 1;
-    auto [q0, qbval] = numetron::arithmetic::uadd1(*qb, q0arr[0]);
-    *qb = qbval; q0 += static_cast<unsigned char>(q0arr[1]);
-    if (q0) {
-        LimbT* qit = qb;
-        do {
-            ++qit;
-            std::tie(q0, *qit) = numetron::arithmetic::uadd1<LimbT>(*qit, q0);
-        } while (q0);
+
+    // d1 = d * k, reusing the buffer that held B^(n+1)
+    {
+        LimbT* p = d1.data();
+        LimbT c0 = umul1<LimbT>(dfull.data(), dfull.data() + n, k[0], p); // p advances by n
+        *p = c0;
+        LimbT* p1 = d1.data() + 1;
+        d1[n + 1] = umul1_add<LimbT>(dfull.data(), dfull.data() + n, k[1], p1);
+    }
+    assert(!d1[n] && d1[n + 1] == 1); // B^(n+1) <= d1 < B^(n+1) + B^n
+    auto d1l = d1.first(n);           // d1 - B^(n+1)
+
+    size_t const m1 = m - 1;          // digits of q1 = u / d1
+    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> q1(m1, alloc);
+    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> daux(n + 2, alloc);
+    auto dauxsp = daux.span();
+
+    // A < d1 * B^j is the loop invariant, so A occupies n + 2 limbs plus one extra bit, kept in
+    // atop: the limb above *puhh, which the frame shift below would otherwise drop
+    LimbT atop = 0;
+    for (LimbT* pq1 = &q1.back();;) {
+        LimbT qj = atop ? (std::numeric_limits<LimbT>::max)() : *puhh;
+
+        // A -= qj * d1 * B^(j-1)
+        LimbT* tmpr = dauxsp.data();
+        LimbT c = umul1<LimbT>(d1.data(), d1.data() + d1.size(), qj, tmpr);
+        assert(!c); // qj * d1 < B^(n+2)
+        (void)c;
+        
+        auto usp = ul.last(n);
+        LimbT uc = usub<LimbT>(usp, dauxsp.first(n), usp);
+        std::tie(uc, *puh) = numetron::arithmetic::usub1c(*puh, dauxsp[n], uc);
+        std::tie(uc, *puhh) = numetron::arithmetic::usub1c(*puhh, dauxsp[n + 1], uc);
+
+        if (uc > atop) { // went negative: the estimate was exactly one too large
+            --qj;
+            uc = uadd<LimbT>(usp, d1l, usp);
+            std::tie(uc, *puh) = numetron::arithmetic::uadd1<LimbT>(*puh, uc);           // d1[n] == 0
+            std::tie(uc, *puhh) = numetron::arithmetic::uadd1<LimbT>(*puhh, LimbT{ 1 }, uc); // d1[n+1] == 1
+            assert(uc); // cancels the borrow
+        } else {
+            assert(uc == atop); // atop == 1 forces a borrow, the result being below d1
+        }
+
+        // the remainder is below d1 < B^(n+1) + B^n, so the limb above the shifted frame is 0 or 1
+        atop = *puhh;
+        assert(atop <= 1);
+
+        puhh = puh;
+        puh = &ul.back();
+        ul = ul.first(ul.size() - 1);
+        *pq1 = qj;
+        if (pq1 == q1.data()) break;
+        --pq1;
     }
 
-    while (qe != qb) {
-        *qit-- = *--qe;
+    // q0 = r1 / d, with r1 < d1 <= 2 * B * d, so q0 needs two limbs. The frame is widened by one
+    // limb to carry atop; *puh is contiguous with ul, having just been taken from it.
+    assert(puh == ul.data() + ul.size());
+    LimbT q0arr[3];
+    std::span<LimbT> ulw{ ul.data(), ul.size() + 1 };
+    auto qr = udiv_bc<LimbT>(&atop, puhh, ulw, dh, dl, q0arr + 2, alloc);
+    ul = ulw;
+    assert(!q0arr[2]);
+
+    // q = k * q1 + q0
+    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> qbuf(m1 + 2, alloc);
+    {
+        LimbT* qb = qbuf.data();
+        LimbT* p = qb;
+        LimbT c0 = umul1<LimbT>(q1.data(), q1.data() + m1, k[0], p); // p advances by m1
+        *p = c0;
+        LimbT* p1 = qb + 1;
+        *(qb + m1 + 1) = umul1_add<LimbT>(q1.data(), q1.data() + m1, k[1], p1);
+
+        LimbT c;
+        std::tie(c, *qb) = numetron::arithmetic::uadd1<LimbT>(*qb, q0arr[0]);
+        std::tie(c, *(qb + 1)) = numetron::arithmetic::uadd1<LimbT>(*(qb + 1), q0arr[1], c);
+        for (size_t i = 2; c; ++i) {
+            assert(i < m1 + 2);
+            std::tie(c, *(qb + i)) = numetron::arithmetic::uadd1<LimbT>(*(qb + i), c);
+        }
+        assert(!*(qb + m1 + 1)); // q < B^m = B^(m1+1)
+
+        for (size_t i = m1 + 1; i-- > 0;) {
+            *qit = *(qb + i); --qit;
+        }
     }
     return qr;
 }
@@ -343,7 +340,9 @@ LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, 
     } else {
         *qit = qtop; --qit;
     }
-    auto [rhh, rh] = udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dnorm, std::move(qit), alloc);
+    auto [rhh, rh] = (ul.size() + 1 - dl.size() >= NUMETRON_SVOBODA_DIV_THRESHOLD)
+        ? udiv_svoboda_unorm<LimbT>(puhh, puh, ul, dh, dnorm, std::move(qit), alloc)
+        : udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dnorm, std::move(qit), alloc);
 
     // The remainder is below d, so it needs at most size(d) limbs and always fits into the
     // dividend's own storage; hand it back as [ul] plus the returned high limb. rh and rhh may

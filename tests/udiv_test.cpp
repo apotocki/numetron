@@ -4,6 +4,7 @@
 
 #include "test_common.hpp"
 
+#include <limits>
 #include <random>
 #include <span>
 #include <vector>
@@ -53,6 +54,64 @@ void check_division(std::vector<limb_t> const& u, std::vector<limb_t> const& d)
     mpz_clears(mu, md, mq, mr, mqe, mre, nullptr);
 }
 
+constexpr size_t limb_bits = std::numeric_limits<limb_t>::digits;
+
+void from_mpz(mpz_t v, std::vector<limb_t>& out)
+{
+    out.assign((mpz_sizeinbase(v, 2) + limb_bits - 1) / limb_bits + 1, 0);
+    size_t count = 0;
+    mpz_export(out.data(), &count, -1, sizeof(limb_t), 0, 0, v);
+    out.resize(count ? count : 1);
+}
+
+void random_limbs(std::mt19937_64& rng, std::vector<limb_t>& v, size_t sz)
+{
+    v.resize(sz);
+    for (limb_t& x : v) x = rng();
+}
+
+// Dividends whose Svoboda partial remainder lands in [B^(n+1), d1), where d1 = ceil(B^(n+1)/d) * d
+// is the scaled divisor: the corrected remainder then needs one limb more than the working frame.
+// Random operands reach this only with probability ~2^-64 per digit, so it has to be constructed.
+void check_svoboda_carry(std::mt19937_64& rng, size_t n, size_t m1)
+{
+    std::vector<limb_t> d, tmp;
+    random_limbs(rng, d, n);
+    d.back() |= (limb_t{ 1 } << (limb_bits - 1)); // normalized, so udiv does not shift it
+
+    mpz_t md, bn1, k, d1, window, r, q1, u;
+    mpz_inits(md, bn1, k, d1, window, r, q1, u, nullptr);
+    to_mpz(md, d);
+    mpz_setbit(bn1, static_cast<mp_bitcnt_t>((n + 1) * limb_bits));
+    mpz_cdiv_q(k, bn1, md);
+    mpz_mul(d1, k, md);
+    mpz_sub(window, d1, bn1);
+
+    if (mpz_sgn(window) > 0) {
+        random_limbs(rng, tmp, n);
+        to_mpz(r, tmp);
+        mpz_mod(r, r, window);
+        mpz_add(r, r, bn1); // r in [B^(n+1), d1)
+
+        // q1 < B^m1 / 2 keeps u below d * B^m, so that the leading quotient digit stays 0
+        random_limbs(rng, tmp, m1);
+        tmp.back() = (tmp.back() >> 1) | (limb_t{ 1 } << (limb_bits - 2));
+        to_mpz(q1, tmp);
+
+        mpz_mul(u, q1, d1);
+        mpz_add(u, u, r);
+        from_mpz(u, tmp);
+        check_division(tmp, d); // the last step ends holding the extra limb
+
+        mpz_mul_2exp(u, u, 2 * limb_bits);
+        mpz_add_ui(u, u, static_cast<unsigned long>(rng() & 0xFFFFFFFFu));
+        from_mpz(u, tmp);
+        check_division(tmp, d); // ... and here a later step consumes it
+    }
+
+    mpz_clears(md, bn1, k, d1, window, r, q1, u, nullptr);
+}
+
 }
 
 void udiv_test()
@@ -87,6 +146,23 @@ void udiv_test()
 
                 check_division(u, d);
             }
+        }
+    }
+
+    // Quotients at least NUMETRON_SVOBODA_DIV_THRESHOLD limbs long take the Svoboda path
+    if constexpr (NUMETRON_SVOBODA_DIV_THRESHOLD <= 256) {
+        constexpr size_t big = NUMETRON_SVOBODA_DIV_THRESHOLD + 2;
+        for (size_t dsz : { size_t{ 2 }, size_t{ 3 }, size_t{ 9 } }) {
+            for (int iter = 0; iter < 6; ++iter) {
+                std::vector<limb_t> u, d;
+                random_limbs(rng, u, dsz + big + (rng() % 4));
+                random_limbs(rng, d, dsz);
+                if (iter % 2) d.back() = 1; // maximal normalization shift
+                if (!u.back()) u.back() = 1;
+                if (!d.back()) d.back() = 1;
+                check_division(u, d);
+            }
+            for (int iter = 0; iter < 4; ++iter) check_svoboda_carry(rng, dsz, big);
         }
     }
 

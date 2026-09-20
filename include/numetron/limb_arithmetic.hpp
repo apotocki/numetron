@@ -32,6 +32,15 @@
 #   define NUMETRON_INPLACE_LIMB_RESERVE_COUNT 8
 #endif
 
+// Quotient length, in limbs, from which udiv() switches from the plain basecase division to
+// Svoboda's. Svoboda trades the per-digit 2/1 division for an O(n) scaling of the divisor plus a
+// wider per-digit subtraction and a much higher correction rate, so it only pays off for long
+// quotients: measured on x86-64 it is 1.2x-2.3x slower below ~32 limbs, breaks even around 32-64
+// and reaches ~10-25% faster at 128. Raise it past any realistic size to disable Svoboda.
+#ifndef NUMETRON_SVOBODA_DIV_THRESHOLD
+#   define NUMETRON_SVOBODA_DIV_THRESHOLD 64
+#endif
+
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
 extern "C" uint64_t numetron_detect_platform();
