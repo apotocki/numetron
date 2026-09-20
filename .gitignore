@@ -11,3 +11,7 @@
 /*.md
 /.github/*.md
 /testdata
+/*.cmd
+
+/tests/mp_test.cpp
+/tests/number_test.cpp

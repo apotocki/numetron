@@ -1,4 +1,4 @@
-// Numetron — Compile-time and runtime arbitrary-precision arithmetic
+// Numetron â€” Compile-time and runtime arbitrary-precision arithmetic
 // (c) 2025 Alexander Pototskiy
 // Licensed under the MIT License. See LICENSE file for details.
 
@@ -61,6 +61,7 @@ TEST(NumetronTest, float16_floating_point_three_way_comparison_derived_operators
 TEST(NumetronTest, basic_integer) { basic_integer_test0(); }
 TEST(NumetronTest, basic_decimal) { basic_decimal_test0(); }
 TEST(NumetronTest, compile_time) { ct_test(); }
+TEST(NumetronTest, udiv) { udiv_test(); }
 
 #else
 TEST(NumetronTest, mul) { mul_test(); }

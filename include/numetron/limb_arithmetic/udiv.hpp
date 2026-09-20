@@ -1,4 +1,4 @@
-// Numetron - Compile - time and runtime arbitrary - precision arithmetic
+// Numetron — Compile-time and runtime arbitrary-precision arithmetic
 // (c) Alexander Pototskiy
 // Licensed under the MIT License. See LICENSE file for details.
 
@@ -19,7 +19,8 @@ std::pair<LimbT, LimbT> udiv_bc_unorm(LimbT* puhh, LimbT* puh, std::span<LimbT>&
     size_t m = ul.size() - dl.size() + 1;
     
     if (m) {
-        small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> daux{ dl.size(), alloc };
+        // umul1 writes dl.size() + 1 limbs: the low part plus the high limb of qj * dl
+        small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, AllocatorT> daux{ dl.size() + 1, alloc };
 
 #if defined(NUMETRON_ARITHMETIC_USE_INVINT_DIV)
         auto [dinv, _] = numetron::arithmetic::udiv2by1<LimbT>(~dh + 1, 0, dh);
@@ -45,7 +46,7 @@ std::pair<LimbT, LimbT> udiv_bc_unorm(LimbT* puhh, LimbT* puh, std::span<LimbT>&
                 LimbT mdh = *(tmpr - 1);
                 // u - dh * B^j
                 auto usp = ul.last(dl.size());
-                LimbT uc = usub<LimbT>(usp, daux, usp);
+                LimbT uc = usub<LimbT>(usp, daux.first(dl.size()), usp);
                 std::tie(uc, *puh) = numetron::arithmetic::usub1c(*puh, mdh, uc);
                 std::tie(uc, *puhh) = numetron::arithmetic::usub1c(*puhh, mdhh, uc);
 
@@ -114,7 +115,17 @@ std::pair<LimbT, LimbT> udiv_bc(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, L
     return udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dl, std::move(qit), alloc);
 }
 
-//
+// Svoboda division: work in progress, NOT wired into udiv() and currently not even compilable.
+// Before it can replace udiv_bc() the following has to be addressed:
+//  - the umul(ub, ue, vb, ve, r) overload it calls is disabled (#if 0 in umul.hpp); umul_basecase()
+//    is the live equivalent, but it requires un >= vn, so the operand order has to be picked;
+//  - the correction loop below exits on the carry out of *puh instead of the carry out of the top
+//    position, which makes it spin forever;
+//  - "*puhh = 0" after a correction drops a limb: the corrected remainder is only known to be
+//    below d1 > B^(n+1), so its top limb can be 1. That extra limb has to be carried into the next
+//    iteration (and makes the digit estimate B-1 there) and into the final udiv_bc();
+//  - m1 == 0 (i.e. size(u) == size(d)) is not handled: q1 is empty and the product below is
+//    computed over an empty range. In that case the quotient is just q0.
 template <std::unsigned_integral LimbT, typename QOutputIteratorT, typename AllocatorT>
 std::pair<LimbT, LimbT> udiv_svoboda(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT& alloc)
 {
@@ -312,27 +323,42 @@ LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, 
         dlnorm = dl.data();
     }
     
+    // Normalization may push the dividend one limb higher. The working frame is then one limb
+    // longer than the quotient the caller asked for, and the extra leading digit it would produce
+    // is provably 0 (q < B^(size(u) - size(d) + 1)), so it must not be written out: doing so would
+    // shift the whole quotient one position below the caller's buffer.
     LimbT* puhh = &uhhstore;
-    if (!uhhstore) {
+    bool const extra_limb = uhhstore != 0;
+    if (!extra_limb) {
         puhh = puh;
         puh = &ul.back();
         ul = ul.first(ul.size() - 1);
     }
     assert(*puhh);
-    //auto [rhh, rh] = udiv_dv(puhh, puh, ul, dh, { dlnorm, dl.size() }, std::move(qit), alloc);
-    auto [rhh, rh] = udiv_svoboda(puhh, puh, ul, dh, { dlnorm, dl.size() }, std::move(qit), alloc);
-    //auto [rhh, rh] = udiv_bc(puhh, puh, ul, dh, { dlnorm, dl.size() }, std::move(qit), alloc);
-    if (shift) {
-        ushift_right<LimbT>(rh, ul, shift); // returns 0
-        if (rhh) {
-            rh |= (rhh << (std::numeric_limits<LimbT>::digits - shift));
-        }
-    } else if (rhh) {
+
+    std::span<const LimbT> dnorm{ dlnorm, dl.size() };
+    LimbT qtop = do_udiv_unorm(puhh, puh, ul, dh, dnorm);
+    if (extra_limb) {
+        assert(!qtop);
+    } else {
+        *qit = qtop; --qit;
+    }
+    auto [rhh, rh] = udiv_bc_unorm<LimbT>(puhh, puh, ul, dh, dnorm, std::move(qit), alloc);
+
+    // The remainder is below d, so it needs at most size(d) limbs and always fits into the
+    // dividend's own storage; hand it back as [ul] plus the returned high limb. rh and rhh may
+    // live in locals (uh / uhhstore), hence the explicit move into the buffer.
+    if (rhh) {
+        // rhh != 0 means the remainder needs more than ul.size() + 1 limbs, so this slot is inside
+        // the dividend's storage
         ul = { ul.data(), ul.size() + 1 };
-        assert(ul.back() == rh);
+        ul.back() = rh;
         rh = rhh;
     }
-    
+    if (shift) {
+        ushift_right<LimbT>(rh, ul, shift); // returns the discarded low bits
+    }
+
     return rh;
 }
 
@@ -485,9 +511,13 @@ LimbT udiv2(LimbT& uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl
     return udiv2<LimbT>(uh, ul, d, daux, std::move(qit));
 }
 
+// u / v -> q, u % v -> r; q and r are fully written (zero padded above the significant limbs)
+// prereqs: q.size() >= u.size(), r.size() >= v.size()
 template <std::unsigned_integral LimbT>
 inline void udiv(std::span<const LimbT> u, std::span<const LimbT> v, std::span<LimbT> q, std::span<LimbT> r)
 {
+    assert(q.size() >= u.size() && r.size() >= v.size());
+
     LimbT const* vb = v.data(), * ve = vb + v.size();
     for (;; --ve) {
         if (vb == ve) [[unlikely]] {
@@ -500,7 +530,34 @@ inline void udiv(std::span<const LimbT> u, std::span<const LimbT> v, std::span<L
         std::memset(r.data() + 1, 0, (r.size() - 1) * sizeof(LimbT));
         return;
     }
-    throw std::runtime_error("not implemented");
+
+    LimbT const* ue = u.data() + u.size();
+    while (ue != u.data() && !*(ue - 1)) --ue;
+
+    size_t const usz = ue - u.data(), vsz = ve - vb;
+    if (usz < vsz) { // u < v => q = 0, r = u
+        std::memcpy(r.data(), u.data(), usz * sizeof(LimbT));
+        std::memset(r.data() + usz, 0, (r.size() - usz) * sizeof(LimbT));
+        std::memset(q.data(), 0, q.size() * sizeof(LimbT));
+        return;
+    }
+
+    // udiv() computes the remainder in place, so the dividend needs a scratch copy
+    using alloc_t = std::allocator<LimbT>;
+    small_array<LimbT, NUMETRON_INPLACE_LIMB_RESERVE_COUNT, alloc_t> uaux{ usz, alloc_t{} };
+    std::memcpy(uaux.data(), u.data(), usz * sizeof(LimbT));
+
+    size_t const qsz = usz - vsz + 1;
+    std::span<LimbT> ul = uaux.first(usz - 1);
+    LimbT rh = udiv<LimbT>(uaux.back(), ul, *(ve - 1), { vb, vsz - 1 }, q.data() + qsz - 1, alloc_t{});
+
+    std::memset(q.data() + qsz, 0, (q.size() - qsz) * sizeof(LimbT));
+
+    size_t rsz = ul.size();
+    std::memcpy(r.data(), ul.data(), rsz * sizeof(LimbT));
+    if (rh) r[rsz++] = rh;
+    assert(rsz <= r.size());
+    std::memset(r.data() + rsz, 0, (r.size() - rsz) * sizeof(LimbT));
 }
 
 }

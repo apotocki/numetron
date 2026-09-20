@@ -20,6 +20,7 @@ set (NUMETRON_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ct_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/mul_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/mpn_mul_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/udiv_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tests.cpp
     
     # MASM source(s)

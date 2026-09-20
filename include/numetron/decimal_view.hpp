@@ -85,10 +85,12 @@ class basic_decimal_view
         return steps;
     }();
 
-    // floor(A / 5^k), exact, without ever dividing by a divisor wider than one limb: numetron's
-    // general bigint division only implements a single-limb divisor (limb_arithmetic::udiv throws
-    // "not implemented" otherwise -- see BUGFIXES.md), and 5^k is itself multi-limb for any k
-    // beyond max_pow5_step (27 for a 64-bit LimbT). Chunks the division into steps of at most
+    // floor(A / 5^k), exact, without ever dividing by a divisor wider than one limb: the
+    // single-limb path (udivby1) is markedly cheaper than the general multi-limb one, and 5^k is
+    // itself multi-limb for any k beyond max_pow5_step (27 for a 64-bit LimbT). (Historically the
+    // multi-limb case was not implemented at all -- limb_arithmetic::udiv threw "not implemented",
+    // see BUGFIXES.md -- so this was a correctness requirement, not just a speed one.)
+    // Chunks the division into steps of at most
     // max_pow5_step factors of 5 each (always native/single-limb divisors, using the working fast
     // path), relying on floor(floor(a/d1)/d2) == floor(a/(d1*d2)) for positive integers -- exact,
     // not an approximation. The exact remainder relative to the *full* 5^k is not tracked through
@@ -624,7 +626,7 @@ basic_decimal_view<LimbT>::basic_decimal_view(float16 value, decimal_shortest_mo
     // by anything wider than a single digit (`10`, always single-limb) -- an earlier version of
     // this loop rounded straight to an arbitrary target scale (`magV / 10^drop`), which for a
     // `drop` past ~19 is itself a multi-limb divisor and would have hit
-    // `numetron::limb_arithmetic::udiv`'s own "not implemented" case (see `BUGFIXES.md`), the exact
+    // `numetron::limb_arithmetic::udiv`'s then "not implemented" case (see `BUGFIXES.md`), the exact
     // failure mode this whole session's `to_fixed_string`/`divide_rounded` work went to some length
     // to avoid elsewhere. Scaling a candidate back up to exponent `e` for the interval comparison is
     // a multiply, not a divide, so it's unaffected by that limitation regardless of magnitude.
@@ -715,7 +717,8 @@ inline std::string to_string(basic_decimal_view<LimbT> const& val)
 // symbolic enum type to begin with, crosses as a bare integer ordinal that gets cast straight to
 // this enum). Only half_even and half_up are implemented by either to_fixed_string overload below;
 // every other value is declared for a stable signature but throws std::runtime_error if selected --
-// same incremental-implementation approach limb_arithmetic::udiv's own "not implemented" case uses.
+// the same incremental-implementation approach limb_arithmetic::udiv's multi-limb divisor case used
+// until it was implemented.
 enum class decimal_round_mode
 {
     half_even,
