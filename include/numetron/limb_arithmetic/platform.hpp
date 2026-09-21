@@ -7,13 +7,10 @@
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
 
 #if defined(NUMETRON_PLATFORM_AUTODETECT)
-#include <mutex>
 typedef void (*detect_mul_basecase_type)(uint64_t*, const uint64_t*, size_t, const uint64_t*, size_t);
-inline std::once_flag mul_basecase_init_flag;
 extern "C" uint64_t numetron_detect_platform();
 extern "C" detect_mul_basecase_type detect_mul_basecase(uint64_t);
-inline void (*__mul_basecase_ptr)(uint64_t*, const uint64_t*, size_t, const uint64_t*, size_t) = nullptr;
-#define NUMETRON_mul_basecase __mul_basecase_ptr
+#define NUMETRON_mul_basecase detected_mul_basecase_ptr
 #endif
 
 #if defined(NUMETRON_PLATFORM_K8)

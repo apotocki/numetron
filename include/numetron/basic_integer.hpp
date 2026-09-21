@@ -107,6 +107,136 @@ struct integer_holder : AllocatorT
 
     inline inplace_allocator_type inplace_allocator() noexcept { return inplace_allocator_type{ *this }; }
 
+    // Like inplace_allocator_type, but the special (first) allocation targets THIS HOLDER'S
+    // OWN existing storage when it is already large enough, instead of always starting from an
+    // empty holder. This is what lets basic_integer::assign_mul() reuse an already-allocated
+    // destination across a series of multiplications instead of allocating+freeing a fresh
+    // result every call (mirrors GMP's mpz_mul(rop, op1, op2), whose rop keeps its buffer
+    // between calls -- see the "1 vs 1*" rows in bench/mul_bench.cpp for why that matters).
+    //
+    // Crucially, allocate() never frees or otherwise mutates the holder's pre-existing buffer
+    // -- it only ever reads it (to decide whether it's already big enough) or hands out a brand
+    // new one. That means the holder is left completely untouched until init() -- called after
+    // the whole computation, including any Karatsuba/Toom scratch allocations, has already
+    // succeeded -- actually commits the new value. So if anything throws first, the holder is
+    // exactly as it was before the call (strong exception guarantee), and the caller (see
+    // assign_mul()) is responsible for freeing the now-superseded old buffer only *after* init()
+    // has returned successfully, via free_old_if_replaced() below.
+    struct reuse_allocator_type
+    {
+        using value_type = LimbT;
+        using size_type = std::size_t;
+        using difference_type = std::ptrdiff_t;
+        using propagate_on_container_move_assignment = std::true_type;
+
+        template <typename U> requires std::is_same_v<LimbT, U> struct rebind
+        {
+            using other = reuse_allocator_type;
+        };
+
+        integer_holder& holder_;
+        // Guards against a second allocate() call within the same operation being mistaken for
+        // the special (result) one -- e.g. Karatsuba/Toom's own scratch "slab" allocation, which
+        // uses this same allocator instance. Only the first call may target holder_'s storage;
+        // every call after that is unconditionally a plain, independent heap allocation.
+        bool consumed_ = false;
+
+        // holder_'s heap state captured once, at construction time (before mul() has touched
+        // anything) -- allocate() (to test whether the old buffer is already big enough),
+        // free_old_if_replaced() and fixup_allocated_size() (both to test whether it still is
+        // the buffer) all read this same captured snapshot instead of each re-deriving it from
+        // holder_ independently. Crucially, this snapshot is what stays valid and correct
+        // through the rest of this operation even though the allocator instance itself does
+        // not: mul()/umul()/toom_engine pass their allocator argument *by value* internally
+        // (see umul()'s and toom_engine::umul()'s signatures), so the instance whose allocate()
+        // actually runs is a copy of this one, not this one -- any state set *during* an
+        // allocate() call (on that copy) never makes it back here. State captured before the
+        // call, on this original instance, is unaffected by that and remains reliable.
+        bool was_heap_;
+        LimbT* old_limbs_ = nullptr;
+        uint32_t old_allocated_size_ = 0;
+
+        inline explicit reuse_allocator_type(integer_holder& h) noexcept
+            : holder_{ h }, was_heap_{ !h.is_inplaced() }
+        {
+            if (was_heap_) {
+                auto [ldata, limbs] = h.allocated_data_and_limbs();
+                old_limbs_ = limbs;
+                old_allocated_size_ = ldata->allocated_size;
+            }
+        }
+
+        LimbT* allocate(size_t cnt)
+        {
+            if (consumed_) {
+                return holder_.allocate(cnt + limbs_data_sizeof_in_limbs) + limbs_data_sizeof_in_limbs;
+            }
+            consumed_ = true;
+
+            if (cnt <= N) {
+                return holder_.inplace_limbs_;
+            }
+            if (was_heap_ && old_allocated_size_ >= cnt) {
+                return old_limbs_; // pure reuse of the existing buffer -- no allocation at all
+            }
+            return holder_.allocate(cnt + limbs_data_sizeof_in_limbs) + limbs_data_sizeof_in_limbs;
+        }
+
+        void deallocate(LimbT* ptr, size_t sz)
+        {
+            if (std::equal_to<LimbT*>{}(ptr, holder_.inplace_limbs_)) {
+                consumed_ = false;
+                return;
+            }
+            if (was_heap_ && std::equal_to<LimbT*>{}(ptr, old_limbs_)) {
+                consumed_ = false;
+                return; // freeing holder_'s own (still untouched) buffer -- nothing to do
+            }
+            holder_.deallocate(ptr - limbs_data_sizeof_in_limbs, sz + limbs_data_sizeof_in_limbs);
+        }
+
+        // Patches holder_'s freshly-init()'d allocated_size back to the buffer's true capacity
+        // when the special allocation above was satisfied by "pure reuse" of the pre-existing
+        // buffer captured at construction -- init() always records exactly what was requested
+        // (see mul()'s and umul()'s returned tuples), which under-reports capacity in that one
+        // case. Detected by comparing holder_'s *new* (post-init()) buffer pointer against
+        // old_limbs_ rather than by having allocate() flag it directly: as the comment on
+        // old_limbs_ above explains, allocate() usually runs on a copy of this instance, so
+        // anything it sets is invisible here -- but old_limbs_ itself, captured before that
+        // copying ever happens, is not. Left uncorrected, a *later* assign_mul() call reads this
+        // too-small size as its own old_allocated_size_ and hands it to deallocate() when this
+        // same buffer is eventually replaced -- freeing it with a size that doesn't match what
+        // it was actually allocated with, corrupting the allocator's own bookkeeping (observed
+        // as a debug-heap "invalid pointer" abort on MSVC).
+        void fixup_allocated_size() const noexcept
+        {
+            if (!was_heap_ || holder_.is_inplaced()) return;
+            auto [ldata, limbs] = holder_.allocated_data_and_limbs();
+            if (limbs == old_limbs_) {
+                ldata->allocated_size = old_allocated_size_;
+            }
+        }
+
+        // Frees holder_'s *previous* heap buffer -- captured at construction, above -- unless
+        // the operation ended up keeping that exact buffer. Must be called only after init() has
+        // committed the new value on holder_ (so is_inplaced()/allocated_data_and_limbs() below
+        // reflect the *new* state, to compare against the captured *old* one).
+        void free_old_if_replaced() const noexcept
+        {
+            if (!was_heap_) return;
+            bool kept = !holder_.is_inplaced();
+            if (kept) {
+                auto [ldata, limbs] = holder_.allocated_data_and_limbs();
+                kept = std::equal_to<LimbT*>{}(limbs, old_limbs_);
+            }
+            if (!kept) {
+                holder_.deallocate(old_limbs_ - limbs_data_sizeof_in_limbs, old_allocated_size_ + limbs_data_sizeof_in_limbs);
+            }
+        }
+    };
+
+    inline reuse_allocator_type reuse_allocator() noexcept { return reuse_allocator_type{ *this }; }
+
     inline integer_holder() noexcept
     {
         init_zero();
@@ -916,6 +1046,32 @@ public:
     inline basic_integer& operator*= (MultiplierT r) { *this = *this * r; return *this; }
     inline basic_integer& operator*= (basic_integer_view<LimbT> r) { *this = *this * r; return *this; }
     inline basic_integer& operator*= (basic_integer const& r) { *this = *this * r; return *this; }
+
+    // Computes l*r into *this, reusing *this's own existing storage when it is already large
+    // enough instead of always allocating a fresh result the way plain operator*/operator*=
+    // do (both build a brand-new value on every call). Mirrors GMP's mpz_mul(rop, op1, op2),
+    // whose rop keeps its buffer across repeated calls -- useful for a fixed accumulator/result
+    // reused across a loop of multiplications (see bench/mul_bench.cpp).
+    //
+    // *this must not alias l or r: the destination can't safely be overwritten while it is
+    // still being read as an input, so that case falls back to the always-correct allocating
+    // path used by operator*= instead.
+    template <size_t LN2, typename AllocatorLT2, size_t RN2, typename AllocatorRT2>
+    basic_integer& assign_mul(basic_integer<LimbT, LN2, AllocatorLT2> const& l, basic_integer<LimbT, RN2, AllocatorRT2> const& r)
+    {
+        if (static_cast<void const*>(this) == static_cast<void const*>(&l) ||
+            static_cast<void const*>(this) == static_cast<void const*>(&r)) {
+            *this = l * r;
+            return *this;
+        }
+
+        auto alloc = aholder_.reuse_allocator();
+        aholder_.init(limb_arithmetic::mul(l.decompose(), r.decompose(), alloc));
+        alloc.fixup_allocated_size();
+        alloc.free_old_if_replaced();
+
+        return *this;
+    }
 
     template <std::integral DividerT>
     inline basic_integer& operator/= (DividerT r) { *this = *this / r; return *this; }

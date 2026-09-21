@@ -1,17 +1,18 @@
-/.vs
-/x64
-/Release
-/Debug
+/**/.vs
+/**/x64
+/**/Release
+/**/Debug
 /vcpkg_installed
 /vcpkg
 /build
-/build.cmd
-/build.sh
 /plans
+/testdata
+
 /*.md
 /.github/*.md
-/testdata
+
 /*.cmd
+/*.sh
 
 /tests/mp_test.cpp
 /tests/number_test.cpp

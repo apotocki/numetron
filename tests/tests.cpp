@@ -62,10 +62,11 @@ TEST(NumetronTest, basic_integer) { basic_integer_test0(); }
 TEST(NumetronTest, basic_decimal) { basic_decimal_test0(); }
 TEST(NumetronTest, compile_time) { ct_test(); }
 TEST(NumetronTest, udiv) { udiv_test(); }
-
+TEST(NumetronTest, assign_mul) { assign_mul_test(); }
+TEST(NumetronTest, assign_mul_no_realloc) { assign_mul_no_realloc_test(); }
 #else
 TEST(NumetronTest, mul) { mul_test(); }
-//TEST(NumetronTest, mpn_mul) { mpn_mul_test(); }
+TEST(NumetronTest, mpn_mul) { mpn_mul_test(); }
 #endif
 #if !defined(NDEBUG) && defined(_WIN32)
 #   include "windows.h"

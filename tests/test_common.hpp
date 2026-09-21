@@ -33,6 +33,8 @@ void ct_test();
 void mul_test();
 void mpn_mul_test();
 void udiv_test();
+void assign_mul_test();
+void assign_mul_no_realloc_test();
 
 void test_float16_basic_operations();
 void test_float16_special_values();

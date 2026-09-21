@@ -244,17 +244,14 @@ inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t 
     if constexpr (sizeof(LimbT) == 8) {
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
-        std::call_once(mul_basecase_init_flag, []() {
+        static const detect_mul_basecase_type detected_mul_basecase_ptr = []() -> detect_mul_basecase_type {
             uint64_t platform_descriptor = numetron_detect_platform();
             //std::cout << "PLATFROM: " << std::hex << "0x" << platform_descriptor << std::dec << std::endl;
-            __mul_basecase_ptr = detect_mul_basecase(platform_descriptor);
-        });
-        if (__mul_basecase_ptr) __mul_basecase_ptr(rb, ub, un, vb, vn);
-        return rb + un + vn;
-#   else
-        NUMETRON_mul_basecase(rb, ub, un, vb, vn);
-        return rb + un + vn;
+            return detect_mul_basecase(platform_descriptor);
+        }();
 #   endif
+    NUMETRON_mul_basecase(rb, ub, un, vb, vn);
+    return rb + un + vn;
 #endif
     }
     return umul_basecase_unrolled<LimbT>(ub, ub + un, vb, vb + vn, rb);

@@ -12,6 +12,12 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 include(CTest)
 enable_testing()
 
+# Architecture-specific assembly (src/arch/*), built once as the static "numetron" library.
+# Every target that wants Numetron's full runtime speed (numetron_tests, numetron_bench_mul)
+# links against it instead of listing the .s files itself, so new asm sources only need to be
+# added in lib/CMakeLists.txt.
+add_subdirectory(lib)
+
 # Collect test sources
 set (NUMETRON_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/float16_test.cpp
@@ -21,14 +27,13 @@ set (NUMETRON_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/mul_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/mpn_mul_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/udiv_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/assign_mul_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tests.cpp
-    
-    # MASM source(s)
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/arch/x86_64/alderlake/mul_basecase.s
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/arch/x86_64/k8/mul_basecase.s
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/arch/x86_64/core2/mul_basecase.s
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/arch/x86_64/detect_platform.s
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/arch/x86_64/detect_mul_basecase.s
+)
+
+# Benchmark sources (standalone executables, not wired into CTest)
+set (NUMETRON_BENCH_MUL_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/bench/mul_bench.cpp
 )
 
 # If we are using vcpkg, rely on CMake config packages
@@ -47,6 +52,7 @@ if(DEFINED ENV{VCPKG_ROOT})
         GTest::gtest
         GTest::gtest_main
     )
+    set(DEPS_BENCH "")
 
 else()
     message(STATUS "No vcpkg detected. Using system packages.")
@@ -69,6 +75,7 @@ else()
         GTest::Main
         ${GMP_LIBRARY}
     )
+    set(DEPS_BENCH ${GMP_LIBRARY})
 endif()
 
 # Define the test executable
@@ -81,7 +88,20 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # Link dependencies
-target_link_libraries(numetron_tests PRIVATE ${DEPS})
+target_link_libraries(numetron_tests PRIVATE numetron ${DEPS})
 
 # Add the test to CTest
 add_test(NAME numetron_tests COMMAND numetron_tests)
+
+# Define the mul benchmark executable (Numetron vs GMP, standalone, not run via ctest).
+# It links the same "numetron" asm library as numetron_tests so it runs with NUMETRON_USE_ASM +
+# NUMETRON_PLATFORM_AUTODETECT (the library defaults), i.e. its best runtime-selected
+# mul_basecase implementation, not the plain C++ fallback.
+add_executable(numetron_bench_mul ${NUMETRON_BENCH_MUL_SOURCES})
+target_include_directories(numetron_bench_mul PRIVATE include ${GMP_INCLUDE_DIR})
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(numetron_bench_mul PRIVATE -Wall -Wextra -Wpedantic -march=native -O3)
+endif()
+
+target_link_libraries(numetron_bench_mul PRIVATE numetron ${DEPS_BENCH})

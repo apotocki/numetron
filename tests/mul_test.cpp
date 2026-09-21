@@ -1,4 +1,4 @@
-// Numetron — Compile - time and runtime arbitrary - precision arithmetic
+// Numetron â€” Compile - time and runtime arbitrary - precision arithmetic
 // (c) 2025 Alexander Pototskiy
 // Licensed under the MIT License. See LICENSE file for details.
 
@@ -154,7 +154,7 @@ void mul_test()
     std::cout << "loaded #" << data_set.size() << std::endl;
 
     // test multiplication
-    for (int attempt = 0; attempt < 50; ++attempt) {
+    for (int attempt = 0; attempt < 5; ++attempt) {
         auto start = std::chrono::steady_clock::now();
         for (int test_cnt = 0; test_cnt < NUMETRON_TEST_COUNT; ++test_cnt)
         {

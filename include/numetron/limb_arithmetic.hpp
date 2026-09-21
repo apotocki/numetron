@@ -15,15 +15,14 @@
 
 #define NUMETRON_USE_ASM
 #define NUMETRON_PLATFORM_AUTODETECT
+//#define NUMETRON_PLATFORM_ALDERLAKE
+//#define NUMETRON_PLATFORM_CORE2
+//#define NUMETRON_PLATFORM_K8
 
 #include "limb_arithmetic/uadd.hpp"
 #include "limb_arithmetic/usub.hpp"
 #include "limb_arithmetic/toom/engine.hpp"
 #include "limb_arithmetic/umul.hpp"
-
-//#define NUMETRON_PLATFORM_ALDERLAKE
-//#define NUMETRON_PLATFORM_CORE2
-//#define NUMETRON_PLATFORM_K8
 
 #ifndef NUMETRON_DC_DIV_QR_THRESHOLD
 #   define NUMETRON_DC_DIV_QR_THRESHOLD 50
@@ -537,8 +536,8 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
         return result;
     }
 
-    auto& [llimbs, lmask, lsign] = l;
-    auto& [rlimbs, rmask, rsign] = r;
+    auto const& [llimbs, lmask, lsign] = l;
+    auto const& [rlimbs, rmask, rsign] = r;
 
     get<3>(result) = !(lsign + rsign) ? -1 : 1;
 
