@@ -300,6 +300,36 @@ struct lincomb_state
         return x;
     }
 
+    // One term over 4 consecutive limbs: the 4 shifted source limbs first, then 4 back-to-back
+    // steps of the term's carry chain, so the compiler can keep the carry in the flags across
+    // them instead of saving and restoring it per limb (which interleaving the terms limb by limb
+    // forces, the chains being separate).
+    template <unsigned K, bool Neg>
+    NUMETRON_FORCEINLINE void apply4(LimbT const* q, LimbT& hi, unsigned char& c, LimbT& x0, LimbT& x1, LimbT& x2, LimbT& x3) noexcept
+    {
+        const LimbT t0 = shifted<LimbT, K>(q[0], hi);
+        const LimbT t1 = shifted<LimbT, K>(q[1], hi);
+        const LimbT t2 = shifted<LimbT, K>(q[2], hi);
+        const LimbT t3 = shifted<LimbT, K>(q[3], hi);
+        x0 = accumulate<LimbT, Neg>(x0, t0, c);
+        x1 = accumulate<LimbT, Neg>(x1, t1, c);
+        x2 = accumulate<LimbT, Neg>(x2, t2, c);
+        x3 = accumulate<LimbT, Neg>(x3, t3, c);
+    }
+
+    // Sum limbs i..i+3, all sources present there.
+    NUMETRON_FORCEINLINE void combine4(LimbT const* q0, [[maybe_unused]] LimbT const* q1, [[maybe_unused]] LimbT const* q2, [[maybe_unused]] LimbT const* q3,
+        LimbT& x0, LimbT& x1, LimbT& x2, LimbT& x3) noexcept
+    {
+        x0 = shifted<LimbT, Desc.shift[0]>(q0[0], hi0);
+        x1 = shifted<LimbT, Desc.shift[0]>(q0[1], hi0);
+        x2 = shifted<LimbT, Desc.shift[0]>(q0[2], hi0);
+        x3 = shifted<LimbT, Desc.shift[0]>(q0[3], hi0);
+        if constexpr (N > 1) apply4<Desc.shift[1], Desc.neg[1]>(q1, hi1, c1, x0, x1, x2, x3);
+        if constexpr (N > 2) apply4<Desc.shift[2], Desc.neg[2]>(q2, hi2, c2, x0, x1, x2, x3);
+        if constexpr (N > 3) apply4<Desc.shift[3], Desc.neg[3]>(q3, hi3, c3, x0, x1, x2, x3);
+    }
+
     NUMETRON_FORCEINLINE void out(LimbT y) noexcept
     {
         if constexpr (D == 1) {
@@ -378,7 +408,15 @@ inline void lincomb(LimbT* r, size_t w, lincomb_src<LimbT> const* src) noexcept
         st.pending = st.combine(at(p0, n0, 0), N > 1 ? at(p1, n1, 0) : 0, N > 2 ? at(p2, n2, 0) : 0, N > 3 ? at(p3, n3, 0) : 0);
         i = 1;
     }
-    // all sources present
+    // all sources present: blocks of 4, then single limbs
+    for (; i + 4 <= m; i += 4) {
+        LimbT x0, x1, x2, x3;
+        st.combine4(p0 + i, N > 1 ? p1 + i : nullptr, N > 2 ? p2 + i : nullptr, N > 3 ? p3 + i : nullptr, x0, x1, x2, x3);
+        st.put(x0);
+        st.put(x1);
+        st.put(x2);
+        st.put(x3);
+    }
     for (; i < m; ++i) {
         st.put(st.combine(p0[i], N > 1 ? p1[i] : 0, N > 2 ? p2[i] : 0, N > 3 ? p3[i] : 0));
     }

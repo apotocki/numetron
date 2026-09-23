@@ -168,8 +168,9 @@ struct toom_stage_traits<3, 3>
     static constexpr size_t M = 3;
 };
 
-// Balanced Toom-3 on the fixed-width ops: the same algorithm, memory layout and operation
-// sequence as the hand-written detail::umul_toom3_impl() (umul_toom3.hpp), expressed as a plan.
+// Balanced Toom-3 on the fixed-width ops: the same algorithm and memory layout as the
+// hand-written detail::umul_toom3_impl() (umul_toom3.hpp), expressed as a plan, with the
+// evaluation at 2 and the interpolation fused into lincomb passes.
 //
 // Split by u (split_by_u): c = ceil(un/3), s = un - 2c = |u2|, t = vn - 2c = |v2|,
 // 0 < t <= s <= c (the dispatch only takes this plan when detail::toom3_split_fits(un, vn)).
@@ -177,7 +178,6 @@ struct toom_stage_traits<3, 3>
 // Scratch (12c + 12 limbs), e = c + 1, p = 2c + 2:
 //   EA1 EAM1 EA2 EB1 EBM1 EB2   6 x e     A(1), |A(-1)|, A(2) and the same for B
 //   W1 WM1 W2                   3 x p     r(1), |r(-1)|, r(2), then the interpolated c2, c1, c3
-//   C4X2  aliases [0, s+t+1)              2*c4, once the evaluated operands are dead
 //   W1HI  aliases W1[2c, 2c+2)            the part of c2 above rb's 2c-limb gap
 // Result views: C0 = rb[0, 2c), R2 = rb[2c, 4c), C4 = rb[4c, end), R1 = rb[c, end),
 // R3 = rb[3c, end). rb is written in full by the plan (C0, R2, C4 cover it), so it doesn't
@@ -216,7 +216,6 @@ consteval auto make_toom3_balanced()
     auto W1    = sb.tmp(off_w1,   p);
     auto WM1   = sb.tmp(off_wm1,  p);
     auto W2    = sb.tmp(off_w2,   p);
-    auto C4X2  = sb.tmp(b.c(0),   b.add(st, b.c(1)));
     auto W1HI  = sb.tmp(b.add(off_w1, two_c), b.c(2));
 
     auto C0    = sb.rb(b.c(0),          two_c);
@@ -225,42 +224,32 @@ consteval auto make_toom3_balanced()
     auto R1    = sb.rb(c,               b.sub(rn, c));
     auto R3    = sb.rb(b.mul(c, 3),     b.sub(rn, b.mul(c, 3)));
 
-    auto u = slot_builder::u;
-    auto v = slot_builder::v;
+    // Plain refs, see make_toom4_balanced() (GCC and consteval calls through a pointer).
+    constexpr std::array<toom_ref, 3> u = { slot_builder::u(0), slot_builder::u(1), slot_builder::u(2) };
+    constexpr std::array<toom_ref, 3> v = { slot_builder::v(0), slot_builder::v(1), slot_builder::v(2) };
 
     std::array plan = {
         // Evaluate A at 1, -1 (one fused op: even parts a0 + a2, odd part a1), then at 2.
-        toom_instr{ .op = toom_op::eval_pm1, .dst = EA1, .src0 = u(0), .src1 = u(2), .dst2 = EAM1, .src2 = u(1) },
-        toom_instr{ toom_op::uadd,        EA2,  EA1,  u(2) },
-        toom_instr{ toom_op::shl1,        EA2,  EA2        },
-        toom_instr{ toom_op::usub,        EA2,  EA2,  u(0) },   // A(2) = 2(A(1) + a2) - a0
+        toom_instr{ .op = toom_op::eval_pm1, .dst = EA1, .src0 = u[0], .src1 = u[2], .dst2 = EAM1, .src2 = u[1] },
+        lincomb(EA2, { lc_add(u[0]), lc_add(u[1], 1), lc_add(u[2], 2) }),                  // A(2)
 
         // Same for B.
-        toom_instr{ .op = toom_op::eval_pm1, .dst = EB1, .src0 = v(0), .src1 = v(2), .dst2 = EBM1, .src2 = v(1) },
-        toom_instr{ toom_op::uadd,        EB2,  EB1,  v(2) },
-        toom_instr{ toom_op::shl1,        EB2,  EB2        },
-        toom_instr{ toom_op::usub,        EB2,  EB2,  v(0) },
+        toom_instr{ .op = toom_op::eval_pm1, .dst = EB1, .src0 = v[0], .src1 = v[2], .dst2 = EBM1, .src2 = v[1] },
+        lincomb(EB2, { lc_add(v[0]), lc_add(v[1], 1), lc_add(v[2], 2) }),
 
         // Pointwise products; c0 and c4 straight into the result.
         toom_instr{ toom_op::umul_fixed,  W1,   EA1,  EB1  },
         toom_instr{ toom_op::umul_fixed,  WM1,  EAM1, EBM1 },   // sign of r(-1) kept in WM1
         toom_instr{ toom_op::umul_fixed,  W2,   EA2,  EB2  },
-        toom_instr{ toom_op::umul_fixed,  C0,   u(0), v(0) },
-        toom_instr{ toom_op::umul_fixed,  C4,   u(2), v(2) },
+        toom_instr{ toom_op::umul_fixed,  C0,   u[0], v[0] },
+        toom_instr{ toom_op::umul_fixed,  C4,   u[2], v[2] },
 
-        // Interpolation.
-        toom_instr{ toom_op::usub_signed, W2,   W2,   WM1  },   // r(2) - r(-1)
-        toom_instr{ toom_op::divexact3,   W2,   W2         },   // c1 + c2 + 3c3 + 5c4
-        toom_instr{ toom_op::usub_signed, WM1,  W1,   WM1  },   // r(1) - r(-1)
-        toom_instr{ toom_op::shr1,        WM1,  WM1        },   // c1 + c3
-        toom_instr{ toom_op::usub,        W1,   W1,   C0   },   // c1 + c2 + c3 + c4
-        toom_instr{ toom_op::usub,        W2,   W2,   W1   },
-        toom_instr{ toom_op::shr1,        W2,   W2         },   // c3 + 2c4
-        toom_instr{ toom_op::usub,        W1,   W1,   WM1  },   // c2 + c4
-        toom_instr{ toom_op::shl1,        C4X2, C4         },
-        toom_instr{ toom_op::usub,        W2,   W2,   C4X2 },   // c3
-        toom_instr{ toom_op::usub,        W1,   W1,   C4   },   // c2
-        toom_instr{ toom_op::usub,        WM1,  WM1,  W2   },   // c1
+        // Interpolation, one lincomb pass per line.
+        lincomb(W2,  { lc_add(W2), lc_sub_signed(WM1) }, 0, 3),                            // (r(2) - r(-1)) / 3 = c1 + c2 + 3c3 + 5c4
+        lincomb(WM1, { lc_add(W1), lc_sub_signed(WM1) }, 1),                               // (r(1) - r(-1)) / 2 = c1 + c3
+        lincomb(W2,  { lc_add(W2), lc_sub(W1), lc_add(C0), lc_sub(C4, 2) }, 1),            // c3
+        lincomb(W1,  { lc_add(W1), lc_sub(C0), lc_sub(WM1), lc_sub(C4) }),                 // c2
+        toom_instr{ toom_op::usub,        WM1,  WM1,  W2   },                              // c1
 
         // Compose: c2 fills the gap rb[2c, 4c) (its top on c4), then c1 and c3 are added.
         toom_instr{ toom_op::copy_low,    R2,   W1         },
