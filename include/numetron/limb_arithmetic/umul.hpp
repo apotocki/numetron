@@ -64,25 +64,30 @@ template <std::unsigned_integral LimbT, typename AllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
 inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
 {
-    if (is_toom3_applicable(u.size(), v.size())) {
-        return toom_engine<3, 3>::umul(u, v, std::move(alloc));
+    if (v.empty()) [[unlikely]] {
+        return { nullptr, 0, 0 };
     }
 
-    if (is_karatsuba_applicable(u.size(), v.size())) {
-#ifndef NUMETRON_EXPLICIT_KARATSUBA
-        return toom_engine<2, 2>::umul(u, v, std::move(alloc));
-#else
-        return umul_karatsuba(u, v, std::move(alloc));
-#endif
-    }
+    //if (v.size() >= NUMETRON_KARATSUBA_THRESHOLD) {
+        if (is_toom3_applicable(u.size(), v.size())) {
+            return toom_engine<3, 3>::umul(u, v, std::move(alloc));
+        }
 
-    if (!v.empty()) {
-        size_t rsz = u.size() + v.size();
-        LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
-        LimbT* re = umul_basecase(u.data(), u.size(), v.data(), v.size(), r);
-        return { r, static_cast<size_t>(re - r), rsz };
-    }
-    return { nullptr, 0, 0 };
+        if (is_karatsuba_applicable(u.size(), v.size())) {
+    #ifndef NUMETRON_EXPLICIT_KARATSUBA
+            return toom_engine<2, 2>::umul(u, v, std::move(alloc));
+    #else
+            return umul_karatsuba(u, v, std::move(alloc));
+    #endif
+        }
+    //}
+
+    
+    size_t rsz = u.size() + v.size();
+    LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
+    LimbT* re = umul_basecase(u.data(), u.size(), v.data(), v.size(), r);
+    return { r, static_cast<size_t>(re - r), rsz };
+    
 }
 
 // base case mul with explicit high limbs uh and vh

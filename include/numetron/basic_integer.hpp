@@ -367,10 +367,10 @@ struct integer_holder : AllocatorT
     }
 
     // (limbs, size, allocated size, sign)
-    inline void init(std::tuple<LimbT*, size_t, size_t, int> tpl)
+    inline void init(std::tuple<LimbT*, size_t, size_t, int>&& tpl)
     {
         LimbT* limbsdata;
-        auto [limbs, sz, asz, sign] = tpl;
+        auto& [limbs, sz, asz, sign] = tpl;
         if (!limbs) {
             init_zero();
             return;
@@ -812,7 +812,7 @@ std::exception_ptr from_integer_string(integer_holder<LimbT, N, AllocatorT>& dh,
     }
 
     try {
-        dh.init(*opt_tpl);
+        dh.init(std::move(*opt_tpl));
     } catch (std::bad_alloc const& e) {
         return std::make_exception_ptr(std::invalid_argument((std::ostringstream{} << "can't allocate an integer storage for '" << orig_str << "', error: " << e.what()).str()));
     } catch (...) {
@@ -1535,15 +1535,9 @@ inline basic_integer<LimbT, LN, AllocatorLT> operator& (TermT l, basic_integer<L
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>
 inline basic_integer<LimbT, LN, AllocatorLT> operator* (basic_integer<LimbT, LN, AllocatorLT> const& l, limb_arithmetic::composition<LimbT> const& rv)
 {
-    if (l.size() <= LN && get<0>(rv).size() <= LN) {
-        typename detail::integer_holder_configurator<LimbT, 2 * LN, AllocatorLT>::alloc_holder aux_holder{ l.allocator() };
-        aux_holder.init(limb_arithmetic::mul(l.decompose(), rv, aux_holder.inplace_allocator()));
-        return basic_integer<LimbT, LN, AllocatorLT>{ std::move(aux_holder) };
-    } else {
-        typename detail::integer_holder_configurator<LimbT, LN, AllocatorLT>::alloc_holder aux_holder{ l.allocator() };
-        aux_holder.init(limb_arithmetic::mul(l.decompose(), rv, aux_holder.inplace_allocator()));
-        return basic_integer<LimbT, LN, AllocatorLT>{ std::move(aux_holder) };
-    }
+    typename detail::integer_holder_configurator<LimbT, LN, AllocatorLT>::alloc_holder aux_holder{ l.allocator() };
+    aux_holder.init(limb_arithmetic::mul(l.decompose(), rv, aux_holder.inplace_allocator()));
+    return basic_integer<LimbT, LN, AllocatorLT>{ std::move(aux_holder) };
 }
 
 template <std::unsigned_integral LimbT, size_t LN, typename AllocatorLT>

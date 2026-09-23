@@ -9,6 +9,40 @@
 
 namespace numetron::limb_arithmetic {
 
+// Closed-form (loop-free) multiply of a 2-limb u = (u1:u0) by a v that is either 1 limb (v0
+// alone, pass v1 == 0) or 2 limbs (v1:v0, v1 != 0). v1 == 0 doubles as "v has no high limb"
+// instead of "v has one and it happens to be zero" -- both mean the exact same product (a zero
+// high limb contributes nothing), the only difference being whether the result comes back
+// pre-trimmed to 3 limbs or written out to the full 4 with a trailing zero. Both of this
+// function's callers are fine with that: umul_basecase_unrolled() below already returns a
+// possibly-shorter-than-un+vn size elsewhere, and limb_arithmetic::mul()'s <=2-limb short path
+// trims trailing zero limbs itself regardless.
+// This is the dedicated ucnt==2 case of umul_basecase_unrolled() below, pulled out so it can
+// also be called directly -- with scalar operands rather than a {pointer, count} pair -- from
+// limb_arithmetic::mul()'s own <=2-limb short path, which needs to feed it top-limb-masked
+// values without materializing a temporary buffer just to satisfy a span/pointer interface.
+// Returns one past the last limb written: rb+3 when v1 == 0, rb+4 otherwise.
+template <std::unsigned_integral LimbT>
+inline LimbT* umul_basecase_2x(LimbT u0, LimbT u1, LimbT v0, LimbT v1, LimbT* rb) noexcept
+{
+    auto [h00, l00] = arithmetic::umul1(u0, v0);
+    *rb = l00;
+    auto [h01, l01] = arithmetic::umul1(u1, v0);
+    LimbT r1 = arithmetic::uadd1ca(l01, h00, h01);
+    if (!v1) {
+        *(rb + 1) = r1;
+        *(rb + 2) = h01;
+        return rb + 3;
+    }
+    auto [h10, l10] = arithmetic::umul1(u0, v1);
+    *(rb + 1) = arithmetic::uadd1ca(r1, l10, h10);
+    auto [h11, l11] = arithmetic::umul1(u1, v1);
+    h10 = arithmetic::uadd1ca(h10, h01, h11);
+    *(rb + 2) = arithmetic::uadd1ca(l11, h10, h11); // h11 can not overflow: 4 limbs are always enough to hold a 2x2-limb product
+    *(rb + 3) = h11;
+    return rb + 4;
+}
+
 // Perhaps one day, a C++ compiler will be able to optimise this to the same extent as hand-written assembly code.
 template <std::unsigned_integral LimbT>
 inline LimbT* umul_basecase_unrolled(LimbT const* ub, LimbT const* ue, LimbT const* vb, LimbT const* ve, LimbT* rb) noexcept
@@ -16,23 +50,7 @@ inline LimbT* umul_basecase_unrolled(LimbT const* ub, LimbT const* ue, LimbT con
     const auto ucnt = ue - ub;
     const auto vcnt = ve - vb;
     if (ucnt == 2) {
-        auto [h00, l00] = arithmetic::umul1(*ub, *vb);
-        *rb = l00;
-        auto [h01, l01] = arithmetic::umul1(*(ub + 1), *vb);
-        uint64_t r1 = arithmetic::uadd1ca(l01, h00, h01);
-        if (vcnt < 2) {
-            *(rb + 1) = r1;
-            *(rb + 2) = h01;
-            return rb + 3;
-        }
-        ++vb;
-        auto [h10, l10] = arithmetic::umul1(*ub, *vb);
-        *(rb + 1) = arithmetic::uadd1ca(r1, l10, h10);
-        auto [h11, l11] = arithmetic::umul1(*(ub + 1), *vb);
-        h10 = arithmetic::uadd1ca(h10, h01, h11);
-        *(rb + 2) = arithmetic::uadd1ca(l11, h10, h11); // h11 can not overflow
-        *(rb + 3) = h11;
-        return rb + 4;
+        return umul_basecase_2x<LimbT>(*ub, *(ub + 1), *vb, vcnt >= 2 ? *(vb + 1) : LimbT{0}, rb);
     }
 
     auto [h0, l0] = arithmetic::umul1(*ub, *vb);
@@ -253,9 +271,10 @@ inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t 
     NUMETRON_mul_basecase(rb, ub, un, vb, vn);
     return rb + un + vn;
 #endif
+    } else {
+        return umul_basecase_unrolled<LimbT>(ub, ub + un, vb, vb + vn, rb);
+        //return umul<LimbT, LimbT*>(ub, ue, vb, ve, rb);
     }
-    return umul_basecase_unrolled<LimbT>(ub, ub + un, vb, vb + vn, rb);
-    //return umul<LimbT, LimbT*>(ub, ue, vb, ve, rb);
 }
 
 }

@@ -527,18 +527,94 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
 {
     using alloc_traits_t = std::allocator_traits<std::remove_cvref_t<AllocatorT>>;
 
-    std::tuple<LimbT*, size_t, size_t, int> result;
+#if 1
 
-    if (get<0>(l).empty() || get<0>(r).empty()) {
-        get<0>(result) = nullptr;
-        get<1>(result) = get<2>(result) = 0;
-        get<3>(result) = 0;
+#if 1
+    bool const swap = get<0>(l).size() < get<0>(r).size();
+    auto const& [ulimbs, umask, usign] = swap ? r : l;
+    auto const& [vlimbs, vmask, vsign] = swap ? l : r;
+#else
+    auto const & [u, v] = get<0>(l).size() > get<0>(r).size() ? std::pair{ l, r } : std::pair{ r, l };
+
+    auto const& [ulimbs, umask, usign] = u;
+    auto const& [vlimbs, vmask, vsign] = v;
+#endif
+    std::tuple<LimbT*, size_t, size_t, int> result{ nullptr, 0, 0, !(usign + vsign) ? -1 : 1 };
+    
+    if (vlimbs.empty()) {
         return result;
     }
 
+    if (ulimbs.size() == 1) [[unlikely]] { // short path
+        LimbT hu = ulimbs.back() & umask;
+        LimbT hv = vlimbs.back() & vmask;
+
+        auto [h, l] = arithmetic::umul1(hu, hv);
+        if (h) {
+            get<1>(result) = get<2>(result) = 2;
+            get<0>(result) = alloc_traits_t::allocate(alloc, 2);
+            *(get<0>(result) + 1) = h;
+        } else {
+            get<1>(result) = get<2>(result) = 1;
+            get<0>(result) = alloc_traits_t::allocate(alloc, 1);
+        }
+        *get<0>(result) = l;
+        return result;
+    }
+
+    if (ulimbs.size() == 2) [[unlikely]] {
+        get<2>(result) = 2 + vlimbs.size();
+        LimbT small_lo = vlimbs.front();
+        LimbT small_hi = vlimbs.back() & vmask;
+        if (vlimbs.size() == 1) {
+            small_lo = small_hi;
+            small_hi = LimbT{ 0 };
+        }
+
+#if 1
+        get<1>(result) = get<2>(result);
+        get<0>(result) = alloc_traits_t::allocate(alloc, get<2>(result));
+        LimbT* pe = umul_basecase_2x<LimbT>(ulimbs[0], ulimbs[1] & umask, small_lo, small_hi, get<0>(result));
+        while (!*pe && get<1>(result)) {
+            --pe;
+            --get<1>(result);
+        }
+        return result;
+#else
+        LimbT p[4];
+        LimbT* pe = umul_basecase_2x<LimbT>(ulimbs[0], ulimbs[1] & umask, small_lo, small_hi, p);
+
+        size_t sz = static_cast<size_t>(pe - p);
+        while (sz > 1 && !p[sz - 1]) --sz;
+
+        get<1>(result) = get<2>(result) = sz;
+        get<0>(result) = alloc_traits_t::allocate(alloc, sz);
+        std::copy_n(p, sz, get<0>(result));
+        return result;
+#endif
+    }
+
+    std::tuple<LimbT*, size_t, size_t> rese;
+    if (umask == (std::numeric_limits<LimbT>::max)() && vmask == (std::numeric_limits<LimbT>::max)()) {
+        rese = umul<LimbT>(ulimbs, vlimbs, std::move(alloc));
+    } else {
+        LimbT hu = ulimbs.back() & umask;
+        LimbT hv = vlimbs.back() & vmask;
+        auto lus = ulimbs.first(ulimbs.size() - 1);
+        auto lvs = vlimbs.first(vlimbs.size() - 1);
+        rese = umul(hu, lus, hv, lvs, std::move(alloc));
+    }
+    get<0>(result) = get<0>(rese);
+    get<1>(result) = get<1>(rese);
+    get<2>(result) = get<2>(rese);
+    while (get<1>(result) && !*(get<0>(result) + get<1>(result) - 1)) {
+        --get<1>(result);
+    }
+    return result;
+#else
+
     auto const& [llimbs, lmask, lsign] = l;
     auto const& [rlimbs, rmask, rsign] = r;
-
     get<3>(result) = !(lsign + rsign) ? -1 : 1;
 
     if (llimbs.size() == 1) [[unlikely]] { // short path
@@ -557,6 +633,37 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
             *get<0>(result) = l;
             return result;
         }
+    }
+
+    // Short path for operands of at most 2 limbs each (the (1,1) case above already returned):
+    // (1,2), (2,1) and (2,2). Computed directly with umul_basecase_2x()'s dedicated, loop-free
+    // 2-limb closed form (scalar operands, no temporary buffer needed just to apply top-limb
+    // masking) instead of going through the general umul()/toom dispatch (Toom-3/Karatsuba
+    // applicability checks, an allocator round-trip sized by that dispatch, and
+    // umul_basecase()'s runtime-selected ASM mul_basecase call) -- overhead that dominates at
+    // this size and buys nothing, since basecase is what all of that machinery bottoms out to
+    // here anyway.
+    if ((std::max)(llimbs.size(), rlimbs.size()) == 2) [[unlikely]] {
+        bool const l_is_big = llimbs.size() == 2;
+        auto const& big = l_is_big ? llimbs : rlimbs;
+        auto const& small = l_is_big ? rlimbs : llimbs;
+        LimbT const big_mask = l_is_big ? lmask : rmask;
+        LimbT const small_mask = l_is_big ? rmask : lmask;
+
+        bool const small_has_hi = small.size() == 2;
+        LimbT const small_lo = small_has_hi ? small[0] : (small[0] & small_mask); // mask applies only to .back()
+        LimbT const small_hi = small_has_hi ? (small[1] & small_mask) : LimbT{0};
+
+        LimbT p[4];
+        LimbT *pe = umul_basecase_2x<LimbT>(big[0], big[1] & big_mask, small_lo, small_has_hi ? small_hi : LimbT{0}, p);
+
+        size_t sz = static_cast<size_t>(pe - p);
+        while (sz > 1 && !p[sz - 1]) --sz;
+
+        get<1>(result) = get<2>(result) = sz;
+        get<0>(result) = alloc_traits_t::allocate(alloc, sz);
+        std::copy_n(p, sz, get<0>(result));
+        return result;
     }
 
     //size_t margsz = llimbs.size() + rlimbs.size();
@@ -590,6 +697,7 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
         --get<1>(result);
     }
     return result;
+#endif
 }
 
 template <std::unsigned_integral LimbT>
