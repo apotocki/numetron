@@ -5,6 +5,8 @@
 TESTS_HOME=$(SolutionDir)
 $(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArguments>--tune=100</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArgumentsHistory>--tune=100|</LocalDebuggerCommandArgumentsHistory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LocalDebuggerEnvironment>PATH=%PATH%;$(SolutionDir)vcpkg_installed\x64-windows-cpp23\debug\bin

@@ -574,7 +574,7 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
         get<1>(result) = get<2>(result);
         get<0>(result) = alloc_traits_t::allocate(alloc, get<2>(result));
         LimbT* pe = umul_basecase_2x<LimbT>(ulimbs[0], ulimbs[1] & umask, small_lo, small_hi, get<0>(result));
-        while (!*pe && get<1>(result)) {
+        while (get<1>(result) && !*(pe - 1)) { // pe is one past the last limb written
             --pe;
             --get<1>(result);
         }

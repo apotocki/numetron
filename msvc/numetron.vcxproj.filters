@@ -159,6 +159,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_toom3.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_basecase.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
@@ -186,6 +189,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\slot.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\kernels.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\core.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
@@ -196,6 +202,9 @@
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_3x3.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x4.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\thresholds.hpp">

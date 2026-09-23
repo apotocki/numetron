@@ -168,6 +168,124 @@ struct toom_stage_traits<3, 3>
     static constexpr size_t M = 3;
 };
 
+// Balanced Toom-3 on the fixed-width ops: the same algorithm, memory layout and operation
+// sequence as the hand-written detail::umul_toom3_impl() (umul_toom3.hpp), expressed as a plan.
+//
+// Split by u (split_by_u): c = ceil(un/3), s = un - 2c = |u2|, t = vn - 2c = |v2|,
+// 0 < t <= s <= c (the dispatch only takes this plan when detail::toom3_split_fits(un, vn)).
+//
+// Scratch (12c + 12 limbs), e = c + 1, p = 2c + 2:
+//   EA1 EAM1 EA2 EB1 EBM1 EB2   6 x e     A(1), |A(-1)|, A(2) and the same for B
+//   W1 WM1 W2                   3 x p     r(1), |r(-1)|, r(2), then the interpolated c2, c1, c3
+//   C4X2  aliases [0, s+t+1)              2*c4, once the evaluated operands are dead
+//   W1HI  aliases W1[2c, 2c+2)            the part of c2 above rb's 2c-limb gap
+// Result views: C0 = rb[0, 2c), R2 = rb[2c, 4c), C4 = rb[4c, end), R1 = rb[c, end),
+// R3 = rb[3c, end). rb is written in full by the plan (C0, R2, C4 cover it), so it doesn't
+// need zeroing first.
+consteval auto make_toom3_balanced()
+{
+    expr_builder b;
+
+    auto c   = b.v(toom_size_var::chunk);
+    auto s   = b.v(toom_size_var::u_hi);
+    auto t   = b.v(toom_size_var::v_hi);
+    auto rn  = b.add(b.v(toom_size_var::un), b.v(toom_size_var::vn));
+
+    auto e   = b.add(c, b.c(1));
+    auto p   = b.add(b.mul(c, 2), b.c(2));
+    auto st  = b.add(s, t);
+    auto two_c = b.mul(c, 2);
+
+    auto off_eam1 = e;
+    auto off_ea2  = b.mul(e, 2);
+    auto off_eb1  = b.mul(e, 3);
+    auto off_ebm1 = b.mul(e, 4);
+    auto off_eb2  = b.mul(e, 5);
+    auto off_w1   = b.mul(e, 6);
+    auto off_wm1  = b.add(off_w1, p);
+    auto off_w2   = b.add(off_wm1, p);
+    auto slab     = b.add(off_w2, p);
+
+    slot_builder sb;
+    auto EA1   = sb.tmp(b.c(0),   e);
+    auto EAM1  = sb.tmp(off_eam1, e);
+    auto EA2   = sb.tmp(off_ea2,  e);
+    auto EB1   = sb.tmp(off_eb1,  e);
+    auto EBM1  = sb.tmp(off_ebm1, e);
+    auto EB2   = sb.tmp(off_eb2,  e);
+    auto W1    = sb.tmp(off_w1,   p);
+    auto WM1   = sb.tmp(off_wm1,  p);
+    auto W2    = sb.tmp(off_w2,   p);
+    auto C4X2  = sb.tmp(b.c(0),   b.add(st, b.c(1)));
+    auto W1HI  = sb.tmp(b.add(off_w1, two_c), b.c(2));
+
+    auto C0    = sb.rb(b.c(0),          two_c);
+    auto R2    = sb.rb(two_c,           two_c);
+    auto C4    = sb.rb(b.mul(c, 4),     st);
+    auto R1    = sb.rb(c,               b.sub(rn, c));
+    auto R3    = sb.rb(b.mul(c, 3),     b.sub(rn, b.mul(c, 3)));
+
+    auto u = slot_builder::u;
+    auto v = slot_builder::v;
+
+    std::array plan = {
+        // Evaluate A at 1, -1 (one fused op: even parts a0 + a2, odd part a1), then at 2.
+        toom_instr{ .op = toom_op::eval_pm1, .dst = EA1, .src0 = u(0), .src1 = u(2), .dst2 = EAM1, .src2 = u(1) },
+        toom_instr{ toom_op::uadd,        EA2,  EA1,  u(2) },
+        toom_instr{ toom_op::shl1,        EA2,  EA2        },
+        toom_instr{ toom_op::usub,        EA2,  EA2,  u(0) },   // A(2) = 2(A(1) + a2) - a0
+
+        // Same for B.
+        toom_instr{ .op = toom_op::eval_pm1, .dst = EB1, .src0 = v(0), .src1 = v(2), .dst2 = EBM1, .src2 = v(1) },
+        toom_instr{ toom_op::uadd,        EB2,  EB1,  v(2) },
+        toom_instr{ toom_op::shl1,        EB2,  EB2        },
+        toom_instr{ toom_op::usub,        EB2,  EB2,  v(0) },
+
+        // Pointwise products; c0 and c4 straight into the result.
+        toom_instr{ toom_op::umul_fixed,  W1,   EA1,  EB1  },
+        toom_instr{ toom_op::umul_fixed,  WM1,  EAM1, EBM1 },   // sign of r(-1) kept in WM1
+        toom_instr{ toom_op::umul_fixed,  W2,   EA2,  EB2  },
+        toom_instr{ toom_op::umul_fixed,  C0,   u(0), v(0) },
+        toom_instr{ toom_op::umul_fixed,  C4,   u(2), v(2) },
+
+        // Interpolation.
+        toom_instr{ toom_op::usub_signed, W2,   W2,   WM1  },   // r(2) - r(-1)
+        toom_instr{ toom_op::divexact3,   W2,   W2         },   // c1 + c2 + 3c3 + 5c4
+        toom_instr{ toom_op::usub_signed, WM1,  W1,   WM1  },   // r(1) - r(-1)
+        toom_instr{ toom_op::shr1,        WM1,  WM1        },   // c1 + c3
+        toom_instr{ toom_op::usub,        W1,   W1,   C0   },   // c1 + c2 + c3 + c4
+        toom_instr{ toom_op::usub,        W2,   W2,   W1   },
+        toom_instr{ toom_op::shr1,        W2,   W2         },   // c3 + 2c4
+        toom_instr{ toom_op::usub,        W1,   W1,   WM1  },   // c2 + c4
+        toom_instr{ toom_op::shl1,        C4X2, C4         },
+        toom_instr{ toom_op::usub,        W2,   W2,   C4X2 },   // c3
+        toom_instr{ toom_op::usub,        W1,   W1,   C4   },   // c2
+        toom_instr{ toom_op::usub,        WM1,  WM1,  W2   },   // c1
+
+        // Compose: c2 fills the gap rb[2c, 4c) (its top on c4), then c1 and c3 are added.
+        toom_instr{ toom_op::copy_low,    R2,   W1         },
+        toom_instr{ toom_op::uadd_into,   C4,   W1HI       },
+        toom_instr{ toom_op::uadd_into,   R1,   WM1        },
+        toom_instr{ toom_op::uadd_into,   R3,   W2         },
+    };
+
+    return toom_full_spec{ b.finish(slab), sb.finish(), slab, plan };
+}
+
+static constexpr auto toom3_balanced = make_toom3_balanced();
+
+struct toom3_balanced_traits
+{
+    static constexpr auto const& plan              = toom3_balanced.plan;
+    static constexpr auto const& size_exprs        = toom3_balanced.exprs;
+    static constexpr auto const& slot_layout       = toom3_balanced.slot_layout;
+    static constexpr expr_handle slab_size_expr_id = toom3_balanced.slab_expr;
+    static constexpr size_t N = 3;
+    static constexpr size_t M = 3;
+    static constexpr bool split_by_u = true;
+    static constexpr bool zero_result = false;
+};
+
 } // namespace toom_runtime_detail
 
 } // namespace numetron::limb_arithmetic

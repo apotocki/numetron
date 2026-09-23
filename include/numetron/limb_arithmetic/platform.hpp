@@ -17,6 +17,17 @@
 #   endif
 #endif
 
+// The opposite, for code that is reached from many call sites and should exist once: e.g. the
+// Toom engine's op implementations, one copy per op type rather than one per plan instruction
+// (keeping the hot code small enough not to push the assembly kernels out of the uop cache).
+#ifndef NUMETRON_NOINLINE
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_NOINLINE __declspec(noinline)
+#   else
+#       define NUMETRON_NOINLINE __attribute__((noinline))
+#   endif
+#endif
+
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
 
 // src/arch/x86_64/add_sub_n.{asm,s}: r[0..n) = u[0..n) +/- v[0..n), returning the carry/borrow

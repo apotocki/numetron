@@ -321,6 +321,11 @@ int main(int argc, char** argv)
 
     // --tune[=N]: retune the multiplication thresholds on this machine before benchmarking,
     // taking the best of N samples per probe (default: mul_tuning_options' default).
+    // --trace (with --tune): print every probe: size, lower / higher algorithm time, ratio.
+    bool trace = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string{ argv[i] } == "--trace") trace = true;
+    }
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg.rfind("--tune", 0) != 0) continue;
@@ -328,14 +333,39 @@ int main(int argc, char** argv)
         if (auto eq = arg.find('='); eq != std::string::npos) {
             opts.samples = static_cast<unsigned>(std::stoul(arg.substr(eq + 1)));
         }
+        if (trace) {
+            opts.trace = [](char const* algorithm, size_t n, double lower_ns, double higher_ns) {
+                const auto flags = std::cout.flags();
+                const auto precision = std::cout.precision();
+                NUMETRON_SCOPE_EXIT([&] { std::cout.flags(flags); std::cout.precision(precision); });
+                std::cout << "  " << std::left << std::setw(10) << algorithm << std::right
+                          << std::setw(6) << n
+                          << std::setw(14) << std::fixed << std::setprecision(0) << lower_ns
+                          << std::setw(14) << higher_ns
+                          << std::setw(8) << std::setprecision(3) << higher_ns / lower_ns << "\n";
+            };
+            opts.trace_candidate = [](char const* algorithm, size_t threshold, double relative_time, bool chosen) {
+                const auto flags = std::cout.flags();
+                const auto precision = std::cout.precision();
+                NUMETRON_SCOPE_EXIT([&] { std::cout.flags(flags); std::cout.precision(precision); });
+                std::cout << "  " << std::left << std::setw(10) << algorithm << std::right
+                          << " candidate " << std::setw(6) << threshold
+                          << "  full-product time vs off: " << std::fixed << std::setprecision(3) << relative_time
+                          << (chosen ? "  <- chosen" : "") << "\n";
+            };
+            std::cout << "  algorithm      n      lower(ns)    higher(ns)   ratio\n";
+        }
         auto before_k = numetron::limb_arithmetic::karatsuba_threshold();
         auto before_t = numetron::limb_arithmetic::toom3_threshold();
+        auto before_t4 = numetron::limb_arithmetic::toom4_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
         std::cout << "tuned thresholds (limbs):\n"
                   << "  karatsuba: " << before_k << " -> " << tuned.karatsuba_threshold
                   << (tuned.karatsuba_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  toom3:     " << before_t << " -> " << tuned.toom3_threshold
-                  << (tuned.toom3_found ? "" : " (no crossover found, kept)") << "\n\n";
+                  << (tuned.toom3_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom4:     " << before_t4 << " -> " << tuned.toom4_threshold
+                  << (tuned.toom4_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
 
     std::mt19937_64 rng{ 0x5EED1234ULL };

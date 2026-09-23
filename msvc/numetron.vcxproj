@@ -107,10 +107,12 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\platform.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\core.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\engine.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\kernels.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\slot.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\thresholds.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_2x2.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_3x3.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x4.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\uadd.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp" />
@@ -118,6 +120,7 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul1.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_basecase.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_toom3.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\usub.hpp" />
   </ItemGroup>
   <ItemGroup>
