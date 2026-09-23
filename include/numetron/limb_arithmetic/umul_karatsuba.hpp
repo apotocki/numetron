@@ -96,14 +96,22 @@ LimbT* umul_karatsuba_impl(
 //    return rb;
 //}
 
-// Karatsuba multiplication core (Toom-2).
+// Karatsuba multiplication core (Toom-2), structured after GMP's mpn_toom22_mul.
 //
 // Preconditions:
-//   un >= vn, vn >= NUMETRON_KARATSUBA_THRESHOLD, un < 2*vn  (nearly square)
+//   un >= vn >= 2, un < 2*vn  (nearly square; the dispatch additionally requires
+//   vn >= karatsuba_threshold(), but that's a speed choice, not a correctness one)
 //   rb[0 .. un+vn) is the output buffer (uninitialized)
 //
-// Allocates its own scratch via alloc and frees it before returning.
-// Returns rb + un + vn (the end of the written result).
+// Split by un:  u = a0 + a1*B^n,  v = b0 + b1*B^n  with
+//   s = floor(un/2) = |a1|,  n = un - s = |a0| = |b0|,  t = vn - n = |b1|,  0 <= t <= s <= n.
+//
+// Writing v0 = a0*b0 = L0 + H0*B^n, vinf = a1*b1 = Li + Hi*B^n, vm1 = |a0-a1|*|b0-b1|:
+//   u*v = L0 + (L0 + H0 + Li)*B^n + (H0 + Li + Hi)*B^2n + Hi*B^3n  -/+  vm1*B^n
+// so the shared sum X = H0 + Li is computed once and reused for both middle columns.
+//
+// Allocates at most 2n limbs of scratch (only for vm1, only when it's non-zero) via alloc
+// and frees it before returning. Returns rb + un + vn (the end of the written result).
 template <std::unsigned_integral LimbT, typename AllocatorT>
 LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
     LimbT* rb,
@@ -112,132 +120,104 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
     const size_t un = u.size();
     const size_t vn = v.size();
 
-    // Split by vn (consistent with future Toom-k where split size = ceil(vn/k)):
-    //   n2   = ceil(vn/2)
-    //   u_lo = u[0..n2),  u_hi = u[n2..un)  -- u_hi may be longer than u_lo
-    //   v_lo = v[0..n2),  v_hi = v[n2..vn)  -- v_hi_n >= 1 always (vn >= threshold >= 2)
-    const size_t n2 = (vn + 1) / 2;
+    // Checked against the fixed floor rather than karatsuba_threshold(): the threshold is a
+    // runtime tunable and may change while this multiplication is in flight.
+    assert(un >= vn && vn >= 2 && 2 * vn > un);
 
-    assert(un >= vn && vn >= NUMETRON_KARATSUBA_THRESHOLD && 2 * vn > un);
+    const size_t s = un / 2;
+    const size_t n = un - s;
 
-    LimbT const* u_lo = u.data();
-    const size_t u_lo_n = n2;
-    LimbT const* u_hi = u.data() + n2;
-    const size_t u_hi_n = un - n2;    // may exceed n2 for mildly rectangular inputs
+    LimbT const* a0 = u.data();
+    LimbT const* a1 = a0 + n;
+    LimbT const* b0 = v.data();
+    LimbT const* b1 = b0 + n;
 
-    LimbT const* v_lo = v.data();
-    const size_t v_lo_n = n2;
-    LimbT const* v_hi = v.data() + n2;
-    const size_t v_hi_n = vn - n2;    // >= 1
+    LimbT* const re = rb + un + vn;
 
-    // d_u = |u_lo - u_hi| needs max(n2, u_hi_n) limbs because u_hi may be longer.
-    const size_t d_buf_n = (std::max)(n2, u_hi_n);
-
-    LimbT* re = rb + un + vn;
-
-    // -----------------------------------------------------------------------
-    // Allocate scratch for this level:
-    //   [0              .. d_buf_n)          d_u    = |u_lo - u_hi|  (d_buf_n limbs)
-    //   [d_buf_n        .. d_buf_n+n2)       d_v    = |v_lo - v_hi|  (n2 limbs)
-    //   [d_buf_n+n2     .. d_buf_n+3*n2)     c0_tmp = u_lo*v_lo copy (2*n2 limbs)
-    //   [d_buf_n+3*n2   .. 2*d_buf_n+4*n2)  c2_tmp = d_u * d_v      (d_buf_n+n2 limbs)
-    // Recursive sub-calls allocate their own scratch independently.
-    // -----------------------------------------------------------------------
-    const size_t scratch_sz = 2 * d_buf_n + 4 * n2;
-    LimbT* scratch = std::allocator_traits<AllocatorT>::allocate(alloc, scratch_sz);
-
-    NUMETRON_SCOPE_EXIT([&alloc, scratch, scratch_sz] {
-        std::allocator_traits<AllocatorT>::deallocate(alloc, scratch, scratch_sz);
+    LimbT* scratch = nullptr;
+    size_t scratch_sz = 0;
+    NUMETRON_SCOPE_EXIT([&] {
+        if (scratch) std::allocator_traits<AllocatorT>::deallocate(alloc, scratch, scratch_sz);
     });
 
-    LimbT* d_u    = scratch;
-    LimbT* d_v    = scratch + d_buf_n;
-    LimbT* c0_tmp = scratch + d_buf_n + n2;
-    LimbT* c2_tmp = scratch + d_buf_n + 3 * n2;
+    if (vn == n) [[unlikely]] {
+        // t == 0 (un odd, vn == ceil(un/2)): v has no high half, so the three-product
+        // identity doesn't apply (vinf would be shorter than the n limbs it's combined over).
+        // u*v = a0*v + a1*v*B^n -- two nearly square products instead.
+        LimbT* e = umul_dispatch(a0, n, b0, n, rb, alloc);
+        std::memset(e, 0, (re - e) * sizeof(LimbT));
 
-    // -----------------------------------------------------------------------
-    // d_u = |u_lo - u_hi|.  Either half may be longer; zero-extend to d_buf_n.
-    // -----------------------------------------------------------------------
-    int sign_u = uabs_diff(u_lo, u_lo_n, u_hi, u_hi_n, d_u, d_u + d_buf_n);
-
-    // -----------------------------------------------------------------------
-    // d_v = |v_lo - v_hi|.  Both halves are n2 / (vn-n2) limbs; zero-extend to n2.
-    // -----------------------------------------------------------------------
-    int sign_v = uabs_diff(v_lo, v_lo_n, v_hi, v_hi_n, d_v, d_v + n2);
-
-    // -----------------------------------------------------------------------
-    // c0 = u_lo * v_lo  ->  written directly to rb[0 .. 2*n2)
-    // c1 = u_hi * v_hi  ->  written to rb[2*n2 .. un+vn)
-    // -----------------------------------------------------------------------
-    {
-        LimbT* cxe = umul_dispatch(u_lo, u_lo_n, v_lo, v_lo_n, rb, alloc);
-        LimbT* c0_end = rb + 2 * n2;
-        std::memset(cxe, 0, (c0_end - cxe) * sizeof(LimbT));
-        cxe = umul_dispatch(u_hi, u_hi_n, v_hi, v_hi_n, c0_end, alloc);
-        std::memset(cxe, 0, (re - cxe) * sizeof(LimbT));
+        scratch_sz = s + n;
+        scratch = std::allocator_traits<AllocatorT>::allocate(alloc, scratch_sz);
+        LimbT* pe = umul_dispatch(a1, s, b0, n, scratch, alloc);
+        if (LimbT c = uadd_inplace(rb + n, scratch, pe))
+            uadd_limb(rb + n + (pe - scratch), re, c);
+        return re;
     }
 
-    // -----------------------------------------------------------------------
-    // c2_abs = d_u * d_v  (non-negative product of absolute differences)
-    // -----------------------------------------------------------------------
-    int sign = sign_u * sign_v;
-    size_t c2_sz = 0;
+    const size_t t = vn - n; // 0 < t <= s
+    const size_t h = s + t - n; // |Hi|, 0 <= h <= n
+
+    // |a0 - a1| and |b0 - b1| go into rb[0..2n), which stays free until v0 is computed last.
+    LimbT* const asm1 = rb;
+    LimbT* const bsm1 = rb + n;
+    const int sign = uabs_diff(a0, n, a1, s, asm1, asm1 + n) * uabs_diff(b0, n, b1, t, bsm1, bsm1 + n);
+
+    LimbT* vm1 = nullptr;
     if (sign) {
-        LimbT* c2e = umul_dispatch(d_u, d_buf_n, d_v, n2, c2_tmp, alloc);
-        while (c2e != c2_tmp && !*(c2e - 1)) { --c2e; }
-        c2_sz = c2e - c2_tmp;
-        //print_limbs(c2_tmp, c2_sz, "c2_abs"sv);
+        scratch_sz = 2 * n;
+        scratch = std::allocator_traits<AllocatorT>::allocate(alloc, scratch_sz);
+        vm1 = scratch;
+        LimbT* e = umul_dispatch(asm1, n, bsm1, n, vm1, alloc);
+        std::memset(e, 0, (vm1 + 2 * n - e) * sizeof(LimbT));
     }
 
-    // -----------------------------------------------------------------------
-    // Accumulate middle term into rb[n2..un+vn).
-    //
-    // Karatsuba identity:  u*v = c0 + (c0 + c1 - sign*c2_abs)*B^n2 + c1*B^(2*n2)
-    //
-    // So we need:  rb[n2..un+vn) += c0 + c1 - sign*c2_abs
-    //   sign > 0  => mid -= c2_abs
-    //   sign < 0  => mid += c2_abs
-    //   sign == 0 => c2_abs term vanishes
-    //
-    // c0 lives in rb[0..2*n2) and mid = rb+n2, so they overlap at rb[n2..2*n2).
-    // We copy c0 into c0_tmp before modifying mid to avoid the overlap.
-    // c1 lives in rb[2*n2..un+vn) = mid[n2..mid_len), so it must be added
-    // before c0 is written into that region.
-    // -----------------------------------------------------------------------
+    // vinf -> rb[2n .. re)
     {
-        const size_t mid_len = (un + vn) - n2;
-        LimbT* mid = rb + n2;
+        LimbT* e = umul_dispatch(a1, s, b1, t, rb + 2 * n, alloc);
+        std::memset(e, 0, (re - e) * sizeof(LimbT));
+    }
+    // v0 -> rb[0 .. 2n), overwriting asm1/bsm1
+    {
+        LimbT* e = umul_dispatch(a0, n, b0, n, rb, alloc);
+        std::memset(e, 0, (rb + 2 * n - e) * sizeof(LimbT));
+    }
 
-        std::memcpy(c0_tmp, rb, 2 * n2 * sizeof(LimbT));
+    // Carries out of the n-limb column windows, applied at the end: cy2 lands at limb 2n,
+    // cy at limb 3n. cy2 is in [0, 2], cy in [-1, 2] (the final product fits, so every
+    // intermediate over/underflow is resolved by these two adjustments).
+    int cy, cy2;
 
-        // mid += c1  (must come first: c1 lives at mid[n2..], which mid += c0 would corrupt)
-        {
-            LimbT* c1 = mid + n2;
-            size_t c1_len = u_hi_n + v_hi_n;
-            assert(c1_len <= mid_len);
-            if (LimbT c = uadd_inplace(mid, c1, c1 + c1_len))
-                uadd_limb(mid + c1_len, re, c);
-            //print_limbs(mid, mid_len, "mid += c1"sv);
-        }
+    // rb[2n..3n) = X = H0 + Li
+    {
+        LimbT const* src = rb + n;
+        LimbT* dst = rb + 2 * n;
+        cy = uadd_partial_unchecked(src, rb + 2 * n, rb + 3 * n, dst);
+    }
+    // rb[n..2n) = X + L0
+    {
+        LimbT const* src = rb + 2 * n;
+        LimbT* dst = rb + n;
+        cy2 = cy + uadd_partial_unchecked(src, rb, rb + n, dst);
+    }
+    // rb[2n..3n) = X + Hi
+    if (h) {
+        LimbT c = uadd_inplace(rb + 2 * n, rb + 3 * n, rb + 3 * n + h);
+        if (c && h < n) c = uadd_limb(rb + 2 * n + h, rb + 3 * n, c);
+        cy += static_cast<int>(c);
+    }
+    // rb[n..3n) -/+= vm1
+    if (sign > 0) {
+        cy -= static_cast<int>(usub_inplace(rb + n, vm1, vm1 + 2 * n));
+    } else if (sign < 0) {
+        cy += static_cast<int>(uadd_inplace(rb + n, vm1, vm1 + 2 * n));
+    }
 
-        // mid += c0
-        {
-            LimbT c = uadd_inplace(mid, c0_tmp, c0_tmp + (std::min)(2 * n2, mid_len));
-            if (c && 2 * n2 < mid_len)
-                uadd_limb(mid + 2 * n2, re, c);
-            //print_limbs(mid, mid_len, "mid += c1 + c0"sv);
-        }
-
-        // mid -= or += c2_abs
-        if (sign > 0 && c2_sz) {
-            LimbT b = usub_inplace(mid, c2_tmp, c2_tmp + (std::min)(c2_sz, mid_len));
-            if (b && c2_sz < mid_len)
-                usub_limb(mid + c2_sz, re, b);
-        } else if (sign < 0 && c2_sz) {
-            LimbT c = uadd_inplace(mid, c2_tmp, c2_tmp + (std::min)(c2_sz, mid_len));
-            if (c && c2_sz < mid_len)
-                uadd_limb(mid + c2_sz, re, c);
-        }
+    uadd_limb(rb + 2 * n, re, static_cast<LimbT>(cy2));
+    if (cy > 0) {
+        uadd_limb(rb + 3 * n, re, static_cast<LimbT>(cy));
+    } else if (cy < 0) {
+        usub_limb(rb + 3 * n, re, LimbT{ 1 });
     }
 
     return re;
@@ -246,12 +226,13 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
 } // namespace detail
 
 // Karatsuba unsigned multiplication (Toom-2).
-// Preconditions: un >= vn, vn >= NUMETRON_KARATSUBA_THRESHOLD, un < 2*vn
-// Allocates result buffer via alloc; scratch is allocated internally per recursion level.
+// Preconditions: un >= vn >= 2, un < 2*vn
+// Allocates the result buffer via alloc; all scratch of the recursion comes from scratch_alloc,
+// which must serve allocations in LIFO order (see umul() for the one place it is chosen).
 // Returns {ptr, size, capacity}.
-template <std::unsigned_integral LimbT, typename AllocatorT>
+template <std::unsigned_integral LimbT, typename AllocatorT, typename ScratchAllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
-inline std::tuple<LimbT*, size_t, size_t> umul_karatsuba(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
+inline std::tuple<LimbT*, size_t, size_t> umul_karatsuba(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc, ScratchAllocatorT scratch_alloc)
 {
     const size_t un = u.size();
     const size_t vn = v.size();
@@ -261,8 +242,7 @@ inline std::tuple<LimbT*, size_t, size_t> umul_karatsuba(std::span<const LimbT> 
     const size_t alloc_sz = un + vn;
     LimbT* rb = std::allocator_traits<AllocatorT>::allocate(alloc, alloc_sz);
     try {
-        LimbT* re = detail::umul_karatsuba_impl(u, v, rb, numetron::detail::stack_allocator<LimbT>{});
-        //LimbT* re = detail::umul_karatsuba_impl(u, v, rb, std::allocator<LimbT>{});
+        LimbT* re = detail::umul_karatsuba_impl(u, v, rb, scratch_alloc);
         while (re != rb && *(re - 1) == 0) --re;
         return { rb, static_cast<size_t>(re - rb), alloc_sz };
     }

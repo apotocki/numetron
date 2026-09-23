@@ -431,10 +431,8 @@ inline void uxor(std::span<const LimbT> u, std::span<const LimbT> v, std::span<L
 template <std::unsigned_integral LimbT>
 LimbT uadd_partial_unchecked(LimbT *& ub, LimbT const* vb, LimbT const* ve) noexcept
 {
-    LimbT c = 0;
-    for (; vb != ve; ++ub, ++vb) {
-        *ub = numetron::arithmetic::uadd1c(*ub, *vb, c);
-    }
+    LimbT c = uadd_inplace(ub, vb, ve);
+    ub += ve - vb;
     return c;
 }
 
@@ -499,26 +497,27 @@ LimbT usub(std::span<const LimbT> u, std::span<const LimbT> v, std::span<LimbT> 
     LimbT const* ub = u.data(), * ue = ub + u.size();
     LimbT const* vb = v.data(), * ve = vb + v.size();
     LimbT* rb = r.data(); // , * re = rb + r.size();
-    LimbT c = 0;
-    for (;; ++ub, ++vb, ++rb) {
-        if (ub != ue) {
-            if (vb != ve) {
-                std::tie(c , *rb) = numetron::arithmetic::usub1c(*ub, *vb, c);
-                continue;
-            } else if (c) {
-                do {
-                    std::tie(c, *rb) = numetron::arithmetic::usub1(*ub, c);
-                    if (!c) break;
-                    ++ub; ++rb;
-                } while (ub != ue);
-            }
-        } else {
-            for (; vb != ve; ++vb, ++rb) {
-                std::tie(c, *rb) = numetron::arithmetic::usub1c(LimbT{0}, *vb, c);
-            }
+
+    // Common prefix through the unrolled kernel; the tails keep the original semantics: past the
+    // end of v only the borrow is propagated and the rest of u is not copied into r (so when u
+    // is longer than v, r must alias u), past the end of u the remaining v is subtracted from zero.
+    const size_t common = (std::min)(u.size(), v.size());
+    LimbT c = usub_partial_unchecked(ub, vb, vb + common, rb);
+    vb += common;
+    if (ub != ue) {
+        if (c) {
+            do {
+                std::tie(c, *rb) = numetron::arithmetic::usub1(*ub, c);
+                if (!c) break;
+                ++ub; ++rb;
+            } while (ub != ue);
         }
-        return c;
+    } else {
+        for (; vb != ve; ++vb, ++rb) {
+            std::tie(c, *rb) = numetron::arithmetic::usub1c(LimbT{0}, *vb, c);
+        }
     }
+    return c;
 }
 
 template <std::unsigned_integral LimbT, typename AllocatorT>

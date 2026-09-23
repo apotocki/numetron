@@ -48,6 +48,9 @@
     <MASM Include="..\src\arch\x86_64\detect_platform.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
+    <MASM Include="..\src\arch\x86_64\add_sub_n.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
     <MASM Include="..\src\arch\x86_64\detect_mul_basecase.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
@@ -66,6 +69,9 @@
       <Filter>asm\x86_64\k8</Filter>
     </None>
     <None Include="..\src\arch\x86_64\detect_platform.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\add_sub_n.s">
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\detect_mul_basecase.s">
@@ -157,6 +163,9 @@
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\platform.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\mul_tuning.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\usub.hpp">

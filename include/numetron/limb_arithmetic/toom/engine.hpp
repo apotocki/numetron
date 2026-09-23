@@ -37,9 +37,9 @@ struct stage_memory_state
 {
     LimbT* slab = nullptr;
     toom_slot<LimbT>* slots = nullptr;
-    size_t slab_len:16 = 0;
-    size_t slab_alloc_len:16 = 0;
-    size_t slab_owned:1 = 0;
+    size_t slab_len = 0;
+    size_t slab_alloc_len = 0;
+    bool slab_owned = false;
 };
 
 template <auto LayoutV, toom_mem_kind KindV>
@@ -420,10 +420,13 @@ struct toom_engine
     static_assert(N > 1, "toom_engine requires N > 1");
     static_assert(M > 1, "toom_engine requires M > 1");
 
-    template <std::unsigned_integral LimbT, typename AllocatorT>
+    // Allocates the result buffer via alloc; all scratch of the recursion comes from
+    // scratch_alloc, which must serve allocations in LIFO order (see umul() in umul.hpp for the
+    // one place it is chosen).
+    template <std::unsigned_integral LimbT, typename AllocatorT, typename ScratchAllocatorT>
     requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
     static std::tuple<LimbT*, size_t, size_t>
-    umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
+    umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc, ScratchAllocatorT scratch_alloc)
     {
         using namespace toom_runtime_detail;
         
@@ -441,7 +444,7 @@ struct toom_engine
             NUMETRON_ASSERT(chunk > 0);
 
             std::memset(rb, 0, alloc_sz * sizeof(LimbT));
-            run_toom_stage<LimbT, N, M>(u, v, rb, alloc_sz, chunk, alloc,
+            run_toom_stage<LimbT, N, M>(u, v, rb, alloc_sz, chunk, scratch_alloc,
                 std::make_index_sequence<toom_stage_traits<N, M>::plan.size()>{});
             re = rb + alloc_sz;
 

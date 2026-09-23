@@ -18,6 +18,7 @@
 #include "gmp.h"
 
 #include "numetron/basic_integer.hpp"
+#include "numetron/limb_arithmetic/mul_tuning.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -252,14 +253,90 @@ void run_tier(std::string const& limbs_label, std::string const& bits_label, std
                << "\n";
 }
 
+template <typename OpT>
+double best_ns_per_limb(size_t n, OpT&& op)
+{
+    const size_t reps = (std::max)(size_t{ 1 }, size_t{ 20'000'000 } / n);
+    double best = std::numeric_limits<double>::infinity();
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        auto start = clock_type::now();
+        for (size_t r = 0; r < reps; ++r) op();
+        auto finish = clock_type::now();
+        best = std::min(best, std::chrono::duration<double, std::nano>(finish - start).count() / (double(reps) * double(n)));
+    }
+    return best;
+}
+
+// --add: Numetron's in-place limb add/sub against GMP's mpn_add_n/mpn_sub_n (same in-place
+// form, rp == s1p), per limb -- isolates the linear primitives Karatsuba/Toom interpolation
+// is built from.
+void run_add_bench()
+{
+    static constexpr size_t sizes[] = { 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
+    std::mt19937_64 rng{ 0xADD5EEDULL };
+
+    std::cout << "In-place add/sub, ns per limb (best of 5)\n\n"
+              << std::right
+              << std::setw(8) << "limbs"
+              << std::setw(14) << "uadd_inplace" << std::setw(12) << "mpn_add_n" << std::setw(10) << "ratio"
+              << std::setw(14) << "usub_inplace" << std::setw(12) << "mpn_sub_n" << std::setw(10) << "ratio"
+              << "\n";
+
+    for (size_t n : sizes) {
+        std::vector<std::uint64_t> u(n), v(n);
+        for (auto& x : u) x = rng();
+        for (auto& x : v) x = rng();
+        std::vector<mp_limb_t> gu(u.begin(), u.end()), gv(v.begin(), v.end());
+        const auto gn = static_cast<mp_size_t>(n);
+
+        double add = best_ns_per_limb(n, [&] { g_sink ^= numetron::limb_arithmetic::uadd_inplace(u.data(), v.data(), v.data() + n); });
+        double gadd = best_ns_per_limb(n, [&] { g_sink ^= mpn_add_n(gu.data(), gu.data(), gv.data(), gn); });
+        double sub = best_ns_per_limb(n, [&] { g_sink ^= numetron::limb_arithmetic::usub_inplace(u.data(), v.data(), v.data() + n); });
+        double gsub = best_ns_per_limb(n, [&] { g_sink ^= mpn_sub_n(gu.data(), gu.data(), gv.data(), gn); });
+
+        std::cout << std::setw(8) << n << std::fixed << std::setprecision(3)
+                  << std::setw(14) << add << std::setw(12) << gadd << std::setw(10) << std::setprecision(2) << (add / gadd)
+                  << std::setw(14) << std::setprecision(3) << sub << std::setw(12) << gsub << std::setw(10) << std::setprecision(2) << (sub / gsub)
+                  << "\n";
+    }
+    std::cout << "\nratio: numetron / gmp (lower is better, 1.00 = parity)\n"
+              << "(sink: " << g_sink << ")\n";
+}
+
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string{ argv[i] } == "--add") {
+            run_add_bench();
+            return 0;
+        }
+    }
+
     static constexpr size_t limb_counts[] = {
         1, 2, 4, 8, 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096
     };
     static constexpr size_t samples_per_tier = 6;
+
+    // --tune[=N]: retune the multiplication thresholds on this machine before benchmarking,
+    // taking the best of N samples per probe (default: mul_tuning_options' default).
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.rfind("--tune", 0) != 0) continue;
+        numetron::limb_arithmetic::mul_tuning_options opts;
+        if (auto eq = arg.find('='); eq != std::string::npos) {
+            opts.samples = static_cast<unsigned>(std::stoul(arg.substr(eq + 1)));
+        }
+        auto before_k = numetron::limb_arithmetic::karatsuba_threshold();
+        auto before_t = numetron::limb_arithmetic::toom3_threshold();
+        auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
+        std::cout << "tuned thresholds (limbs):\n"
+                  << "  karatsuba: " << before_k << " -> " << tuned.karatsuba_threshold
+                  << (tuned.karatsuba_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom3:     " << before_t << " -> " << tuned.toom3_threshold
+                  << (tuned.toom3_found ? "" : " (no crossover found, kept)") << "\n\n";
+    }
 
     std::mt19937_64 rng{ 0x5EED1234ULL };
 

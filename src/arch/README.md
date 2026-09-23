@@ -12,7 +12,9 @@ Some assembly files in subdirectories are taken from the GMP (GNU Multiple Preci
 **License**: All GMP-derived assembly files are licensed under **LGPL** (GNU Lesser General Public License).
 
 ### Project Files
-All other source files in this directory are part of the Numetron project.
+All other source files in this directory are part of the Numetron project, e.g.
+`x86_64/detect_platform.*`, `x86_64/detect_mul_basecase.*` and `x86_64/add_sub_n.*`
+(written for Numetron, not derived from GMP).
 
 **License**: **MIT License**
 

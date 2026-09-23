@@ -45,6 +45,12 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
     </MASM>
+    <MASM Include="..\src\arch\x86_64\add_sub_n.asm">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </MASM>
     <MASM Include="..\src\arch\x86_64\detect_platform.asm">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
@@ -71,6 +77,7 @@
     <None Include="..\src\arch\x86_64\k8\mul_basecase.s" />
     <None Include="..\src\arch\x86_64\detect_mul_basecase.s" />
     <None Include="..\src\arch\x86_64\detect_platform.s" />
+    <None Include="..\src\arch\x86_64\add_sub_n.s" />
     <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
   <ItemGroup>
@@ -96,6 +103,7 @@
     <ClInclude Include="..\include\numetron\limbs_from_string.hpp" />
     <ClInclude Include="..\include\numetron\limbs_to_string.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\mul_tuning.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\platform.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\core.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\engine.hpp" />

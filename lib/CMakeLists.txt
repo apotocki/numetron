@@ -26,6 +26,7 @@ else()
             ${LIBRARY_HOME}/src/arch/x86_64/core2/mul_basecase.s
             ${LIBRARY_HOME}/src/arch/x86_64/detect_platform.s
             ${LIBRARY_HOME}/src/arch/x86_64/detect_mul_basecase.s
+            ${LIBRARY_HOME}/src/arch/x86_64/add_sub_n.s
         )
     elseif (_numetron_proc MATCHES "^(arm|arm64|aarch64)$")
         #message(STATUS "Numetron: ARM assembly not available yet; building without ASM sources.")

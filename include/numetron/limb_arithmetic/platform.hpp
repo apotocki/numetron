@@ -4,7 +4,33 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
+// For the thin layers in front of the limb add/sub kernels: a short run is only a handful of
+// instructions, so a call that the compiler declined to inline would cost as much as the work.
+#ifndef NUMETRON_FORCEINLINE
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_FORCEINLINE __forceinline
+#   else
+#       define NUMETRON_FORCEINLINE inline __attribute__((always_inline))
+#   endif
+#endif
+
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
+
+// src/arch/x86_64/add_sub_n.{asm,s}: r[0..n) = u[0..n) +/- v[0..n), returning the carry/borrow
+// out. One generic x86-64 implementation (no per-CPU variants, so no dispatch through platform
+// detection). rp may coincide with up or vp, or trail them.
+extern "C" uint64_t numetron_add_n(uint64_t* rp, const uint64_t* up, const uint64_t* vp, size_t n) noexcept;
+extern "C" uint64_t numetron_sub_n(uint64_t* rp, const uint64_t* up, const uint64_t* vp, size_t n) noexcept;
+
+namespace numetron::limb_arithmetic::detail {
+// Below this length the inline C++ loop wins: the call itself costs about as much as the few
+// limbs it would process (measured with numetron_bench_mul --add against GMP's mpn_add_n,
+// which is also an out-of-line call: parity at 4 limbs, the call ahead from 8).
+inline constexpr size_t asm_add_sub_n_min_limbs = 8;
+}
 
 #if defined(NUMETRON_PLATFORM_AUTODETECT)
 typedef void (*detect_mul_basecase_type)(uint64_t*, const uint64_t*, size_t, const uint64_t*, size_t);

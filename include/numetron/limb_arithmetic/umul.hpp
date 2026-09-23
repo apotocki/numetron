@@ -7,6 +7,7 @@
 #include "umul_basecase.hpp"
 #include "toom/engine.hpp"
 #include "toom/thresholds.hpp"
+#include "numetron/detail/stack_allocator.hpp"
 
 #ifdef NUMETRON_EXPLICIT_KARATSUBA
 #   include "umul_karatsuba.hpp"
@@ -20,13 +21,13 @@ inline bool is_karatsuba_applicable(size_t un, size_t vn) noexcept
     // Condition is expressed in terms of vn so that Toom-k dispatch is uniform:
     // each algorithm checks vn >= its threshold and un < k*vn (u fits in k pieces).
     // For Karatsuba (k=2): vn >= threshold and un < 2*vn.
-    return vn >= NUMETRON_KARATSUBA_THRESHOLD && 2 * vn > un;
+    return vn >= karatsuba_threshold() && 2 * vn > un;
 }
 
 inline bool is_toom3_applicable(size_t un, size_t vn) noexcept
 {
     assert(un >= vn);
-    return vn >= NUMETRON_TOOM3_THRESHOLD && 3 * vn > un;
+    return vn >= toom3_threshold() && 3 * vn > un;
 }
 
 template <std::unsigned_integral LimbT, typename AllocatorT>
@@ -69,15 +70,22 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
     }
 
     //if (v.size() >= NUMETRON_KARATSUBA_THRESHOLD) {
-        if (is_toom3_applicable(u.size(), v.size())) {
-            return toom_engine<3, 3>::umul(u, v, std::move(alloc));
-        }
-
-        if (is_karatsuba_applicable(u.size(), v.size())) {
+        const bool toom3 = is_toom3_applicable(u.size(), v.size());
+        if (toom3 || is_karatsuba_applicable(u.size(), v.size())) {
+            // The one place scratch memory is chosen for a whole recursive multiplication: only
+            // the result comes from the caller's allocator (it outlives this call), everything
+            // below -- Toom slabs, Karatsuba temporaries, all nested levels -- from the
+            // thread-local stack allocator, which is served LIFO and keeps its blocks for reuse
+            // instead of going to the heap per recursion node. Created here rather than up front
+            // so the basecase path doesn't pay for the thread_local lookup.
+            numetron::detail::stack_allocator<LimbT> scratch_alloc;
+            if (toom3) {
+                return toom_engine<3, 3>::umul(u, v, std::move(alloc), scratch_alloc);
+            }
     #ifndef NUMETRON_EXPLICIT_KARATSUBA
-            return toom_engine<2, 2>::umul(u, v, std::move(alloc));
+            return toom_engine<2, 2>::umul(u, v, std::move(alloc), scratch_alloc);
     #else
-            return umul_karatsuba(u, v, std::move(alloc));
+            return umul_karatsuba(u, v, std::move(alloc), scratch_alloc);
     #endif
         }
     //}
