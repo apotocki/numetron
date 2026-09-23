@@ -84,6 +84,35 @@ inline int cmp_n(LimbT const* a, LimbT const* b, size_t n) noexcept
     return 0;
 }
 
+// (l << K) | (prev >> (limb bits - K)), 0 < K < limb bits: limb l of a source shifted left by K,
+// prev being the source limb below it. A double-width shift: MSVC is given shld through the
+// intrinsic (its own code for the expression -- shl, shr, or and a copy -- measured slower);
+// GCC does better with the plain expression than with an __int128 shift, so it gets that.
+template <std::unsigned_integral LimbT, unsigned K>
+NUMETRON_FORCEINLINE LimbT shl_pair(LimbT prev, LimbT l) noexcept
+{
+    constexpr unsigned bits = std::numeric_limits<LimbT>::digits;
+    static_assert(K > 0 && K < bits);
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
+    if constexpr (bits == 64) return __shiftleft128(prev, l, static_cast<unsigned char>(K));
+    else
+#endif
+    return static_cast<LimbT>((l << K) | (prev >> (bits - K)));
+}
+
+// (lo >> K) | (hi << (limb bits - K)), 0 < K < limb bits: shrd, see shl_pair().
+template <std::unsigned_integral LimbT, unsigned K>
+NUMETRON_FORCEINLINE LimbT shr_pair(LimbT lo, LimbT hi) noexcept
+{
+    constexpr unsigned bits = std::numeric_limits<LimbT>::digits;
+    static_assert(K > 0 && K < bits);
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
+    if constexpr (bits == 64) return __shiftright128(lo, hi, static_cast<unsigned char>(K));
+    else
+#endif
+    return static_cast<LimbT>((lo >> K) | (hi << (bits - K)));
+}
+
 // r[0..n) = a[0..n) << 1, returns the bit shifted out at the top. n > 0.
 template <std::unsigned_integral LimbT>
 inline LimbT lshift1(LimbT* r, LimbT const* a, size_t n) noexcept
@@ -91,7 +120,7 @@ inline LimbT lshift1(LimbT* r, LimbT const* a, size_t n) noexcept
     constexpr int top = std::numeric_limits<LimbT>::digits - 1;
     const LimbT out = a[n - 1] >> top;
     for (size_t i = n - 1; i > 0; --i) { // high to low, so r == a works
-        r[i] = (a[i] << 1) | (a[i - 1] >> top);
+        r[i] = shl_pair<LimbT, 1>(a[i - 1], a[i]);
     }
     r[0] = a[0] << 1;
     return out;
@@ -101,10 +130,9 @@ inline LimbT lshift1(LimbT* r, LimbT const* a, size_t n) noexcept
 template <std::unsigned_integral LimbT>
 inline LimbT rshift1(LimbT* r, LimbT const* a, size_t n) noexcept
 {
-    constexpr int top = std::numeric_limits<LimbT>::digits - 1;
     const LimbT out = a[0] & 1;
     for (size_t i = 0; i + 1 < n; ++i) { // low to high, so r == a works
-        r[i] = (a[i] >> 1) | (a[i + 1] << top);
+        r[i] = shr_pair<LimbT, 1>(a[i], a[i + 1]);
     }
     r[n - 1] = a[n - 1] >> 1;
     return out;
@@ -208,10 +236,11 @@ inline void divexact_by(LimbT* r, LimbT const* a, size_t n) noexcept
     LimbT h = 0;
     for (size_t i = 0; i < n; ++i) {
         auto [p1, p0] = arithmetic::umul1(a[i], m);
-        const LimbT borrow = h < p0;
-        h -= p0;
-        r[i] = h;
-        h = h - p1 - borrow;
+        // h - p0, then minus p1 and that borrow: sub + sbb, the only dependent steps per limb
+        unsigned char br = 0;
+        const LimbT q = sbb1(h, p0, br);
+        r[i] = q;
+        h = sbb1(q, p1, br);
     }
 }
 
@@ -252,15 +281,15 @@ struct lincomb_src
 
 namespace lincomb_detail {
 
-// src limb << K with the bits shifted out of the previous limb in hi.
+// src limb << K (see shl_pair()); prev holds the previous limb of that source (0 before the first one).
 template <std::unsigned_integral LimbT, unsigned K>
-NUMETRON_FORCEINLINE LimbT shifted(LimbT l, LimbT& hi) noexcept
+NUMETRON_FORCEINLINE LimbT shifted(LimbT l, LimbT& prev) noexcept
 {
     if constexpr (K == 0) {
         return l;
     } else {
-        const LimbT t = (l << K) | hi;
-        hi = l >> (std::numeric_limits<LimbT>::digits - K);
+        const LimbT t = shl_pair<LimbT, K>(prev, l);
+        prev = l;
         return t;
     }
 }
@@ -285,6 +314,7 @@ struct lincomb_state
     static constexpr LimbT dm = D > 1 ? (std::numeric_limits<LimbT>::max)() / D : LimbT{ 0 };
 
     LimbT* rp;
+    // previous source limb of each shifted term (see shifted())
     LimbT hi0 = 0, hi1 = 0, hi2 = 0, hi3 = 0;
     unsigned char c1 = 0, c2 = 0, c3 = 0;
     LimbT pending = 0; // R > 0: the previous sum limb, waiting for the low bits of the next one
@@ -304,13 +334,26 @@ struct lincomb_state
     // steps of the term's carry chain, so the compiler can keep the carry in the flags across
     // them instead of saving and restoring it per limb (which interleaving the terms limb by limb
     // forces, the chains being separate).
-    template <unsigned K, bool Neg>
-    NUMETRON_FORCEINLINE void apply4(LimbT const* q, LimbT& hi, unsigned char& c, LimbT& x0, LimbT& x1, LimbT& x2, LimbT& x3) noexcept
+    template <unsigned K>
+    NUMETRON_FORCEINLINE static void shifted4(LimbT const* q, LimbT& prev, LimbT& t0, LimbT& t1, LimbT& t2, LimbT& t3) noexcept
     {
-        const LimbT t0 = shifted<LimbT, K>(q[0], hi);
-        const LimbT t1 = shifted<LimbT, K>(q[1], hi);
-        const LimbT t2 = shifted<LimbT, K>(q[2], hi);
-        const LimbT t3 = shifted<LimbT, K>(q[3], hi);
+        const LimbT l0 = q[0], l1 = q[1], l2 = q[2], l3 = q[3];
+        if constexpr (K == 0) {
+            t0 = l0; t1 = l1; t2 = l2; t3 = l3;
+        } else {
+            t0 = shl_pair<LimbT, K>(prev, l0);
+            t1 = shl_pair<LimbT, K>(l0, l1);
+            t2 = shl_pair<LimbT, K>(l1, l2);
+            t3 = shl_pair<LimbT, K>(l2, l3);
+            prev = l3;
+        }
+    }
+
+    template <unsigned K, bool Neg>
+    NUMETRON_FORCEINLINE void apply4(LimbT const* q, LimbT& prev, unsigned char& c, LimbT& x0, LimbT& x1, LimbT& x2, LimbT& x3) noexcept
+    {
+        LimbT t0, t1, t2, t3;
+        shifted4<K>(q, prev, t0, t1, t2, t3);
         x0 = accumulate<LimbT, Neg>(x0, t0, c);
         x1 = accumulate<LimbT, Neg>(x1, t1, c);
         x2 = accumulate<LimbT, Neg>(x2, t2, c);
@@ -321,10 +364,7 @@ struct lincomb_state
     NUMETRON_FORCEINLINE void combine4(LimbT const* q0, [[maybe_unused]] LimbT const* q1, [[maybe_unused]] LimbT const* q2, [[maybe_unused]] LimbT const* q3,
         LimbT& x0, LimbT& x1, LimbT& x2, LimbT& x3) noexcept
     {
-        x0 = shifted<LimbT, Desc.shift[0]>(q0[0], hi0);
-        x1 = shifted<LimbT, Desc.shift[0]>(q0[1], hi0);
-        x2 = shifted<LimbT, Desc.shift[0]>(q0[2], hi0);
-        x3 = shifted<LimbT, Desc.shift[0]>(q0[3], hi0);
+        shifted4<Desc.shift[0]>(q0, hi0, x0, x1, x2, x3);
         if constexpr (N > 1) apply4<Desc.shift[1], Desc.neg[1]>(q1, hi1, c1, x0, x1, x2, x3);
         if constexpr (N > 2) apply4<Desc.shift[2], Desc.neg[2]>(q2, hi2, c2, x0, x1, x2, x3);
         if constexpr (N > 3) apply4<Desc.shift[3], Desc.neg[3]>(q3, hi3, c3, x0, x1, x2, x3);
@@ -335,11 +375,12 @@ struct lincomb_state
         if constexpr (D == 1) {
             *rp++ = y;
         } else {
+            // see divexact_by(): sub, then sbb on the borrow -- two dependent instructions per limb
             auto [p1, p0] = arithmetic::umul1(y, dm);
-            const LimbT borrow = h < p0;
-            h -= p0;
-            *rp++ = h;
-            h = h - p1 - borrow;
+            unsigned char br = 0;
+            const LimbT q = sbb1(h, p0, br);
+            *rp++ = q;
+            h = sbb1(q, p1, br);
         }
     }
 
@@ -349,7 +390,7 @@ struct lincomb_state
         if constexpr (R == 0) {
             out(x);
         } else {
-            out((pending >> R) | (x << (bits - R)));
+            out(shr_pair<LimbT, R>(pending, x));
             pending = x;
         }
     }
