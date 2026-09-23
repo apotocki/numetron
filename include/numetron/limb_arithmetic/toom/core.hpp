@@ -150,6 +150,7 @@ struct toom_term
     bool neg = false;
     bool slot_sign = false;
     unsigned char shift = 0;
+    bool tc = false;
 };
 
 // + (src << k)
@@ -171,12 +172,25 @@ struct toom_term
     return toom_term{ src, true, true, static_cast<unsigned char>(k) };
 }
 
-// dst <- ((t0 + t1 + ...) >> rshift) / div, see toom_op::lincomb. The first term must be added.
+// + (src << k) / - (src << k), src holding a two's complement value (one a lincomb_tc() wrote):
+// it is sign-extended rather than zero-extended.
+[[nodiscard]] constexpr toom_term lc_add_tc(toom_ref src, unsigned k = 0)
+{
+    return toom_term{ src, false, false, static_cast<unsigned char>(k), true };
+}
+
+[[nodiscard]] constexpr toom_term lc_sub_tc(toom_ref src, unsigned k = 0)
+{
+    return toom_term{ src, true, false, static_cast<unsigned char>(k), true };
+}
+
+// dst <- ((t0 + t1 + ...) >> rshift) / div, see toom_op::lincomb. The first term must be added;
+// div must be odd (a power of two goes into rshift). The result must be non-negative.
 [[nodiscard]] constexpr toom_instr lincomb(toom_ref dst, std::initializer_list<toom_term> terms, unsigned rshift = 0, unsigned div = 1)
 {
     if (terms.size() < 1 || terms.size() > lincomb_desc::max_terms) throw "lincomb: 1 to 4 terms";
     if (terms.begin()->neg) throw "lincomb: the first term must be added";
-    if (div < 1 || div > 0xFFFF) throw "lincomb: bad divisor";
+    if (div < 1 || div > 0xFFFF || div % 2 == 0) throw "lincomb: the divisor must be odd and below 2^16";
     toom_instr in{ toom_op::lincomb, dst };
     in.lc.count = static_cast<unsigned char>(terms.size());
     in.lc.rshift = static_cast<unsigned char>(rshift);
@@ -188,8 +202,18 @@ struct toom_term
         in.lc.neg[j] = t.neg;
         in.lc.slot_sign[j] = t.slot_sign;
         in.lc.shift[j] = t.shift;
+        in.lc.tc[j] = t.tc;
         ++j;
     }
+    return in;
+}
+
+// lincomb() whose result may be negative: dst gets it in two's complement over its width (read
+// it back with lc_add_tc() / lc_sub_tc()).
+[[nodiscard]] constexpr toom_instr lincomb_tc(toom_ref dst, std::initializer_list<toom_term> terms, unsigned rshift = 0, unsigned div = 1)
+{
+    toom_instr in = lincomb(dst, terms, rshift, div);
+    in.lc.tc_result = true;
     return in;
 }
 

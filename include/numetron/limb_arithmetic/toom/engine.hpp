@@ -20,6 +20,7 @@
 #include "toom_2x2.hpp"
 #include "toom_3x3.hpp"
 #include "toom_4x4.hpp"
+#include "toom_6x6.hpp"
 
 #include "numetron/limb_arithmetic/toom/slot.hpp"
 
@@ -639,5 +640,8 @@ using toom3_balanced_engine = toom_engine_t<toom_runtime_detail::toom3_balanced_
 
 // Balanced Toom-4 plan (toom_4x4.hpp), for operands detail::toom4_split_fits() accepts.
 using toom4_balanced_engine = toom_engine_t<toom_runtime_detail::toom4_balanced_traits>;
+
+// Balanced Toom-6.5 plan (toom_6x6.hpp), for operands detail::toom6h_split_fits() accepts.
+using toom6h_balanced_engine = toom_engine_t<toom_runtime_detail::toom6h_balanced_traits>;
 
 } // namespace numetron::limb_arithmetic

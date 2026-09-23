@@ -207,6 +207,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x4.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_6x6.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\thresholds.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>

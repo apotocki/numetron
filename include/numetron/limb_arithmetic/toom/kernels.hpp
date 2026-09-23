@@ -265,9 +265,17 @@ struct lincomb_desc
     // Toom engine only: term j is additionally negated when its slot holds a negative value
     // (resolved to neg[] before lincomb() is instantiated)
     bool slot_sign[max_terms] = {};
-    // the sum is shifted right by rshift bits (the bits shifted out must be zero)
+    // source j is a two's complement number: sign-extended, not zero-extended, above its limbs
+    bool tc[max_terms] = {};
+    // the result may be negative and is written in two's complement (w limbs); otherwise it
+    // must be non-negative (checked in debug builds)
+    bool tc_result = false;
+    // the sum is shifted right by rshift bits (the bits shifted out must be zero; arithmetic
+    // shift for a two's complement sum)
     unsigned char rshift = 0;
-    // and then divided exactly by div: 1, or a divisor of B - 1 (see divexact_by())
+    // and then divided exactly by div, any odd number: a divisor of B - 1, or a product of two
+    // such, runs as one or two divexact_by() stages; anything else (e.g. 7, 189) as a Hensel
+    // division by the inverse of div modulo B, which is slower (a multiply latency per limb)
     unsigned short div = 1;
 };
 
@@ -275,11 +283,42 @@ template <std::unsigned_integral LimbT>
 struct lincomb_src
 {
     LimbT const* ptr;
-    // limbs of the source; it is zero-extended above them. n <= the result width.
+    // limbs of the source; it is zero- (or, for a tc term, sign-) extended above them. n <= the
+    // result width.
     size_t n;
 };
 
 namespace lincomb_detail {
+
+// How lincomb() divides by an odd D: up to two stages dividing by divisors of B - 1 (a, b) and
+// a Hensel stage for whatever doesn't factor that way (g). 1 = stage not used.
+struct div_stages
+{
+    unsigned a = 1, b = 1, g = 1;
+};
+
+template <std::unsigned_integral LimbT>
+consteval div_stages plan_div(unsigned d)
+{
+    constexpr LimbT mx = (std::numeric_limits<LimbT>::max)();
+    if (d == 1) return {};
+    if (d % 2 == 0) throw "lincomb: div must be odd (powers of two go into rshift)";
+    if (mx % d == 0) return { d, 1, 1 };
+    for (unsigned x = 3; x * x <= d; x += 2) {
+        if (d % x == 0 && mx % x == 0 && mx % (d / x) == 0) return { x, d / x, 1 };
+    }
+    return { 1, 1, d };
+}
+
+// d^-1 mod B for odd d (Newton: each step doubles the correct low bits).
+template <std::unsigned_integral LimbT>
+consteval LimbT binvert(LimbT d)
+{
+    LimbT inv = d; // correct to 3 bits: d*d = 1 mod 8
+    for (int i = 0; i < 6; ++i) inv = static_cast<LimbT>(inv * static_cast<LimbT>(LimbT{ 2 } - static_cast<LimbT>(d * inv)));
+    if (static_cast<LimbT>(d * inv) != 1) throw "binvert: failed";
+    return inv;
+}
 
 // src limb << K (see shl_pair()); prev holds the previous limb of that source (0 before the first one).
 template <std::unsigned_integral LimbT, unsigned K>
@@ -310,15 +349,42 @@ struct lincomb_state
     static constexpr unsigned N = Desc.count;
     static constexpr unsigned bits = std::numeric_limits<LimbT>::digits;
     static constexpr unsigned R = Desc.rshift;
-    static constexpr unsigned D = Desc.div;
-    static constexpr LimbT dm = D > 1 ? (std::numeric_limits<LimbT>::max)() / D : LimbT{ 0 };
+    static constexpr div_stages DS = plan_div<LimbT>(Desc.div);
+    static constexpr LimbT dma = DS.a > 1 ? (std::numeric_limits<LimbT>::max)() / DS.a : LimbT{ 0 };
+    static constexpr LimbT dmb = DS.b > 1 ? (std::numeric_limits<LimbT>::max)() / DS.b : LimbT{ 0 };
+    static constexpr LimbT ginv = DS.g > 1 ? binvert<LimbT>(static_cast<LimbT>(DS.g)) : LimbT{ 1 };
 
     LimbT* rp;
     // previous source limb of each shifted term (see shifted())
     LimbT hi0 = 0, hi1 = 0, hi2 = 0, hi3 = 0;
     unsigned char c1 = 0, c2 = 0, c3 = 0;
     LimbT pending = 0; // R > 0: the previous sum limb, waiting for the low bits of the next one
-    LimbT h = 0;       // D > 1: divexact_by() state
+    LimbT ha = 0, hb = 0; // divexact_by() states of the division stages a and b
+    LimbT gb = 0;         // Hensel stage: borrow into the next limb
+
+    // One divexact_by() step (see there): sub, then sbb on the borrow.
+    template <LimbT M>
+    NUMETRON_FORCEINLINE static LimbT dbm1_step(LimbT y, LimbT& h) noexcept
+    {
+        auto [p1, p0] = arithmetic::umul1(y, M);
+        unsigned char br = 0;
+        const LimbT q = sbb1(h, p0, br);
+        h = sbb1(q, p1, br);
+        return q;
+    }
+
+    // One step of the Hensel division by DS.g: the quotient limb is (y - borrow) * g^-1 mod B,
+    // and q * g reaches back into the next limb by its high part.
+    NUMETRON_FORCEINLINE LimbT hensel_step(LimbT y) noexcept
+    {
+        unsigned char br = 0;
+        const LimbT s = sbb1(y, gb, br);
+        const LimbT q = static_cast<LimbT>(s * ginv);
+        auto [qh, ql] = arithmetic::umul1(q, static_cast<LimbT>(DS.g));
+        (void)ql; // == s
+        gb = static_cast<LimbT>(qh + br);
+        return q;
+    }
 
     // The sum limb for the given source limbs.
     NUMETRON_FORCEINLINE LimbT combine(LimbT l0, [[maybe_unused]] LimbT l1, [[maybe_unused]] LimbT l2, [[maybe_unused]] LimbT l3) noexcept
@@ -370,18 +436,15 @@ struct lincomb_state
         if constexpr (N > 3) apply4<Desc.shift[3], Desc.neg[3]>(q3, hi3, c3, x0, x1, x2, x3);
     }
 
+    // Result limb through the division stages. Each is a 2-adic exact division working from the
+    // bottom up, so they chain limb by limb; the quotient is exact, for a two's complement
+    // (negative) dividend too.
     NUMETRON_FORCEINLINE void out(LimbT y) noexcept
     {
-        if constexpr (D == 1) {
-            *rp++ = y;
-        } else {
-            // see divexact_by(): sub, then sbb on the borrow -- two dependent instructions per limb
-            auto [p1, p0] = arithmetic::umul1(y, dm);
-            unsigned char br = 0;
-            const LimbT q = sbb1(h, p0, br);
-            *rp++ = q;
-            h = sbb1(q, p1, br);
-        }
+        if constexpr (DS.a > 1) y = dbm1_step<dma>(y, ha);
+        if constexpr (DS.b > 1) y = dbm1_step<dmb>(y, hb);
+        if constexpr (DS.g > 1) y = hensel_step(y);
+        *rp++ = y;
     }
 
     // Takes sum limb i; with a right shift, emits result limb i - 1 (i > 0).
@@ -409,9 +472,10 @@ struct lincomb_state
 }
 
 // r[0..w) = ((sum over j of +-(src_j << shift[j])) >> rshift) / div, all in one streaming pass;
-// Desc (see lincomb_desc) fixes the shape at compile time. The combination must be
-// non-negative, a multiple of 2^rshift * div, and the result must fit in w limbs; the sum itself
-// may take one limb more than that (it's formed over w + 1 limbs). w > 0.
+// Desc (see lincomb_desc) fixes the shape at compile time. The combination must be a multiple
+// of 2^rshift * div and the result must fit in w limbs -- non-negative, or with tc_result as a
+// two's complement number; the sum itself may take one limb more than that (it's formed over
+// w + 1 limbs). w > 0.
 // Source limb i is read before result limb i is written, so r may coincide with any source
 // (same pointer); otherwise r must not overlap a source.
 template <std::unsigned_integral LimbT, lincomb_desc Desc>
@@ -425,8 +489,6 @@ inline void lincomb(LimbT* r, size_t w, lincomb_src<LimbT> const* src) noexcept
     static_assert(Desc.shift[0] < state_t::bits && Desc.shift[1] < state_t::bits
         && Desc.shift[2] < state_t::bits && Desc.shift[3] < state_t::bits, "lincomb: shift out of range");
     static_assert(R < state_t::bits, "lincomb: rshift out of range");
-    static_assert(Desc.div == 1 || (Desc.div > 1 && (std::numeric_limits<LimbT>::max)() % Desc.div == 0),
-        "lincomb: div must divide B - 1");
     NUMETRON_ASSERT(w > 0);
 
     LimbT const* const p0 = src[0].ptr;
@@ -440,13 +502,23 @@ inline void lincomb(LimbT* r, size_t w, lincomb_src<LimbT> const* src) noexcept
     NUMETRON_ASSERT(n0 <= w && n1 <= w && n2 <= w && n3 <= w);
     const size_t m = (std::min)((std::min)(n0, n1), (std::min)(n2, n3));
 
+    // What each source reads as above its limbs: 0, or the sign for a two's complement term.
+    // Taken before anything is written (r may be a source).
+    auto fill = [](bool tc, LimbT const* p, size_t n) noexcept -> LimbT {
+        return tc && n && (p[n - 1] >> (state_t::bits - 1)) ? static_cast<LimbT>(~LimbT{ 0 }) : LimbT{ 0 };
+    };
+    const LimbT f0 = fill(Desc.tc[0], p0, n0);
+    const LimbT f1 = N > 1 ? fill(Desc.tc[1], p1, n1) : LimbT{ 0 };
+    const LimbT f2 = N > 2 ? fill(Desc.tc[2], p2, n2) : LimbT{ 0 };
+    const LimbT f3 = N > 3 ? fill(Desc.tc[3], p3, n3) : LimbT{ 0 };
+
     state_t st{ r };
-    auto at = [](LimbT const* p, size_t n, size_t i) noexcept -> LimbT { return i < n ? p[i] : LimbT{ 0 }; };
+    auto at = [](LimbT const* p, size_t n, size_t i, LimbT f) noexcept -> LimbT { return i < n ? p[i] : f; };
 
     size_t i = 0;
     if constexpr (R > 0) {
         // the first sum limb only primes the shift
-        st.pending = st.combine(at(p0, n0, 0), N > 1 ? at(p1, n1, 0) : 0, N > 2 ? at(p2, n2, 0) : 0, N > 3 ? at(p3, n3, 0) : 0);
+        st.pending = st.combine(at(p0, n0, 0, f0), N > 1 ? at(p1, n1, 0, f1) : 0, N > 2 ? at(p2, n2, 0, f2) : 0, N > 3 ? at(p3, n3, 0, f3) : 0);
         i = 1;
     }
     // all sources present: blocks of 4, then single limbs
@@ -463,17 +535,29 @@ inline void lincomb(LimbT* r, size_t w, lincomb_src<LimbT> const* src) noexcept
     }
     // some exhausted
     for (; i < w; ++i) {
-        st.put(st.combine(at(p0, n0, i), N > 1 ? at(p1, n1, i) : 0, N > 2 ? at(p2, n2, i) : 0, N > 3 ? at(p3, n3, i) : 0));
+        st.put(st.combine(at(p0, n0, i, f0), N > 1 ? at(p1, n1, i, f1) : 0, N > 2 ? at(p2, n2, i, f2) : 0, N > 3 ? at(p3, n3, i, f3) : 0));
     }
-    // sum limb w: just the bits shifted out of the sources' tops and the carries
-    const LimbT top = st.combine(0, 0, 0, 0);
-    if constexpr (R > 0) {
-        st.put(top);
-        NUMETRON_ASSERT(!(top >> R));
-    } else {
-        NUMETRON_ASSERT(!top);
+    // sum limb w: the bits shifted out of the sources' tops (and their sign extensions) and the
+    // carries
+    const LimbT top = st.combine(f0, f1, f2, f3);
+    if constexpr (R > 0) st.put(top);
+    if constexpr (!Desc.tc_result) {
+        // Non-negative and fitting: nothing left above the w result limbs, and no net carry out
+        // of the w + 1 limbs -- except that a negative two's complement term stands there as
+        // B^(w+1) + value, which one carry (added) or borrow (subtracted) takes back out.
+        if constexpr (R > 0) {
+            NUMETRON_ASSERT(!(top >> R));
+        } else {
+            NUMETRON_ASSERT(!top);
+        }
+#ifndef NDEBUG
+        int expected = f0 ? 1 : 0;
+        if constexpr (N > 1) expected += f1 ? (Desc.neg[1] ? -1 : 1) : 0;
+        if constexpr (N > 2) expected += f2 ? (Desc.neg[2] ? -1 : 1) : 0;
+        if constexpr (N > 3) expected += f3 ? (Desc.neg[3] ? -1 : 1) : 0;
+        NUMETRON_ASSERT(st.net_carry() == expected);
+#endif
     }
-    NUMETRON_ASSERT(st.net_carry() == 0);
     NUMETRON_ASSERT(st.rp == r + w);
 }
 

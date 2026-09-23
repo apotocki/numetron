@@ -62,6 +62,7 @@ struct mul_tuning_options
     size_t karatsuba_max = 256;
     size_t toom3_max = 2048;
     size_t toom4_max = 4096;
+    size_t toom6h_max = 8192;
 
     // Install the found thresholds; when false they are only returned and the previous values
     // are restored.
@@ -73,9 +74,11 @@ struct mul_tuning_result
     size_t karatsuba_threshold;
     size_t toom3_threshold;
     size_t toom4_threshold;
+    size_t toom6h_threshold;
     bool karatsuba_found;
     bool toom3_found;
     bool toom4_found;
+    bool toom6h_found;
 };
 
 namespace mul_tuning_detail {
@@ -251,7 +254,8 @@ std::optional<size_t> tune_threshold(workload& work, mul_tuning_options const& o
 // Measures where each multiplication algorithm starts paying off over the one below it on this
 // machine and (by default) installs the results as the runtime thresholds. Karatsuba is tuned
 // first against basecase, then Toom-3 against whatever the tuned Karatsuba threshold selects
-// below it, then Toom-4 against the tuned Toom-3/Karatsuba below it. See
+// below it, then Toom-4 against the tuned Toom-3/Karatsuba below it, then Toom-6.5 against all
+// of those. See
 // mul_tuning_detail::tune_threshold() for how each threshold is chosen.
 //
 // While it runs, the global thresholds are temporarily forced to other values. Multiplications
@@ -262,6 +266,7 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     const size_t prev_karatsuba = karatsuba_threshold();
     const size_t prev_toom3 = toom3_threshold();
     const size_t prev_toom4 = toom4_threshold();
+    const size_t prev_toom6h = toom6h_threshold();
 
     bool committed = false;
     NUMETRON_SCOPE_EXIT([&] {
@@ -269,16 +274,18 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
             set_karatsuba_threshold(prev_karatsuba);
             set_toom3_threshold(prev_toom3);
             set_toom4_threshold(prev_toom4);
+            set_toom6h_threshold(prev_toom6h);
         }
     });
 
-    mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max }), opts.operand_pairs };
+    mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max }), opts.operand_pairs };
 
     constexpr size_t off = (std::numeric_limits<size_t>::max)();
     mul_tuning_result result{};
 
     // Algorithms above the one being tuned are switched off until their own turn; one that ends
     // up not found stays off for the tuning of the next one, and is restored afterwards.
+    set_toom6h_threshold(off);
     set_toom4_threshold(off);
     set_toom3_threshold(off);
     auto karatsuba = mul_tuning_detail::tune_threshold(work, opts, "karatsuba", &set_karatsuba_threshold,
@@ -297,11 +304,18 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         (std::max)(min_toom4_threshold, toom3.value_or(min_toom4_threshold)), opts.toom4_max);
     result.toom4_found = toom4.has_value();
     result.toom4_threshold = toom4.value_or(prev_toom4);
+    set_toom4_threshold(toom4.value_or(off));
+
+    auto toom6h = mul_tuning_detail::tune_threshold(work, opts, "toom6h", &set_toom6h_threshold,
+        (std::max)(min_toom6h_threshold, toom4.value_or(toom3.value_or(min_toom6h_threshold))), opts.toom6h_max);
+    result.toom6h_found = toom6h.has_value();
+    result.toom6h_threshold = toom6h.value_or(prev_toom6h);
 
     if (opts.apply) {
         set_karatsuba_threshold(result.karatsuba_threshold);
         set_toom3_threshold(result.toom3_threshold);
         set_toom4_threshold(result.toom4_threshold);
+        set_toom6h_threshold(result.toom6h_threshold);
         committed = true;
     }
     return result;

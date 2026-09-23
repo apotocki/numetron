@@ -11,16 +11,35 @@
 // Compile-time defaults for the runtime thresholds below; override by defining these before
 // including numetron, or retune at runtime with set_*_threshold() / tune_mul_thresholds()
 // (numetron/limb_arithmetic/mul_tuning.hpp).
+// The defaults come from tune_mul_thresholds() on x86-64 (Alder Lake class): they differ per
+// compiler, since everything above the asm basecase -- Karatsuba, the Toom evaluation and
+// interpolation kernels -- is compiled C++ and the compilers make rather different code of it.
+#if defined(_MSC_VER) && !defined(__clang__)
+#   define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
+#   define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
+#   define NUMETRON_DEFAULT_TOOM4_THRESHOLD 330
+#   define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
+#else // GCC (and Clang, untuned)
+#   define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 36
+#   define NUMETRON_DEFAULT_TOOM3_THRESHOLD 57
+#   define NUMETRON_DEFAULT_TOOM4_THRESHOLD 808
+#   define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 1091
+#endif
+
 #ifndef NUMETRON_KARATSUBA_THRESHOLD
-#   define NUMETRON_KARATSUBA_THRESHOLD 40
+#   define NUMETRON_KARATSUBA_THRESHOLD NUMETRON_DEFAULT_KARATSUBA_THRESHOLD
 #endif
 
 #ifndef NUMETRON_TOOM3_THRESHOLD
-#   define NUMETRON_TOOM3_THRESHOLD 260
+#   define NUMETRON_TOOM3_THRESHOLD NUMETRON_DEFAULT_TOOM3_THRESHOLD
 #endif
 
 #ifndef NUMETRON_TOOM4_THRESHOLD
-#   define NUMETRON_TOOM4_THRESHOLD 300
+#   define NUMETRON_TOOM4_THRESHOLD NUMETRON_DEFAULT_TOOM4_THRESHOLD
+#endif
+
+#ifndef NUMETRON_TOOM6H_THRESHOLD
+#   define NUMETRON_TOOM6H_THRESHOLD NUMETRON_DEFAULT_TOOM6H_THRESHOLD
 #endif
 
 #define NUMETRON_EXPLICIT_KARATSUBA
@@ -35,12 +54,13 @@ namespace numetron::limb_arithmetic {
 
 // Smallest operand sizes (in limbs) the algorithms are valid for: Karatsuba needs both halves
 // of the split to be non-empty (vn >= 2), Toom-3 needs a non-empty top chunk of v (vn >= 5),
-// Toom-4 non-empty top quarters of both operands (un, vn >= 9 or so); the floors carry some
-// margin. Setters clamp to these, so no threshold value can make the dispatch pick an algorithm
-// on operands it can't handle.
+// Toom-4 non-empty top quarters of both operands (un, vn >= 9 or so), Toom-6.5 non-empty top
+// sixths; the floors carry some margin. Setters clamp to these, so no threshold value can make
+// the dispatch pick an algorithm on operands it can't handle.
 inline constexpr size_t min_karatsuba_threshold = 4;
 inline constexpr size_t min_toom3_threshold = 12;
 inline constexpr size_t min_toom4_threshold = 20;
+inline constexpr size_t min_toom6h_threshold = 42;
 
 namespace detail {
 
@@ -51,6 +71,7 @@ namespace detail {
 inline std::atomic<size_t> karatsuba_threshold_value{ (std::max)(size_t{ NUMETRON_KARATSUBA_THRESHOLD }, min_karatsuba_threshold) };
 inline std::atomic<size_t> toom3_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM3_THRESHOLD }, min_toom3_threshold) };
 inline std::atomic<size_t> toom4_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold) };
+inline std::atomic<size_t> toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold) };
 
 }
 
@@ -82,6 +103,16 @@ inline size_t toom4_threshold() noexcept
 inline void set_toom4_threshold(size_t limbs) noexcept
 {
     detail::toom4_threshold_value.store((std::max)(limbs, min_toom4_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom6h_threshold() noexcept
+{
+    return detail::toom6h_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom6h_threshold(size_t limbs) noexcept
+{
+    detail::toom6h_threshold_value.store((std::max)(limbs, min_toom6h_threshold), std::memory_order_relaxed);
 }
 
 }
