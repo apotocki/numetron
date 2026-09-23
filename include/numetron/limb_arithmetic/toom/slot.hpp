@@ -778,6 +778,41 @@ NUMETRON_NOINLINE void slot_fx_lincomb(toom_slot<LimbT>& dst,
     dst.sign = 1;
 }
 
+// toom_op::lincomb_dual: dst from s0..s3 and dst_b from sb0..sb3, same shape (no slot-signed
+// terms), both over dst.cap limbs (dst_b.cap must match).
+template <std::unsigned_integral LimbT, detail::toom_kernels::lincomb_desc Desc>
+NUMETRON_NOINLINE void slot_fx_lincomb_dual(toom_slot<LimbT>& dst, toom_slot<LimbT>& dst_b,
+    toom_slot<LimbT> const& s0, toom_slot<LimbT> const& s1, toom_slot<LimbT> const& s2, toom_slot<LimbT> const& s3,
+    toom_slot<LimbT> const& sb0, toom_slot<LimbT> const& sb1, toom_slot<LimbT> const& sb2, toom_slot<LimbT> const& sb3) noexcept
+{
+    using detail::toom_kernels::lincomb_src;
+    static_assert(!Desc.slot_sign[0] && !Desc.slot_sign[1] && !Desc.slot_sign[2] && !Desc.slot_sign[3],
+        "lincomb_dual: no slot-signed terms");
+    const size_t w = dst.cap;
+    NUMETRON_ASSERT(dst_b.cap == w);
+    NUMETRON_ASSERT(dst.ptr + w <= dst_b.ptr || dst_b.ptr + w <= dst.ptr);
+    toom_slot<LimbT> const* const sa[4] = { &s0, &s1, &s2, &s3 };
+    toom_slot<LimbT> const* const sb[4] = { &sb0, &sb1, &sb2, &sb3 };
+    lincomb_src<LimbT> srca[4] = {};
+    lincomb_src<LimbT> srcb[4] = {};
+    for (unsigned j = 0; j < Desc.count; ++j) {
+        const size_t na = slot_fx_src_len(*sa[j], w);
+        const size_t nb = slot_fx_src_len(*sb[j], w);
+        // each result may be its own sources (same memory), but not touch the other stream's
+        NUMETRON_ASSERT(sa[j]->ptr == dst.ptr || sa[j]->ptr + na <= dst.ptr || dst.ptr + w <= sa[j]->ptr);
+        NUMETRON_ASSERT(sb[j]->ptr == dst_b.ptr || sb[j]->ptr + nb <= dst_b.ptr || dst_b.ptr + w <= sb[j]->ptr);
+        NUMETRON_ASSERT(sa[j]->ptr + na <= dst_b.ptr || dst_b.ptr + w <= sa[j]->ptr);
+        NUMETRON_ASSERT(sb[j]->ptr + nb <= dst.ptr || dst.ptr + w <= sb[j]->ptr);
+        srca[j] = lincomb_src<LimbT>{ sa[j]->ptr, na };
+        srcb[j] = lincomb_src<LimbT>{ sb[j]->ptr, nb };
+    }
+    numetron::limb_arithmetic::detail::toom_kernels::lincomb_dual<LimbT, Desc>(dst.ptr, srca, dst_b.ptr, srcb, w);
+    dst.len = w;
+    dst.sign = 1;
+    dst_b.len = w;
+    dst_b.sign = 1;
+}
+
 #if 0
 
 template <std::unsigned_integral LimbT>

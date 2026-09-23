@@ -89,7 +89,11 @@ enum class toom_op : unsigned char
     // src0..src3, the shape given by lc (see toom_kernels::lincomb_desc; built with lincomb()
     // below). A term may also take the sign its slot recorded (lc_sub_signed()). dst may be one
     // of the sources but must not overlap any other way.
-    lincomb
+    lincomb,
+    // dst <- lincomb of src0..src3 and dst2 <- the same-shaped lincomb of srcb0..srcb3, in one
+    // interleaved pass (see lincomb_dual() below). The two must be independent: neither
+    // destination may overlap the other combination's sources or destination.
+    lincomb_dual
 };
 
 enum class toom_mem_kind : unsigned char
@@ -141,6 +145,11 @@ struct toom_instr
     // Fourth source and the combination shape of toom_op::lincomb.
     toom_ref src3 = {};
     lincomb_desc lc = {};
+    // The second combination's sources of toom_op::lincomb_dual (its destination is dst2).
+    toom_ref srcb0 = {};
+    toom_ref srcb1 = {};
+    toom_ref srcb2 = {};
+    toom_ref srcb3 = {};
 };
 
 // One term of a toom_op::lincomb: +-(src << shift).
@@ -190,11 +199,11 @@ struct toom_term
 {
     if (terms.size() < 1 || terms.size() > lincomb_desc::max_terms) throw "lincomb: 1 to 4 terms";
     if (terms.begin()->neg) throw "lincomb: the first term must be added";
-    if (div < 1 || div > 0xFFFF || div % 2 == 0) throw "lincomb: the divisor must be odd and below 2^16";
+    if (div < 1 || div % 2 == 0) throw "lincomb: the divisor must be odd";
     toom_instr in{ toom_op::lincomb, dst };
     in.lc.count = static_cast<unsigned char>(terms.size());
     in.lc.rshift = static_cast<unsigned char>(rshift);
-    in.lc.div = static_cast<unsigned short>(div);
+    in.lc.div = div;
     toom_ref* srcs[lincomb_desc::max_terms] = { &in.src0, &in.src1, &in.src2, &in.src3 };
     unsigned j = 0;
     for (toom_term const& t : terms) {
@@ -215,6 +224,38 @@ struct toom_term
     toom_instr in = lincomb(dst, terms, rshift, div);
     in.lc.tc_result = true;
     return in;
+}
+
+// Two lincomb()s of the same shape run as one toom_op::lincomb_dual: dst <- terms,
+// dst_b <- terms_b. The term lists must match in everything but their sources. For independent
+// computations whose passes would otherwise be latency-bound one after the other -- e.g. the
+// even and odd halves of a Toom interpolation, which take identical steps.
+[[nodiscard]] constexpr toom_instr lincomb_dual(toom_ref dst, std::initializer_list<toom_term> terms,
+    toom_ref dst_b, std::initializer_list<toom_term> terms_b, unsigned rshift = 0, unsigned div = 1, bool tc_result = false)
+{
+    toom_instr in = lincomb(dst, terms, rshift, div);
+    toom_instr ib = lincomb(dst_b, terms_b, rshift, div);
+    for (unsigned j = 0; j < lincomb_desc::max_terms; ++j) {
+        if (in.lc.shift[j] != ib.lc.shift[j] || in.lc.neg[j] != ib.lc.neg[j] || in.lc.tc[j] != ib.lc.tc[j]
+            || in.lc.slot_sign[j] || ib.lc.slot_sign[j]) {
+            throw "lincomb_dual: the two term lists must have the same shape (and no slot-signed terms)";
+        }
+    }
+    if (in.lc.count != ib.lc.count) throw "lincomb_dual: the two term lists must have the same length";
+    in.op = toom_op::lincomb_dual;
+    in.lc.tc_result = tc_result;
+    in.dst2 = dst_b;
+    in.srcb0 = ib.src0;
+    in.srcb1 = ib.src1;
+    in.srcb2 = ib.src2;
+    in.srcb3 = ib.src3;
+    return in;
+}
+
+[[nodiscard]] constexpr toom_instr lincomb_dual_tc(toom_ref dst, std::initializer_list<toom_term> terms,
+    toom_ref dst_b, std::initializer_list<toom_term> terms_b, unsigned rshift = 0, unsigned div = 1)
+{
+    return lincomb_dual(dst, terms, dst_b, terms_b, rshift, div, true);
 }
 
 enum class toom_size_var : unsigned short
@@ -296,7 +337,7 @@ struct expr_node
 // Maximum number of nodes an expr_pack can hold.
 // Define NUMETRON_EXPR_PACK_MAX_NODES before including this header to override.
 #ifndef NUMETRON_EXPR_PACK_MAX_NODES
-#  define NUMETRON_EXPR_PACK_MAX_NODES 128
+#  define NUMETRON_EXPR_PACK_MAX_NODES 256
 #endif
 inline constexpr size_t expr_pack_max_nodes = NUMETRON_EXPR_PACK_MAX_NODES;
 
@@ -352,7 +393,7 @@ struct toom_slot_layout
 // Maximum number of slots a slot_pack can hold.
 // Define NUMETRON_SLOT_PACK_MAX_SLOTS before including this header to override.
 #ifndef NUMETRON_SLOT_PACK_MAX_SLOTS
-#  define NUMETRON_SLOT_PACK_MAX_SLOTS 64
+#  define NUMETRON_SLOT_PACK_MAX_SLOTS 96
 #endif
 inline constexpr size_t slot_pack_max_slots = NUMETRON_SLOT_PACK_MAX_SLOTS;
 

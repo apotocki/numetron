@@ -21,6 +21,7 @@
 #include "toom_3x3.hpp"
 #include "toom_4x4.hpp"
 #include "toom_6x6.hpp"
+#include "toom_8x8.hpp"
 
 #include "numetron/limb_arithmetic/toom/slot.hpp"
 
@@ -440,6 +441,19 @@ inline void run_toom_op(
         auto const& s3 = resolve_ref_cref<(n > 3 ? op.src3 : op.src0), LimbT>(mem);
         auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
         slot_fx_lincomb<LimbT, op.lc>(dst, s0, s1, s2, s3);
+    } else if constexpr (op.op == toom_op::lincomb_dual) {
+        constexpr unsigned n = op.lc.count;
+        auto const& s0 = resolve_ref_cref<op.src0, LimbT>(mem);
+        auto const& s1 = resolve_ref_cref<(n > 1 ? op.src1 : op.src0), LimbT>(mem);
+        auto const& s2 = resolve_ref_cref<(n > 2 ? op.src2 : op.src0), LimbT>(mem);
+        auto const& s3 = resolve_ref_cref<(n > 3 ? op.src3 : op.src0), LimbT>(mem);
+        auto const& b0 = resolve_ref_cref<op.srcb0, LimbT>(mem);
+        auto const& b1 = resolve_ref_cref<(n > 1 ? op.srcb1 : op.srcb0), LimbT>(mem);
+        auto const& b2 = resolve_ref_cref<(n > 2 ? op.srcb2 : op.srcb0), LimbT>(mem);
+        auto const& b3 = resolve_ref_cref<(n > 3 ? op.srcb3 : op.srcb0), LimbT>(mem);
+        auto& dst = resolve_ref_write<op.dst, LimbT>(mem);
+        auto& dst_b = resolve_ref_write<op.dst2, LimbT>(mem);
+        slot_fx_lincomb_dual<LimbT, op.lc>(dst, dst_b, s0, s1, s2, s3, b0, b1, b2, b3);
     } else if constexpr (op.op == toom_op::eval_pm1) {
         auto const& e0 = resolve_ref_cref<op.src0, LimbT>(mem);
         auto const& e1 = resolve_ref_cref<op.src1, LimbT>(mem);
@@ -643,5 +657,8 @@ using toom4_balanced_engine = toom_engine_t<toom_runtime_detail::toom4_balanced_
 
 // Balanced Toom-6.5 plan (toom_6x6.hpp), for operands detail::toom6h_split_fits() accepts.
 using toom6h_balanced_engine = toom_engine_t<toom_runtime_detail::toom6h_balanced_traits>;
+
+// Balanced Toom-8.5 plan (toom_8x8.hpp), for operands detail::toom8h_split_fits() accepts.
+using toom8h_balanced_engine = toom_engine_t<toom_runtime_detail::toom8h_balanced_traits>;
 
 } // namespace numetron::limb_arithmetic

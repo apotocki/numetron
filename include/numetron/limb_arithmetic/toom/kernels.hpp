@@ -275,8 +275,9 @@ struct lincomb_desc
     unsigned char rshift = 0;
     // and then divided exactly by div, any odd number: a divisor of B - 1, or a product of two
     // such, runs as one or two divexact_by() stages; anything else (e.g. 7, 189) as a Hensel
-    // division by the inverse of div modulo B, which is slower (a multiply latency per limb)
-    unsigned short div = 1;
+    // division by the inverse of div modulo B, which is slower (a multiply latency per limb;
+    // lincomb_dual() hides half of it)
+    unsigned div = 1;
 };
 
 template <std::unsigned_integral LimbT>
@@ -336,8 +337,65 @@ NUMETRON_FORCEINLINE LimbT shifted(LimbT l, LimbT& prev) noexcept
 template <std::unsigned_integral LimbT, bool Neg>
 NUMETRON_FORCEINLINE LimbT accumulate(LimbT x, LimbT t, unsigned char& c) noexcept
 {
-    if constexpr (Neg) return sbb1(x, t, c);
-    else return arithmetic::uadd1c(x, t, c);
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    // GCC keeps these chains' carries (and _subborrow_u64's result) in memory when several are
+    // live; the asm pins the carry to a register. See also chain4().
+    if constexpr (sizeof(LimbT) == 8) {
+        if constexpr (Neg) {
+            __asm__("addb $0xFF, %[c]\n\tsbbq %[t], %[x]\n\tsetc %[c]" : [x] "+r"(x), [c] "+q"(c) : [t] "rm"(t) : "cc");
+        } else {
+            __asm__("addb $0xFF, %[c]\n\tadcq %[t], %[x]\n\tsetc %[c]" : [x] "+r"(x), [c] "+q"(c) : [t] "rm"(t) : "cc");
+        }
+        return x;
+    } else
+#endif
+    {
+        if constexpr (Neg) return sbb1(x, t, c);
+        else return arithmetic::uadd1c(x, t, c);
+    }
+}
+
+// x0..x3 +-= t0..t3 along one carry chain: four back-to-back adc/sbb with the carry in the flags
+// throughout, restored from / saved to c once. MSVC makes that of four intrinsic steps by itself;
+// GCC doesn't (it saves and restores the flag around every step, through memory), so it gets the
+// sequence spelled out.
+template <std::unsigned_integral LimbT, bool Neg>
+NUMETRON_FORCEINLINE void chain4(LimbT& x0, LimbT& x1, LimbT& x2, LimbT& x3, LimbT t0, LimbT t1, LimbT t2, LimbT t3, unsigned char& c) noexcept
+{
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    if constexpr (sizeof(LimbT) == 8) {
+        if constexpr (Neg) {
+            __asm__(
+                "addb $0xFF, %[c]\n\t"
+                "sbbq %[t0], %[x0]\n\t"
+                "sbbq %[t1], %[x1]\n\t"
+                "sbbq %[t2], %[x2]\n\t"
+                "sbbq %[t3], %[x3]\n\t"
+                "setc %[c]"
+                : [x0] "+r"(x0), [x1] "+r"(x1), [x2] "+r"(x2), [x3] "+r"(x3), [c] "+q"(c)
+                : [t0] "rm"(t0), [t1] "rm"(t1), [t2] "rm"(t2), [t3] "rm"(t3)
+                : "cc");
+        } else {
+            __asm__(
+                "addb $0xFF, %[c]\n\t"
+                "adcq %[t0], %[x0]\n\t"
+                "adcq %[t1], %[x1]\n\t"
+                "adcq %[t2], %[x2]\n\t"
+                "adcq %[t3], %[x3]\n\t"
+                "setc %[c]"
+                : [x0] "+r"(x0), [x1] "+r"(x1), [x2] "+r"(x2), [x3] "+r"(x3), [c] "+q"(c)
+                : [t0] "rm"(t0), [t1] "rm"(t1), [t2] "rm"(t2), [t3] "rm"(t3)
+                : "cc");
+        }
+        return;
+    } else
+#endif
+    {
+        x0 = accumulate<LimbT, Neg>(x0, t0, c);
+        x1 = accumulate<LimbT, Neg>(x1, t1, c);
+        x2 = accumulate<LimbT, Neg>(x2, t2, c);
+        x3 = accumulate<LimbT, Neg>(x3, t3, c);
+    }
 }
 
 // Running state of lincomb(): every term has its own shift state and carry chain (so the chains
@@ -367,10 +425,21 @@ struct lincomb_state
     NUMETRON_FORCEINLINE static LimbT dbm1_step(LimbT y, LimbT& h) noexcept
     {
         auto [p1, p0] = arithmetic::umul1(y, M);
-        unsigned char br = 0;
-        const LimbT q = sbb1(h, p0, br);
-        h = sbb1(q, p1, br);
-        return q;
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+        if constexpr (sizeof(LimbT) == 8) {
+            // spelled out for GCC, which otherwise routes the borrow through memory (see chain4())
+            LimbT q;
+            __asm__("movq %[h], %[q]\n\tsubq %[p0], %[q]\n\tmovq %[q], %[h]\n\tsbbq %[p1], %[h]"
+                : [q] "=&r"(q), [h] "+r"(h) : [p0] "rm"(p0), [p1] "rm"(p1) : "cc");
+            return q;
+        } else
+#endif
+        {
+            unsigned char br = 0;
+            const LimbT q = sbb1(h, p0, br);
+            h = sbb1(q, p1, br);
+            return q;
+        }
     }
 
     // One step of the Hensel division by DS.g: the quotient limb is (y - borrow) * g^-1 mod B,
@@ -420,10 +489,7 @@ struct lincomb_state
     {
         LimbT t0, t1, t2, t3;
         shifted4<K>(q, prev, t0, t1, t2, t3);
-        x0 = accumulate<LimbT, Neg>(x0, t0, c);
-        x1 = accumulate<LimbT, Neg>(x1, t1, c);
-        x2 = accumulate<LimbT, Neg>(x2, t2, c);
-        x3 = accumulate<LimbT, Neg>(x3, t3, c);
+        chain4<LimbT, Neg>(x0, x1, x2, x3, t0, t1, t2, t3, c);
     }
 
     // Sum limbs i..i+3, all sources present there.
@@ -471,6 +537,118 @@ struct lincomb_state
 
 }
 
+namespace lincomb_detail {
+
+// One lincomb() stream: the state plus the sources, walked by the drivers below in blocks of 4
+// limbs while every source has limbs there, then limb by limb.
+template <std::unsigned_integral LimbT, lincomb_desc Desc>
+struct lincomb_stream
+{
+    using state_t = lincomb_state<LimbT, Desc>;
+    static constexpr unsigned N = Desc.count;
+    static constexpr unsigned R = Desc.rshift;
+    static_assert(N >= 1 && N <= lincomb_desc::max_terms, "lincomb: bad term count");
+    static_assert(!Desc.neg[0], "lincomb: the first term must be added");
+    static_assert(Desc.shift[0] < state_t::bits && Desc.shift[1] < state_t::bits
+        && Desc.shift[2] < state_t::bits && Desc.shift[3] < state_t::bits, "lincomb: shift out of range");
+    static_assert(R < state_t::bits, "lincomb: rshift out of range");
+
+    state_t st;
+    LimbT* r;
+    size_t w;
+    LimbT const* p0; LimbT const* p1; LimbT const* p2; LimbT const* p3;
+    size_t n0, n1, n2, n3;
+    // what each source reads as above its limbs: 0, or the sign for a two's complement term
+    LimbT f0, f1, f2, f3;
+    // limbs where every source is present
+    size_t m;
+
+    static LimbT fill(bool tc, LimbT const* p, size_t n) noexcept
+    {
+        return tc && n && (p[n - 1] >> (state_t::bits - 1)) ? static_cast<LimbT>(~LimbT{ 0 }) : LimbT{ 0 };
+    }
+
+    static LimbT at(LimbT const* p, size_t n, size_t i, LimbT f) noexcept { return i < n ? p[i] : f; }
+
+    // Reads the fills before anything is written (r may be a source).
+    NUMETRON_FORCEINLINE lincomb_stream(LimbT* r_, size_t w_, lincomb_src<LimbT> const* src) noexcept
+        : st{ r_ }, r{ r_ }, w{ w_ }
+        , p0{ src[0].ptr }, p1{ N > 1 ? src[1].ptr : nullptr }, p2{ N > 2 ? src[2].ptr : nullptr }, p3{ N > 3 ? src[3].ptr : nullptr }
+        , n0{ src[0].n }, n1{ N > 1 ? src[1].n : w_ }, n2{ N > 2 ? src[2].n : w_ }, n3{ N > 3 ? src[3].n : w_ }
+    {
+        NUMETRON_ASSERT(w > 0);
+        NUMETRON_ASSERT(n0 <= w && n1 <= w && n2 <= w && n3 <= w);
+        f0 = fill(Desc.tc[0], p0, n0);
+        f1 = N > 1 ? fill(Desc.tc[1], p1, n1) : LimbT{ 0 };
+        f2 = N > 2 ? fill(Desc.tc[2], p2, n2) : LimbT{ 0 };
+        f3 = N > 3 ? fill(Desc.tc[3], p3, n3) : LimbT{ 0 };
+        m = (std::min)((std::min)(n0, n1), (std::min)(n2, n3));
+    }
+
+    // The limb index the walk starts at: with a right shift the first sum limb only primes it.
+    NUMETRON_FORCEINLINE size_t start() noexcept
+    {
+        if constexpr (R > 0) {
+            st.pending = st.combine(at(p0, n0, 0, f0), N > 1 ? at(p1, n1, 0, f1) : 0, N > 2 ? at(p2, n2, 0, f2) : 0, N > 3 ? at(p3, n3, 0, f3) : 0);
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    // Limbs i..i+3, all sources present there (i + 4 <= m).
+    NUMETRON_FORCEINLINE void block4(size_t i) noexcept
+    {
+        LimbT x0, x1, x2, x3;
+        st.combine4(p0 + i, N > 1 ? p1 + i : nullptr, N > 2 ? p2 + i : nullptr, N > 3 ? p3 + i : nullptr, x0, x1, x2, x3);
+        st.put(x0);
+        st.put(x1);
+        st.put(x2);
+        st.put(x3);
+    }
+
+    NUMETRON_FORCEINLINE void single(size_t i) noexcept
+    {
+        st.put(st.combine(at(p0, n0, i, f0), N > 1 ? at(p1, n1, i, f1) : 0, N > 2 ? at(p2, n2, i, f2) : 0, N > 3 ? at(p3, n3, i, f3) : 0));
+    }
+
+    // From limb i on: the remaining blocks, the single limbs, and the top.
+    NUMETRON_FORCEINLINE void rest(size_t i) noexcept
+    {
+        for (; i + 4 <= m; i += 4) block4(i);
+        for (; i < w; ++i) single(i);
+        finish();
+    }
+
+    // Sum limb w: the bits shifted out of the sources' tops (and their sign extensions) and the
+    // carries.
+    NUMETRON_FORCEINLINE void finish() noexcept
+    {
+        const LimbT top = st.combine(f0, f1, f2, f3);
+        if constexpr (R > 0) st.put(top);
+        if constexpr (!Desc.tc_result) {
+            // Non-negative and fitting: nothing left above the w result limbs, and no net carry
+            // out of the w + 1 limbs -- except that a negative two's complement term stands there
+            // as B^(w+1) + value, which one carry (added) or borrow (subtracted) takes back out.
+            if constexpr (R > 0) {
+                NUMETRON_ASSERT(!(top >> R));
+            } else {
+                NUMETRON_ASSERT(!top);
+            }
+#ifndef NDEBUG
+            int expected = f0 ? 1 : 0;
+            if constexpr (N > 1) expected += f1 ? (Desc.neg[1] ? -1 : 1) : 0;
+            if constexpr (N > 2) expected += f2 ? (Desc.neg[2] ? -1 : 1) : 0;
+            if constexpr (N > 3) expected += f3 ? (Desc.neg[3] ? -1 : 1) : 0;
+            NUMETRON_ASSERT(st.net_carry() == expected);
+#endif
+        }
+        NUMETRON_ASSERT(st.rp == r + w);
+    }
+};
+
+}
+
 // r[0..w) = ((sum over j of +-(src_j << shift[j])) >> rshift) / div, all in one streaming pass;
 // Desc (see lincomb_desc) fixes the shape at compile time. The combination must be a multiple
 // of 2^rshift * div and the result must fit in w limbs -- non-negative, or with tc_result as a
@@ -481,84 +659,47 @@ struct lincomb_state
 template <std::unsigned_integral LimbT, lincomb_desc Desc>
 inline void lincomb(LimbT* r, size_t w, lincomb_src<LimbT> const* src) noexcept
 {
-    using state_t = lincomb_detail::lincomb_state<LimbT, Desc>;
-    constexpr unsigned N = Desc.count;
-    constexpr unsigned R = Desc.rshift;
-    static_assert(N >= 1 && N <= lincomb_desc::max_terms, "lincomb: bad term count");
-    static_assert(!Desc.neg[0], "lincomb: the first term must be added");
-    static_assert(Desc.shift[0] < state_t::bits && Desc.shift[1] < state_t::bits
-        && Desc.shift[2] < state_t::bits && Desc.shift[3] < state_t::bits, "lincomb: shift out of range");
-    static_assert(R < state_t::bits, "lincomb: rshift out of range");
-    NUMETRON_ASSERT(w > 0);
+    lincomb_detail::lincomb_stream<LimbT, Desc> a{ r, w, src };
+    a.rest(a.start());
+}
 
-    LimbT const* const p0 = src[0].ptr;
-    LimbT const* const p1 = N > 1 ? src[1].ptr : nullptr;
-    LimbT const* const p2 = N > 2 ? src[2].ptr : nullptr;
-    LimbT const* const p3 = N > 3 ? src[3].ptr : nullptr;
-    const size_t n0 = src[0].n;
-    const size_t n1 = N > 1 ? src[1].n : w;
-    const size_t n2 = N > 2 ? src[2].n : w;
-    const size_t n3 = N > 3 ? src[3].n : w;
-    NUMETRON_ASSERT(n0 <= w && n1 <= w && n2 <= w && n3 <= w);
-    const size_t m = (std::min)((std::min)(n0, n1), (std::min)(n2, n3));
+// Two independent lincomb()s of the same shape and width in one loop: ra from srca and rb from
+// srcb, interleaved block by block. The two streams' dependency chains -- the carry chains, and
+// above all a Hensel division stage, whose multiply latency otherwise bounds the pass -- then
+// overlap. Neither result may overlap the other stream's sources or result.
+// Interleaving pays off where a pass is latency-bound: a Hensel stage by far (about 40% off the
+// pair), but also the plain and shifted shapes (15-25%). The exceptions, measured on x86-64:
+// four unshifted terms, and two divexact_by() stages without a Hensel one, whose two streams'
+// state no longer fits the registers -- those run one after the other.
+template <std::unsigned_integral LimbT, lincomb_desc Desc>
+consteval bool lincomb_dual_interleaves()
+{
+    constexpr auto ds = lincomb_detail::plan_div<LimbT>(Desc.div);
+    if (ds.g > 1) return true;
+    if (ds.b > 1) return false;
+    if (Desc.count == 4 && !Desc.rshift && !Desc.shift[0] && !Desc.shift[1] && !Desc.shift[2] && !Desc.shift[3]) return false;
+    return true;
+}
 
-    // What each source reads as above its limbs: 0, or the sign for a two's complement term.
-    // Taken before anything is written (r may be a source).
-    auto fill = [](bool tc, LimbT const* p, size_t n) noexcept -> LimbT {
-        return tc && n && (p[n - 1] >> (state_t::bits - 1)) ? static_cast<LimbT>(~LimbT{ 0 }) : LimbT{ 0 };
-    };
-    const LimbT f0 = fill(Desc.tc[0], p0, n0);
-    const LimbT f1 = N > 1 ? fill(Desc.tc[1], p1, n1) : LimbT{ 0 };
-    const LimbT f2 = N > 2 ? fill(Desc.tc[2], p2, n2) : LimbT{ 0 };
-    const LimbT f3 = N > 3 ? fill(Desc.tc[3], p3, n3) : LimbT{ 0 };
-
-    state_t st{ r };
-    auto at = [](LimbT const* p, size_t n, size_t i, LimbT f) noexcept -> LimbT { return i < n ? p[i] : f; };
-
-    size_t i = 0;
-    if constexpr (R > 0) {
-        // the first sum limb only primes the shift
-        st.pending = st.combine(at(p0, n0, 0, f0), N > 1 ? at(p1, n1, 0, f1) : 0, N > 2 ? at(p2, n2, 0, f2) : 0, N > 3 ? at(p3, n3, 0, f3) : 0);
-        i = 1;
-    }
-    // all sources present: blocks of 4, then single limbs
-    for (; i + 4 <= m; i += 4) {
-        LimbT x0, x1, x2, x3;
-        st.combine4(p0 + i, N > 1 ? p1 + i : nullptr, N > 2 ? p2 + i : nullptr, N > 3 ? p3 + i : nullptr, x0, x1, x2, x3);
-        st.put(x0);
-        st.put(x1);
-        st.put(x2);
-        st.put(x3);
-    }
-    for (; i < m; ++i) {
-        st.put(st.combine(p0[i], N > 1 ? p1[i] : 0, N > 2 ? p2[i] : 0, N > 3 ? p3[i] : 0));
-    }
-    // some exhausted
-    for (; i < w; ++i) {
-        st.put(st.combine(at(p0, n0, i, f0), N > 1 ? at(p1, n1, i, f1) : 0, N > 2 ? at(p2, n2, i, f2) : 0, N > 3 ? at(p3, n3, i, f3) : 0));
-    }
-    // sum limb w: the bits shifted out of the sources' tops (and their sign extensions) and the
-    // carries
-    const LimbT top = st.combine(f0, f1, f2, f3);
-    if constexpr (R > 0) st.put(top);
-    if constexpr (!Desc.tc_result) {
-        // Non-negative and fitting: nothing left above the w result limbs, and no net carry out
-        // of the w + 1 limbs -- except that a negative two's complement term stands there as
-        // B^(w+1) + value, which one carry (added) or borrow (subtracted) takes back out.
-        if constexpr (R > 0) {
-            NUMETRON_ASSERT(!(top >> R));
-        } else {
-            NUMETRON_ASSERT(!top);
+template <std::unsigned_integral LimbT, lincomb_desc Desc>
+inline void lincomb_dual(LimbT* ra, lincomb_src<LimbT> const* srca, LimbT* rb, lincomb_src<LimbT> const* srcb, size_t w) noexcept
+{
+    if constexpr (!lincomb_dual_interleaves<LimbT, Desc>()) {
+        lincomb<LimbT, Desc>(ra, w, srca);
+        lincomb<LimbT, Desc>(rb, w, srcb);
+    } else {
+        lincomb_detail::lincomb_stream<LimbT, Desc> a{ ra, w, srca };
+        lincomb_detail::lincomb_stream<LimbT, Desc> b{ rb, w, srcb };
+        size_t i = a.start();
+        b.start();
+        const size_t m = (std::min)(a.m, b.m);
+        for (; i + 4 <= m; i += 4) {
+            a.block4(i);
+            b.block4(i);
         }
-#ifndef NDEBUG
-        int expected = f0 ? 1 : 0;
-        if constexpr (N > 1) expected += f1 ? (Desc.neg[1] ? -1 : 1) : 0;
-        if constexpr (N > 2) expected += f2 ? (Desc.neg[2] ? -1 : 1) : 0;
-        if constexpr (N > 3) expected += f3 ? (Desc.neg[3] ? -1 : 1) : 0;
-        NUMETRON_ASSERT(st.net_carry() == expected);
-#endif
+        a.rest(i);
+        b.rest(i);
     }
-    NUMETRON_ASSERT(st.rp == r + w);
 }
 
 }

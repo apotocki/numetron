@@ -55,9 +55,10 @@ namespace toom_runtime_detail {
 //   s2 = (G - 25 s1) / 4,   d2 = (U - 17 d1) / 4
 //   e3 = P(1) - s1 - s2
 //   e1 = (s1 + d1) / 2,  e5 = s1 - e1,  e2 = (s2 + d2) / 2,  e4 = s2 - e2
-// 13 lincomb passes per half. 189 = 27 * 7 doesn't divide B - 1 (no set of 5 points of this kind
-// avoids a factor 7), so those four passes divide by Hensel's method, the others by divisors of
-// B - 1 (9 = 3 * 3 and 225 = 15 * 15 as two stages).
+// 13 steps, each one lincomb_dual pass doing it for both halves at once. 189 = 27 * 7 doesn't
+// divide B - 1 (no set of 5 points of this kind avoids a factor 7), so those two passes divide by
+// Hensel's method -- latency-bound, which is what running the halves interleaved hides -- the
+// others by divisors of B - 1 (9 = 3 * 3 and 225 = 15 * 15 as two stages).
 //
 // Scratch (21e + 10p limbs), e = c + 1, p = 2c + 2:
 //   EA1 EAM1 EA2 EAM2 EA4 EAM4 EAH EAMH EAQ EAMQ    10 x e   A at +-1, +-2, +-4, +-1/2, +-1/4
@@ -215,35 +216,36 @@ consteval auto make_toom6h_balanced()
         lincomb(WMQ, { lc_add(WQ), lc_sub_signed(WMQ) }, 3),
         lincomb(WQ,  { lc_add(WQ), lc_sub(WMQ, 2), lc_sub(C0, 20) }),
 
-        // Even half: (P(1), P(4), P(16), P~(4), P~(16)) in (W1, W2, W4, WH, WQ) -> c6, c8, c10, c4, c2.
-        lincomb_tc(WH, { lc_add(WH), lc_sub(W2) }, 0, 15),                                        // U
-        lincomb(W2,    { lc_add(W2, 1), lc_add_tc(WH, 4), lc_sub_tc(WH), lc_sub(W1, 5) }, 0, 9),    // G
-        lincomb_tc(WQ, { lc_add(WQ), lc_sub(W4) }, 0, 255),                                       // V
-        lincomb(W4,    { lc_add(W4, 1), lc_add_tc(WQ, 8), lc_sub_tc(WQ), lc_sub(W1, 9) }, 0, 225),  // H
-        lincomb(W4,    { lc_add(W4), lc_sub(W2, 2) }, 0, 189),                                    // s1
-        lincomb_tc(WQ, { lc_add_tc(WQ), lc_sub_tc(WH, 2) }, 0, 189),                              // d1
-        lincomb(W2,    { lc_add(W2), lc_sub(W4, 4), lc_sub(W4, 3), lc_sub(W4) }, 2),              // s2
-        lincomb_tc(WH, { lc_add_tc(WH), lc_sub_tc(WQ, 4), lc_sub_tc(WQ) }, 2),                    // d2
-        lincomb(W1,    { lc_add(W1), lc_sub(W4), lc_sub(W2) }),                                   // e3 = c6
-        lincomb(WQ,    { lc_add(W4), lc_add_tc(WQ) }, 1),                                         // e1 = c2
-        lincomb(W4,    { lc_add(W4), lc_sub(WQ) }),                                               // e5 = c10
-        lincomb(WH,    { lc_add(W2), lc_add_tc(WH) }, 1),                                         // e2 = c4
-        lincomb(W2,    { lc_add(W2), lc_sub(WH) }),                                               // e4 = c8
-
-        // Odd half: (Q(1), Q(4), Q(16), Q~(4), Q~(16)) in (WM1, WM2, WM4, WMH, WMQ) -> c5, c7, c9, c3, c1.
-        lincomb_tc(WMH, { lc_add(WMH), lc_sub(WM2) }, 0, 15),
-        lincomb(WM2,    { lc_add(WM2, 1), lc_add_tc(WMH, 4), lc_sub_tc(WMH), lc_sub(WM1, 5) }, 0, 9),
-        lincomb_tc(WMQ, { lc_add(WMQ), lc_sub(WM4) }, 0, 255),
-        lincomb(WM4,    { lc_add(WM4, 1), lc_add_tc(WMQ, 8), lc_sub_tc(WMQ), lc_sub(WM1, 9) }, 0, 225),
-        lincomb(WM4,    { lc_add(WM4), lc_sub(WM2, 2) }, 0, 189),
-        lincomb_tc(WMQ, { lc_add_tc(WMQ), lc_sub_tc(WMH, 2) }, 0, 189),
-        lincomb(WM2,    { lc_add(WM2), lc_sub(WM4, 4), lc_sub(WM4, 3), lc_sub(WM4) }, 2),
-        lincomb_tc(WMH, { lc_add_tc(WMH), lc_sub_tc(WMQ, 4), lc_sub_tc(WMQ) }, 2),
-        lincomb(WM1,    { lc_add(WM1), lc_sub(WM4), lc_sub(WM2) }),                               // c5
-        lincomb(WMQ,    { lc_add(WM4), lc_add_tc(WMQ) }, 1),                                      // c1
-        lincomb(WM4,    { lc_add(WM4), lc_sub(WMQ) }),                                            // c9
-        lincomb(WMH,    { lc_add(WM2), lc_add_tc(WMH) }, 1),                                      // c3
-        lincomb(WM2,    { lc_add(WM2), lc_sub(WMH) }),                                            // c7
+        // Both halves step by step, each step one lincomb_dual (the halves are independent and
+        // take identical steps). Even half: (P(1), P(4), P(16), P~(4), P~(16)) in
+        // (W1, W2, W4, WH, WQ) -> c6, c8, c10, c4, c2; odd half: (Q(1), ...) in
+        // (WM1, WM2, WM4, WMH, WMQ) -> c5, c7, c9, c3, c1.
+        lincomb_dual_tc(WH, { lc_add(WH), lc_sub(W2) },
+                        WMH, { lc_add(WMH), lc_sub(WM2) }, 0, 15),                                       // U
+        lincomb_dual(W2,  { lc_add(W2, 1), lc_add_tc(WH, 4), lc_sub_tc(WH), lc_sub(W1, 5) },
+                     WM2, { lc_add(WM2, 1), lc_add_tc(WMH, 4), lc_sub_tc(WMH), lc_sub(WM1, 5) }, 0, 9),  // G
+        lincomb_dual_tc(WQ, { lc_add(WQ), lc_sub(W4) },
+                        WMQ, { lc_add(WMQ), lc_sub(WM4) }, 0, 255),                                      // V
+        lincomb_dual(W4,  { lc_add(W4, 1), lc_add_tc(WQ, 8), lc_sub_tc(WQ), lc_sub(W1, 9) },
+                     WM4, { lc_add(WM4, 1), lc_add_tc(WMQ, 8), lc_sub_tc(WMQ), lc_sub(WM1, 9) }, 0, 225), // H
+        lincomb_dual(W4,  { lc_add(W4), lc_sub(W2, 2) },
+                     WM4, { lc_add(WM4), lc_sub(WM2, 2) }, 0, 189),                                      // s1
+        lincomb_dual_tc(WQ, { lc_add_tc(WQ), lc_sub_tc(WH, 2) },
+                        WMQ, { lc_add_tc(WMQ), lc_sub_tc(WMH, 2) }, 0, 189),                             // d1
+        lincomb_dual(W2,  { lc_add(W2), lc_sub(W4, 4), lc_sub(W4, 3), lc_sub(W4) },
+                     WM2, { lc_add(WM2), lc_sub(WM4, 4), lc_sub(WM4, 3), lc_sub(WM4) }, 2),              // s2
+        lincomb_dual_tc(WH, { lc_add_tc(WH), lc_sub_tc(WQ, 4), lc_sub_tc(WQ) },
+                        WMH, { lc_add_tc(WMH), lc_sub_tc(WMQ, 4), lc_sub_tc(WMQ) }, 2),                  // d2
+        lincomb_dual(W1,  { lc_add(W1), lc_sub(W4), lc_sub(W2) },
+                     WM1, { lc_add(WM1), lc_sub(WM4), lc_sub(WM2) }),                                    // e3: c6, c5
+        lincomb_dual(WQ,  { lc_add(W4), lc_add_tc(WQ) },
+                     WMQ, { lc_add(WM4), lc_add_tc(WMQ) }, 1),                                           // e1: c2, c1
+        lincomb_dual(W4,  { lc_add(W4), lc_sub(WQ) },
+                     WM4, { lc_add(WM4), lc_sub(WMQ) }),                                                 // e5: c10, c9
+        lincomb_dual(WH,  { lc_add(W2), lc_add_tc(WH) },
+                     WMH, { lc_add(WM2), lc_add_tc(WMH) }, 1),                                           // e2: c4, c3
+        lincomb_dual(W2,  { lc_add(W2), lc_sub(WH) },
+                     WM2, { lc_add(WM2), lc_sub(WMH) }),                                                 // e4: c8, c7
 
         // Compose: the even coefficients fill rb's pieces (their top limbs land on the next
         // piece), then the odd ones are added.

@@ -49,6 +49,13 @@ inline bool is_toom6h_applicable(size_t un, size_t vn) noexcept
     return vn >= toom6h_threshold() && detail::toom6h_split_fits(un, vn);
 }
 
+// Balanced Toom-8.5 only, like Toom-4.
+inline bool is_toom8h_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= toom8h_threshold() && detail::toom8h_split_fits(un, vn);
+}
+
 template <std::unsigned_integral LimbT, typename AllocatorT>
 inline LimbT* umul_dispatch(
     const LimbT* u, size_t un,
@@ -61,6 +68,10 @@ inline LimbT* umul_dispatch(
     if (un < vn) {
         std::swap(u, v);
         std::swap(un, vn);
+    }
+
+    if (is_toom8h_applicable(un, vn)) {
+        return toom8h_balanced_engine::umul(u, un, v, vn, rb, std::move(alloc));
     }
 
     if (is_toom6h_applicable(un, vn)) {
@@ -104,10 +115,11 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
     }
 
     //if (v.size() >= NUMETRON_KARATSUBA_THRESHOLD) {
-        const bool toom6h = is_toom6h_applicable(u.size(), v.size());
-        const bool toom4 = !toom6h && is_toom4_applicable(u.size(), v.size());
-        const bool toom3 = !toom6h && !toom4 && is_toom3_applicable(u.size(), v.size());
-        if (toom6h || toom4 || toom3 || is_karatsuba_applicable(u.size(), v.size())) {
+        const bool toom8h = is_toom8h_applicable(u.size(), v.size());
+        const bool toom6h = !toom8h && is_toom6h_applicable(u.size(), v.size());
+        const bool toom4 = !toom8h && !toom6h && is_toom4_applicable(u.size(), v.size());
+        const bool toom3 = !toom8h && !toom6h && !toom4 && is_toom3_applicable(u.size(), v.size());
+        if (toom8h || toom6h || toom4 || toom3 || is_karatsuba_applicable(u.size(), v.size())) {
             // The one place scratch memory is chosen for a whole recursive multiplication: only
             // the result comes from the caller's allocator (it outlives this call), everything
             // below -- Toom slabs, Karatsuba temporaries, all nested levels -- from the
@@ -115,6 +127,9 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
             // instead of going to the heap per recursion node. Created here rather than up front
             // so the basecase path doesn't pay for the thread_local lookup.
             numetron::detail::stack_allocator<LimbT> scratch_alloc;
+            if (toom8h) {
+                return toom8h_balanced_engine::umul(u, v, std::move(alloc), scratch_alloc);
+            }
             if (toom6h) {
                 return toom6h_balanced_engine::umul(u, v, std::move(alloc), scratch_alloc);
             }

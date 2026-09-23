@@ -114,6 +114,7 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_3x3.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x4.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_6x6.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_8x8.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\uadd.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\udivby1.hpp" />

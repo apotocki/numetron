@@ -315,7 +315,7 @@ int main(int argc, char** argv)
     }
 
     static constexpr size_t limb_counts[] = {
-        1, 2, 4, 8, 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192
+        1, 2, 4, 8, 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384
     };
     static constexpr size_t samples_per_tier = 6;
 
@@ -359,6 +359,7 @@ int main(int argc, char** argv)
         auto before_t = numetron::limb_arithmetic::toom3_threshold();
         auto before_t4 = numetron::limb_arithmetic::toom4_threshold();
         auto before_t6 = numetron::limb_arithmetic::toom6h_threshold();
+        auto before_t8 = numetron::limb_arithmetic::toom8h_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
         std::cout << "tuned thresholds (limbs):\n"
                   << "  karatsuba: " << before_k << " -> " << tuned.karatsuba_threshold
@@ -368,7 +369,9 @@ int main(int argc, char** argv)
                   << "  toom4:     " << before_t4 << " -> " << tuned.toom4_threshold
                   << (tuned.toom4_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  toom6h:    " << before_t6 << " -> " << tuned.toom6h_threshold
-                  << (tuned.toom6h_found ? "" : " (no crossover found, kept)") << "\n\n";
+                  << (tuned.toom6h_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom8h:    " << before_t8 << " -> " << tuned.toom8h_threshold
+                  << (tuned.toom8h_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
 
     std::mt19937_64 rng{ 0x5EED1234ULL };
