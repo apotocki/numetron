@@ -18,8 +18,6 @@
 #endif
 #include "gmp.h"
 
-#define NUMETRON_KARATSUBA_ASM
-
 #include "numetron/basic_integer.hpp"
 #include "numetron/limb_arithmetic/mul_tuning.hpp"
 

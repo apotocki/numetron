@@ -17,7 +17,25 @@
 // configuration: on the Karatsuba implementation (the asm one is faster, which moves every
 // crossover above it) and on the compiler, since the Toom evaluation and interpolation kernels
 // are compiled C++ and the compilers make rather different code of them.
-#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#if !defined(NUMETRON_USE_ASM)
+// Header-only (no NUMETRON_USE_ASM): the C++ basecase and C++ Karatsuba, both ~1.5x slower than
+// the asm ones, which moves every crossover down; tuned 2026-09-24, the median of six runs each
+// (three with each FFT kernel; the Toom stages are tuned with the FFT off, so they don't depend
+// on it). Toom-3/4 jump between two plateau values from run to run (MSVC 36/70, 163-173/231).
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 14
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 70
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 231
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 418
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 675
+#   else // GCC (and Clang, untuned)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 20
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 137
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 218
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 311
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 500
+#   endif
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
 // asm basecase + asm Karatsuba (the default with NUMETRON_USE_ASM), MSVC with the AVX2 shift
 // kernels; tuned 2026-09-24.
 #   if defined(_MSC_VER) && !defined(__clang__)
@@ -34,8 +52,7 @@
 #       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
 #   endif
 #else
-// The C++ Karatsuba implementations over the asm basecase (tuned before the asm Karatsuba). The
-// pure C++ build (no NUMETRON_USE_ASM) uses these too; it is not tuned.
+// The C++ Karatsuba implementations over the asm basecase (tuned before the asm Karatsuba).
 #   if defined(_MSC_VER) && !defined(__clang__)
 #       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
 #       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
@@ -71,10 +88,27 @@
 #   define NUMETRON_TOOM8H_THRESHOLD NUMETRON_DEFAULT_TOOM8H_THRESHOLD
 #endif
 
-// The FFT (umul_fft.hpp, 64-bit limbs only): tune_mul_thresholds() on the same machine, with the
-// asm Karatsuba and the Toom defaults above below it, 2026-09-24 (two runs each, stable). It
-// depends on the transform kernel (NUMETRON_FFT_IMPL) far more than on anything else.
-#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+// The FFT (umul_fft.hpp, 64-bit limbs only): tune_mul_thresholds() on the same machine against
+// the Toom defaults above, 2026-09-24. It depends on the transform kernel (NUMETRON_FFT_IMPL) and,
+// through the speed of everything below it, on whether the assembly is used.
+#if !defined(NUMETRON_USE_ASM)
+// header-only: the median of three runs each (AVX2: MSVC 394/418/444, GCC 418/599/636; scalar:
+// MSVC 1663/2389/2389, GCC 2538/2696/2696)
+#   if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+#       if defined(_MSC_VER) && !defined(__clang__)
+#           define NUMETRON_DEFAULT_FFT_THRESHOLD 418
+#       else
+#           define NUMETRON_DEFAULT_FFT_THRESHOLD 599
+#       endif
+#   else // the scalar kernel
+#       if defined(_MSC_VER) && !defined(__clang__)
+#           define NUMETRON_DEFAULT_FFT_THRESHOLD 2389
+#       else
+#           define NUMETRON_DEFAULT_FFT_THRESHOLD 2696
+#       endif
+#   endif
+#elif NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+// with the asm (two runs each, the same result both times)
 #   if defined(_MSC_VER) && !defined(__clang__)
 #       define NUMETRON_DEFAULT_FFT_THRESHOLD 2696
 #   else

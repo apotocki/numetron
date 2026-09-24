@@ -40,6 +40,8 @@ Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implem
 | C++ Karatsuba, GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 | |
 | FFT, AVX2 kernel (default with AVX2), MSVC / GCC | | | | | | 2696 / 2538 |
 | FFT, scalar kernel, MSVC / GCC | | | | | | 11530 / 13828 |
+| header-only (no `NUMETRON_USE_ASM`), MSVC | 14 | 70 | 231 | 418 | 675 | AVX2 418 / scalar 2389 |
+| header-only, GCC (and Clang, untuned) | 20 | 137 | 218 | 311 | 500 | AVX2 599 / scalar 2696 |
 
 \* `--tune` gave 2249 / 2249 on MSVC once (and 1231 / 1766, 761 / 1766 in other runs), but the
 measured node curves are the same as GCC's (§ 4, Toom-6.5), so the thresholds are set by the
@@ -385,7 +387,7 @@ Thresholds are runtime atomics (`set_*_threshold()`, relaxed loads) with compile
 (`NUMETRON_DEFAULT_*` in `toom/thresholds.hpp`, overridable with `NUMETRON_*_THRESHOLD`), one
 set per Karatsuba implementation (asm vs C++: a faster level moves every crossover above it)
 and per compiler (the Toom kernels are compiled C++). The header-only build (no
-`NUMETRON_USE_ASM`) takes the C++ set; it has never been tuned.
+`NUMETRON_USE_ASM`) has a set of its own, FFT included (§ 1, § 9 item 7).
 
 `tune_mul_thresholds()` (`mul_tuning.hpp`; `numetron_bench_mul --tune[=samples] [--trace]`)
 tunes Karatsuba, Toom-3, Toom-4, Toom-6.5, Toom-8.5 and the FFT in that order, each against the
@@ -486,9 +488,22 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
 4. **Decide Toom-3 explicit vs engine** default (now equal speed).
 5. Retune thresholds after any kernel change, on both compilers, and update the defaults.
 6. The § 1 table is current (2026-09-24, FFT included); refresh it after the next change.
-7. **Header-only build** (no `NUMETRON_USE_ASM`, now the default): the C++ 64-bit basecase path
-   (`umul_basecase_unrolled`, plus 1 x 1) has not been run yet — neither gtest nor timing — and
-   its thresholds are untuned.
+7. **Header-only build** (no `NUMETRON_USE_ASM`, the library default): verified and tuned
+   2026-09-24. The full gtest suite passes on GCC (with `-march=native`, i.e. AVX2 FFT, and fully
+   portable, i.e. scalar FFT) and on MSVC (`/arch:AVX2`). Thresholds: the header-only rows of the
+   § 1 table (median of six `--tune` runs per compiler; the FFT one depends on the kernel —
+   without the asm everything below it is ~1.5x slower, so the FFT pays off 4–6x earlier).
+   gmp/reuse with those defaults:
+
+   | limbs | 1 | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+   |---|---|---|---|---|---|---|---|---|---|---|---|---|
+   | MSVC, AVX2 FFT | 0.74 | 0.57 | 0.68 | 0.69 | 0.45 | 0.62 | 0.75 | 0.97 | 1.23 | 1.54 | 1.81 | 1.47 |
+   | GCC, AVX2 FFT | 0.73 | 0.61 | 0.64 | 0.64 | 0.67 | 0.63 | 0.65 | 1.03 | 1.27 | 1.58 | 1.93 | 1.50 |
+   | GCC, portable (scalar FFT) | 0.71 | 0.57 | 0.67 | 0.66 | 0.68 | 0.65 | 0.67 | 0.70 | 0.70 | 0.96 | 1.17 | 1.00 |
+
+   Below ~1000 limbs the C++ basecase (~1.5x slower than the GMP-derived asm) keeps it at
+   0.6–0.75 of GMP; open: a faster C++ basecase, and the MSVC dip at 128 limbs (0.45 in two runs,
+   Toom-3 over the C++ Karatsuba there; GCC, still on Karatsuba at 128, has 0.67).
 8. **Tuner on plateaus**: the tie rule picks the largest threshold within 0.3%, which makes
    Toom-6.5/8.5 (and Toom-3 over the asm Karatsuba) thresholds jump between runs; a median over
    several runs, or a smaller tie band there, would make `--tune` repeatable.
