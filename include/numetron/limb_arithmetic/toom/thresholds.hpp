@@ -71,6 +71,27 @@
 #   define NUMETRON_TOOM8H_THRESHOLD NUMETRON_DEFAULT_TOOM8H_THRESHOLD
 #endif
 
+// The FFT (umul_fft.hpp, 64-bit limbs only): tune_mul_thresholds() on the same machine, with the
+// asm Karatsuba and the Toom defaults above below it, 2026-09-24 (two runs each, stable). It
+// depends on the transform kernel (NUMETRON_FFT_IMPL) far more than on anything else.
+#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2696
+#   else
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2538
+#   endif
+#else // the scalar kernel
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 11530
+#   else
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 13828
+#   endif
+#endif
+
+#ifndef NUMETRON_FFT_THRESHOLD
+#   define NUMETRON_FFT_THRESHOLD NUMETRON_DEFAULT_FFT_THRESHOLD
+#endif
+
 // Which Karatsuba / Toom-3 implementation runs: NUMETRON_KARATSUBA_IMPL / NUMETRON_TOOM3_IMPL in
 // numetron/config/implementation.hpp.
 
@@ -86,6 +107,7 @@ inline constexpr size_t min_toom3_threshold = 12;
 inline constexpr size_t min_toom4_threshold = 20;
 inline constexpr size_t min_toom6h_threshold = 42;
 inline constexpr size_t min_toom8h_threshold = 72;
+inline constexpr size_t min_fft_threshold = 1; // the FFT takes any size
 
 namespace detail {
 
@@ -98,6 +120,7 @@ inline std::atomic<size_t> toom3_threshold_value{ (std::max)(size_t{ NUMETRON_TO
 inline std::atomic<size_t> toom4_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold) };
 inline std::atomic<size_t> toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold) };
 inline std::atomic<size_t> toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold) };
+inline std::atomic<size_t> fft_threshold_value{ (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold) };
 
 }
 
@@ -149,6 +172,16 @@ inline size_t toom8h_threshold() noexcept
 inline void set_toom8h_threshold(size_t limbs) noexcept
 {
     detail::toom8h_threshold_value.store((std::max)(limbs, min_toom8h_threshold), std::memory_order_relaxed);
+}
+
+inline size_t fft_threshold() noexcept
+{
+    return detail::fft_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_fft_threshold(size_t limbs) noexcept
+{
+    detail::fft_threshold_value.store((std::max)(limbs, min_fft_threshold), std::memory_order_relaxed);
 }
 
 }

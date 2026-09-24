@@ -66,6 +66,28 @@
 #   endif
 #endif
 
+// ---- FFT (limb_arithmetic/umul_fft.hpp) -------------------------------------------------------
+// NUMETRON_FFT_IMPL, the transform kernel, one of:
+#define NUMETRON_FFT_IMPL_SCALAR 1 // portable C++, five 62-bit primes (fft/ntt.hpp)
+#define NUMETRON_FFT_IMPL_AVX2   2 // AVX2 + FMA in double precision, six 49-bit primes
+                                   // (fft/ntt_avx2.hpp); needs the compiler to target AVX2
+// Default: AVX2 when the compiler targets it (MSVC /arch:AVX2, GCC/Clang -mavx2 -mfma or a
+// -march that has them), SCALAR otherwise. No runtime CPU detection: the choice is the build's.
+#if defined(__AVX2__) && (defined(__FMA__) || (defined(_MSC_VER) && !defined(__clang__)))
+#   define NUMETRON_FFT_AVX2_AVAILABLE
+#endif
+#ifndef NUMETRON_FFT_IMPL
+#   ifdef NUMETRON_FFT_AVX2_AVAILABLE
+#       define NUMETRON_FFT_IMPL NUMETRON_FFT_IMPL_AVX2
+#   else
+#       define NUMETRON_FFT_IMPL NUMETRON_FFT_IMPL_SCALAR
+#   endif
+#endif
+
+#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2 && !defined(NUMETRON_FFT_AVX2_AVAILABLE)
+#   error "NUMETRON_FFT_IMPL_AVX2 needs a compiler targeting AVX2 and FMA"
+#endif
+
 // ---- Division ---------------------------------------------------------------------------------
 // Estimate the quotient digits in udiv() with a precomputed reciprocal (Möller-Granlund) instead
 // of a hardware 2/1 division per digit. Measured on x86-64 that is 10-38% faster over the whole
@@ -97,6 +119,15 @@ inline constexpr const char* toom3_impl_name =
     "engine";
 #else
 #   error "unknown NUMETRON_TOOM3_IMPL"
+#endif
+
+inline constexpr const char* fft_impl_name =
+#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+    "avx2";
+#elif NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_SCALAR
+    "scalar";
+#else
+#   error "unknown NUMETRON_FFT_IMPL"
 #endif
 
 inline constexpr const char* mul_basecase_name =

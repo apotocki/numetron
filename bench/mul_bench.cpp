@@ -313,12 +313,16 @@ void print_configuration()
     namespace la = numetron::limb_arithmetic;
     std::cout << "implementations: karatsuba " << numetron::config::karatsuba_impl_name
               << ", toom3 " << numetron::config::toom3_impl_name
+              << ", fft " << numetron::config::fft_impl_name
               << ", mul_basecase " << numetron::config::mul_basecase_name << "\n"
               << "thresholds (limbs): karatsuba " << la::karatsuba_threshold()
               << ", toom3 " << la::toom3_threshold()
               << ", toom4 " << la::toom4_threshold()
               << ", toom6h " << la::toom6h_threshold()
-              << ", toom8h " << la::toom8h_threshold() << "\n";
+              << ", toom8h " << la::toom8h_threshold()
+              << ", fft ";
+    if (la::fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
+    else std::cout << la::fft_threshold() << "\n";
 }
 
 } // namespace
@@ -378,7 +382,9 @@ int main(int argc, char** argv)
         auto before_t4 = numetron::limb_arithmetic::toom4_threshold();
         auto before_t6 = numetron::limb_arithmetic::toom6h_threshold();
         auto before_t8 = numetron::limb_arithmetic::toom8h_threshold();
+        auto before_fft = numetron::limb_arithmetic::fft_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
+        auto show = [](size_t t) { return t == ~size_t{ 0 } ? std::string{ "off" } : std::to_string(t); };
         std::cout << "tuned thresholds (limbs):\n"
                   << "  karatsuba: " << before_k << " -> " << tuned.karatsuba_threshold
                   << (tuned.karatsuba_found ? "" : " (no crossover found, kept)") << "\n"
@@ -389,7 +395,9 @@ int main(int argc, char** argv)
                   << "  toom6h:    " << before_t6 << " -> " << tuned.toom6h_threshold
                   << (tuned.toom6h_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  toom8h:    " << before_t8 << " -> " << tuned.toom8h_threshold
-                  << (tuned.toom8h_found ? "" : " (no crossover found, kept)") << "\n\n";
+                  << (tuned.toom8h_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  fft:       " << show(before_fft) << " -> " << show(tuned.fft_threshold)
+                  << (tuned.fft_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
 
     std::mt19937_64 rng{ 0x5EED1234ULL };

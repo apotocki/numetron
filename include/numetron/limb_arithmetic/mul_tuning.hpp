@@ -64,6 +64,7 @@ struct mul_tuning_options
     size_t toom4_max = 4096;
     size_t toom6h_max = 8192;
     size_t toom8h_max = 16384;
+    size_t fft_max = 16384;
 
     // Install the found thresholds; when false they are only returned and the previous values
     // are restored.
@@ -77,11 +78,13 @@ struct mul_tuning_result
     size_t toom4_threshold;
     size_t toom6h_threshold;
     size_t toom8h_threshold;
+    size_t fft_threshold;
     bool karatsuba_found;
     bool toom3_found;
     bool toom4_found;
     bool toom6h_found;
     bool toom8h_found;
+    bool fft_found;
 };
 
 namespace mul_tuning_detail {
@@ -258,7 +261,7 @@ std::optional<size_t> tune_threshold(workload& work, mul_tuning_options const& o
 // machine and (by default) installs the results as the runtime thresholds. Karatsuba is tuned
 // first against basecase, then Toom-3 against whatever the tuned Karatsuba threshold selects
 // below it, then Toom-4 against the tuned Toom-3/Karatsuba below it, then Toom-6.5 and Toom-8.5
-// against all of those below them. See
+// against all of those below them, and last the FFT against the whole Toom chain. See
 // mul_tuning_detail::tune_threshold() for how each threshold is chosen.
 //
 // While it runs, the global thresholds are temporarily forced to other values. Multiplications
@@ -271,6 +274,7 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     const size_t prev_toom4 = toom4_threshold();
     const size_t prev_toom6h = toom6h_threshold();
     const size_t prev_toom8h = toom8h_threshold();
+    const size_t prev_fft = fft_threshold();
 
     bool committed = false;
     NUMETRON_SCOPE_EXIT([&] {
@@ -280,16 +284,18 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
             set_toom4_threshold(prev_toom4);
             set_toom6h_threshold(prev_toom6h);
             set_toom8h_threshold(prev_toom8h);
+            set_fft_threshold(prev_fft);
         }
     });
 
-    mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max, opts.toom8h_max }), opts.operand_pairs };
+    mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max, opts.toom8h_max, opts.fft_max }), opts.operand_pairs };
 
     constexpr size_t off = (std::numeric_limits<size_t>::max)();
     mul_tuning_result result{};
 
     // Algorithms above the one being tuned are switched off until their own turn; one that ends
     // up not found stays off for the tuning of the next one, and is restored afterwards.
+    set_fft_threshold(off);
     set_toom8h_threshold(off);
     set_toom6h_threshold(off);
     set_toom4_threshold(off);
@@ -322,6 +328,14 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         (std::max)(min_toom8h_threshold, toom6h.value_or(toom4.value_or(toom3.value_or(min_toom8h_threshold)))), opts.toom8h_max);
     result.toom8h_found = toom8h.has_value();
     result.toom8h_threshold = toom8h.value_or(prev_toom8h);
+    set_toom8h_threshold(toom8h.value_or(off));
+
+    // The FFT takes any size (and has no sub-products), so it is searched from the Toom-4
+    // threshold up against everything below.
+    auto fft = mul_tuning_detail::tune_threshold(work, opts, "fft", &set_fft_threshold,
+        (std::max)(min_fft_threshold, toom4.value_or(toom3.value_or(min_toom4_threshold))), opts.fft_max);
+    result.fft_found = fft.has_value();
+    result.fft_threshold = fft.value_or(prev_fft);
 
     if (opts.apply) {
         set_karatsuba_threshold(result.karatsuba_threshold);
@@ -329,6 +343,7 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         set_toom4_threshold(result.toom4_threshold);
         set_toom6h_threshold(result.toom6h_threshold);
         set_toom8h_threshold(result.toom8h_threshold);
+        set_fft_threshold(result.fft_threshold);
         committed = true;
     }
     return result;

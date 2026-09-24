@@ -139,6 +139,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba_fused.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba_asm.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_fft.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\fft\ntt.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\fft\ntt_avx2.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_toom3.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\usub.hpp" />
   </ItemGroup>

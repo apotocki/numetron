@@ -12,35 +12,38 @@ CMake). They are good for comparing variants, not as absolute numbers.
 
 ## 1. Where things stand
 
-`numetron_bench_mul --tune` (n x n limbs, `gmp/reuse` = GMP time / numetron time with a reused
-result; > 1 means numetron is faster):
+`numetron_bench_mul` with the default configuration (`NUMETRON_USE_ASM`: asm basecase and asm
+Karatsuba; AVX2 FFT; the default thresholds below), n x n limbs, `gmp/reuse` = GMP time /
+numetron time with a reused result; > 1 means numetron is faster (2026-09-24):
 
-| limbs | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 12288 | 16384 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| GCC   | 0.69 | 0.65 | 0.68 | 0.93 | 1.20 | 1.09 | 1.08 | 1.20 | 1.14 | 1.13 | 1.17 | 1.10 | 1.11 | 1.12 | 0.86 | 0.76 |
-| MSVC  | 0.60–0.73 | 0.65–0.70 | 0.54–0.59 | 0.82–0.87 | 1.10–1.13 | 1.04–1.10 | 1.06 | 1.20 | 1.11 | 1.12 | 1.10 | 1.06–1.10 | 1.06–1.09 | 1.05–1.09 | 0.80 | 0.75 |
+| limbs | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 3072 | 4096 | 8192 | 12288 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| GCC  | 0.70 | 0.57 | 0.68 | 0.95 | 1.16 | 1.15 | 1.18 | 1.26 | 1.20 | 1.17 | 1.16 | 1.15 | 1.39 | 1.59 | 1.98 | 1.57 | 1.61 |
+| MSVC | 0.63 | 0.71 | 0.53 | 0.82 | 1.12 | 1.16 | 1.18 | 1.26 | 1.19 | 1.16 | 1.15 | 1.16 | 1.33 | 1.51 | 1.79 | 1.58 | 1.54 |
 
-For reference, at the start of this work numetron was at 0.65 at 4096 limbs.
+At the start of this work numetron was at 0.65 at 4096 limbs; before the FFT, 0.75–0.86 at
+12288–16384.
 
-- **16 .. 8192 limbs: faster than GMP** with both compilers.
-- **1 .. 8 limbs: slower** (0.6–0.9). The work there is a handful of `mul` instructions; the
+- **16 limbs and up: faster than GMP** with both compilers — 1.15–1.26 in the Karatsuba / Toom
+  range, 1.33–1.98 from the FFT threshold (~2.5–2.7k limbs) up; `docs/fft.md` has the FFT up to
+  524288 limbs (0.45–0.86 of GMP's time there).
+- **1 .. 8 limbs: slower** (0.5–0.95). The work there is a handful of `mul` instructions; the
   cost is the call/dispatch/allocation overhead around it (see § 9).
-- **12288+ limbs: slower and falling** — GMP switches to FFT (its time grows ~1.36x from 8192
-  to 12288 limbs, 1.5x the size). No Toom variant closes that; it needs FFT (see § 9).
 
-Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and Karatsuba
-implementation — see § 6):
+Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implementation — § 6):
 
-| | karatsuba | toom3 | toom4 | toom6h | toom8h |
-|---|---|---|---|---|---|
-| asm Karatsuba (default with `NUMETRON_USE_ASM`), MSVC | 29 | 115 | 444 | 717* | 967* |
-| asm Karatsuba, GCC (and Clang, untuned) | 29 | 115 | 444 | 675 | 967 |
-| C++ Karatsuba, MSVC | 38 | 115 | 330 | 717 | 967 |
-| C++ Karatsuba, GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 |
+| | karatsuba | toom3 | toom4 | toom6h | toom8h | fft |
+|---|---|---|---|---|---|---|
+| asm Karatsuba (default with `NUMETRON_USE_ASM`), MSVC | 29 | 115 | 444 | 717* | 967* | |
+| asm Karatsuba, GCC (and Clang, untuned) | 29 | 115 | 444 | 675 | 967 | |
+| C++ Karatsuba, MSVC | 38 | 115 | 330 | 717 | 967 | |
+| C++ Karatsuba, GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 | |
+| FFT, AVX2 kernel (default with AVX2), MSVC / GCC | | | | | | 2696 / 2538 |
+| FFT, scalar kernel, MSVC / GCC | | | | | | 11530 / 13828 |
 
-\* `--tune` gave 2249 / 2249 on MSVC, but the measured node curves are the same as GCC's
-(§ 4, Toom-6.5), so the thresholds are set by the curves, not by that run. The gmp/reuse table above predates the asm
-Karatsuba.
+\* `--tune` gave 2249 / 2249 on MSVC once (and 1231 / 1766, 761 / 1766 in other runs), but the
+measured node curves are the same as GCC's (§ 4, Toom-6.5), so the thresholds are set by the
+curves, not by single runs. The FFT thresholds were the same in two runs each.
 
 ---
 
@@ -48,6 +51,10 @@ Karatsuba.
 
 `umul()` / `umul_dispatch()` in `limb_arithmetic/umul.hpp`, operands normalized to un >= vn:
 
+0. **FFT** (`umul_fft.hpp`, 64-bit limbs) — `vn >= fft_threshold()`, any shape: a multi-prime
+   number-theoretic transform, 2 limbs per coefficient; `NUMETRON_FFT_IMPL` picks the AVX2 + FMA
+   kernel (default when the compiler targets AVX2) or the portable scalar one. Design,
+   measurements and history: `docs/fft.md`.
 1. **Toom-8.5** (balanced 8 x 8, engine plan) — `vn >= toom8h_threshold()` and
    `toom8h_split_fits(un, vn)` (v reaches u's top eighth: `vn > 7*ceil(un/8)`).
 2. **Toom-6.5** (balanced 6 x 6, engine plan) — same pattern with sixths.
@@ -381,8 +388,9 @@ and per compiler (the Toom kernels are compiled C++). The header-only build (no
 `NUMETRON_USE_ASM`) takes the C++ set; it has never been tuned.
 
 `tune_mul_thresholds()` (`mul_tuning.hpp`; `numetron_bench_mul --tune[=samples] [--trace]`)
-tunes Karatsuba, Toom-3, Toom-4, Toom-6.5 and Toom-8.5 in that order, each against the tuned
-ones below. **Why it works the way it does**:
+tunes Karatsuba, Toom-3, Toom-4, Toom-6.5, Toom-8.5 and the FFT in that order, each against the
+tuned ones below (the FFT from the Toom-4 threshold up to `fft_max` = 16384, against the whole
+Toom chain; everything above the stage being tuned is off, the FFT included). **Why it works the way it does**:
 
 - A one-level comparison (threshold n vs n+1: only the top node changes) is **not a smooth
   curve**. The higher/lower time ratio swings in bands about an octave wide as the two
@@ -402,7 +410,7 @@ ones below. **Why it works the way it does**:
   so their thresholds may move between runs — harmless, since that is exactly when the choice
   doesn't matter. The same rule gave toom6h = toom8h = 2249 in one MSVC run although the node
   curves match GCC's (§ 4, Toom-6.5): on a plateau, read the curves, not a single `--tune`.
-- The whole `--tune` takes about 25 s.
+- The whole `--tune` takes about 25 s, plus ~10–20 s for the FFT stage.
 
 What each level buys (full product time vs. the higher algorithm off, MSVC): Karatsuba ~29%,
 Toom-3 ~8–9%, Toom-4 ~5%, Toom-6.5 ~5%, Toom-8.5 ~2%.
@@ -466,8 +474,9 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
 
 ## 9. Open items
 
-1. **FFT (Schönhage–Strassen)** for 10k+ limbs — the only way to close the gap above 8192
-   limbs. A separate subsystem, not an engine plan; fixed asm kernels are fine there.
+1. **FFT**: done — a multi-prime NTT (not Schönhage–Strassen), on by default from ~2.5–2.7k
+   limbs with the AVX2 kernel; `docs/fft.md` (its § 6 lists what is left: the scalar Horner step of
+   the CRT, AVX-512, finer lengths).
 2. **Small operands (1–8 limbs, 0.6–0.9 vs GMP)**: overhead around the basecase in
    `mul()`/`umul()` (dispatch, allocation, normalization).
 3. **Unbalanced products**: the generic `toom_engine<3,3>` plan still uses the old slow ops.
@@ -476,8 +485,7 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
    benchmark on unequal sizes first.
 4. **Decide Toom-3 explicit vs engine** default (now equal speed).
 5. Retune thresholds after any kernel change, on both compilers, and update the defaults.
-6. **Refresh the § 1 gmp/reuse table** with the current defaults (asm Karatsuba, new thresholds,
-   AVX2 shifts on MSVC).
+6. The § 1 table is current (2026-09-24, FFT included); refresh it after the next change.
 7. **Header-only build** (no `NUMETRON_USE_ASM`, now the default): the C++ 64-bit basecase path
    (`umul_basecase_unrolled`, plus 1 x 1) has not been run yet — neither gtest nor timing — and
    its thresholds are untuned.

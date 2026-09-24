@@ -21,7 +21,19 @@
 // runs for balanced operands.
 #include "umul_toom3.hpp"
 
+#include "umul_fft.hpp"
+
 namespace numetron::limb_arithmetic {
+
+// The FFT takes any shape (its length follows un + vn); only the size of the smaller operand
+// decides. 64-bit limbs only.
+template <std::unsigned_integral LimbT>
+inline bool is_fft_applicable([[maybe_unused]] size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    if constexpr (sizeof(LimbT) == 8) return vn >= fft_threshold();
+    else return false;
+}
 
 inline bool is_karatsuba_applicable(size_t un, size_t vn) noexcept
 {
@@ -73,6 +85,12 @@ inline LimbT* umul_dispatch(
         std::swap(un, vn);
     }
 
+    if constexpr (sizeof(LimbT) == 8) {
+        if (is_fft_applicable<LimbT>(un, vn)) {
+            return detail::umul_fft_impl(u, un, v, vn, rb, std::move(alloc));
+        }
+    }
+
     if (is_toom8h_applicable(un, vn)) {
         return toom8h_balanced_engine::umul(u, un, v, vn, rb, std::move(alloc));
     }
@@ -119,6 +137,13 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
 {
     if (v.empty()) [[unlikely]] {
         return { nullptr, 0, 0 };
+    }
+
+    if constexpr (sizeof(LimbT) == 8) {
+        if (is_fft_applicable<LimbT>(u.size(), v.size())) {
+            numetron::detail::stack_allocator<LimbT> scratch_alloc;
+            return umul_fft(u, v, std::move(alloc), scratch_alloc);
+        }
     }
 
     //if (v.size() >= NUMETRON_KARATSUBA_THRESHOLD) {
