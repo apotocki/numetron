@@ -51,6 +51,12 @@
     <MASM Include="..\src\arch\x86_64\add_sub_n.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
+    <MASM Include="..\src\arch\x86_64\karatsuba_interp.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
+    <MASM Include="..\src\arch\x86_64\karatsuba_mul.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
     <MASM Include="..\src\arch\x86_64\detect_mul_basecase.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
@@ -72,6 +78,12 @@
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\add_sub_n.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\karatsuba_interp.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\karatsuba_mul.s">
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\detect_mul_basecase.s">
@@ -132,6 +144,9 @@
     <ClInclude Include="..\include\numetron\config\cmath.hpp">
       <Filter>numetron\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\config\implementation.hpp">
+      <Filter>numetron\config</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\detail\hash.hpp">
       <Filter>numetron\detail</Filter>
     </ClInclude>
@@ -157,6 +172,12 @@
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba_fused.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba_asm.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_toom3.hpp">

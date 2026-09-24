@@ -14,6 +14,14 @@
 #include "numetron/limb_arithmetic/uadd.hpp"
 #include "numetron/limb_arithmetic/usub.hpp"
 
+// MSVC doesn't vectorize the one-bit shift loops of lshift1() / rshift1() (GCC does when AVX2 is
+// enabled), and its scalar shld/shrd loop runs at 2-3x GCC's per-limb cost: with /arch:AVX2 those
+// two get explicit AVX2 loops.
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64) && defined(__AVX2__)
+#   include <immintrin.h>
+#   define NUMETRON_TOOM_KERNELS_AVX2_SHIFT1
+#endif
+
 // Limb-vector kernels shared by the Toom implementations (the hand-written ones and the
 // plan-driven engine), so both run on exactly the same primitives. Unless noted, r may coincide
 // with an input.
@@ -119,7 +127,20 @@ inline LimbT lshift1(LimbT* r, LimbT const* a, size_t n) noexcept
 {
     constexpr int top = std::numeric_limits<LimbT>::digits - 1;
     const LimbT out = a[n - 1] >> top;
-    for (size_t i = n - 1; i > 0; --i) { // high to low, so r == a works
+    size_t i = n - 1; // the next limb to write; high to low, so r == a works
+#if defined(NUMETRON_TOOM_KERNELS_AVX2_SHIFT1)
+    if constexpr (sizeof(LimbT) == 8) {
+        // r[i-3..i] = (a[i-3..i] << 1) | (a[i-4..i-1] >> 63): two overlapping loads per block,
+        // both below everything stored so far.
+        for (; i >= 4; i -= 4) {
+            const __m256i cur = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(a + i - 3));
+            const __m256i low = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(a + i - 4));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(r + i - 3),
+                _mm256_or_si256(_mm256_slli_epi64(cur, 1), _mm256_srli_epi64(low, 63)));
+        }
+    }
+#endif
+    for (; i > 0; --i) {
         r[i] = shl_pair<LimbT, 1>(a[i - 1], a[i]);
     }
     r[0] = a[0] << 1;
@@ -131,7 +152,20 @@ template <std::unsigned_integral LimbT>
 inline LimbT rshift1(LimbT* r, LimbT const* a, size_t n) noexcept
 {
     const LimbT out = a[0] & 1;
-    for (size_t i = 0; i + 1 < n; ++i) { // low to high, so r == a works
+    size_t i = 0; // low to high, so r == a works
+#if defined(NUMETRON_TOOM_KERNELS_AVX2_SHIFT1)
+    if constexpr (sizeof(LimbT) == 8) {
+        // r[i..i+3] = (a[i..i+3] >> 1) | (a[i+1..i+4] << 63): two overlapping loads per block,
+        // both above everything stored so far.
+        for (; i + 4 < n; i += 4) {
+            const __m256i cur = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(a + i));
+            const __m256i high = _mm256_loadu_si256(reinterpret_cast<__m256i const*>(a + i + 1));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(r + i),
+                _mm256_or_si256(_mm256_srli_epi64(cur, 1), _mm256_slli_epi64(high, 63)));
+        }
+    }
+#endif
+    for (; i + 1 < n; ++i) {
         r[i] = shr_pair<LimbT, 1>(a[i], a[i + 1]);
     }
     r[n - 1] = a[n - 1] >> 1;

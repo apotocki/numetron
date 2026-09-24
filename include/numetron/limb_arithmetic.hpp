@@ -13,11 +13,9 @@
 
 #include "detail/small_array.hpp"
 
-#define NUMETRON_USE_ASM
-#define NUMETRON_PLATFORM_AUTODETECT
-//#define NUMETRON_PLATFORM_ALDERLAKE
-//#define NUMETRON_PLATFORM_CORE2
-//#define NUMETRON_PLATFORM_K8
+// NUMETRON_USE_ASM, NUMETRON_PLATFORM_*, NUMETRON_ARITHMETIC_USE_INVINT_DIV and the choice of
+// Karatsuba / Toom-3 implementation.
+#include "config/implementation.hpp"
 
 #include "limb_arithmetic/uadd.hpp"
 #include "limb_arithmetic/usub.hpp"
@@ -32,12 +30,6 @@
 #   define NUMETRON_INPLACE_LIMB_RESERVE_COUNT 8
 #endif
 
-// Estimate the quotient digits in udiv() with a precomputed reciprocal (Möller-Granlund) instead
-// of a hardware 2/1 division per digit. Measured on x86-64 that is 10-38% faster over the whole
-// size range, most of it on small divisors. Define NUMETRON_ARITHMETIC_NO_INVINT_DIV to opt out.
-#if !defined(NUMETRON_ARITHMETIC_NO_INVINT_DIV) && !defined(NUMETRON_ARITHMETIC_USE_INVINT_DIV)
-#   define NUMETRON_ARITHMETIC_USE_INVINT_DIV
-#endif
 
 // Quotient length, in limbs, from which udiv() switches from the plain basecase division to
 // Svoboda's. Svoboda trades the per-digit 2/1 division for an O(n) scaling of the divisor plus a

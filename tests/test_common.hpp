@@ -21,6 +21,10 @@
 #define CHECK_GE(lhs, rhs) EXPECT_GE((lhs), (rhs))
 #define CHECK_GT(lhs, rhs) EXPECT_GT((lhs), (rhs))
 
+//#define NUMETRON_EXPLICIT_KARATSUBA
+//#define NUMETRON_KARATSUBA_ASM
+//#define NUMETRON_KARATSUBA_FUSED
+
 #define NUMETRON_NO30 true
 #define NUMETRON_TEST_COUNT 16// (16 * 256)//16//(48*5000) //16// (48*5000)
 #define NUMETRON_USZCOND(sz) (((sz) & 3) == 2)

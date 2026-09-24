@@ -94,9 +94,9 @@ target_link_libraries(numetron_tests PRIVATE numetron ${DEPS})
 add_test(NAME numetron_tests COMMAND numetron_tests)
 
 # Define the mul benchmark executable (Numetron vs GMP, standalone, not run via ctest).
-# It links the same "numetron" asm library as numetron_tests so it runs with NUMETRON_USE_ASM +
-# NUMETRON_PLATFORM_AUTODETECT (the library defaults), i.e. its best runtime-selected
-# mul_basecase implementation, not the plain C++ fallback.
+# It links the same "numetron" asm library as numetron_tests, which (on x86-64) also defines
+# NUMETRON_USE_ASM for it, so it runs the best runtime-selected mul_basecase implementation,
+# not the plain C++ fallback the header-only default would use.
 add_executable(numetron_bench_mul ${NUMETRON_BENCH_MUL_SOURCES})
 target_include_directories(numetron_bench_mul PRIVATE include ${GMP_INCLUDE_DIR})
 

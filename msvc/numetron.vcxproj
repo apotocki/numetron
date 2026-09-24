@@ -51,6 +51,18 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
     </MASM>
+    <MASM Include="..\src\arch\x86_64\karatsuba_interp.asm">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </MASM>
+    <MASM Include="..\src\arch\x86_64\karatsuba_mul.asm">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </MASM>
     <MASM Include="..\src\arch\x86_64\detect_platform.asm">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
@@ -78,6 +90,8 @@
     <None Include="..\src\arch\x86_64\detect_mul_basecase.s" />
     <None Include="..\src\arch\x86_64\detect_platform.s" />
     <None Include="..\src\arch\x86_64\add_sub_n.s" />
+    <None Include="..\src\arch\x86_64\karatsuba_interp.s" />
+    <None Include="..\src\arch\x86_64\karatsuba_mul.s" />
     <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
   <ItemGroup>
@@ -85,6 +99,7 @@
     <ClInclude Include="..\include\numetron\basic_decimal.hpp" />
     <ClInclude Include="..\include\numetron\basic_integer.hpp" />
     <ClInclude Include="..\include\numetron\config\cmath.hpp" />
+    <ClInclude Include="..\include\numetron\config\implementation.hpp" />
     <ClInclude Include="..\include\numetron\config\start_lifetime.hpp" />
     <ClInclude Include="..\include\numetron\ct.hpp" />
     <ClInclude Include="..\include\numetron\decimal_arithmetic.hpp" />
@@ -122,6 +137,8 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul1.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_basecase.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba_fused.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_karatsuba_asm.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_toom3.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\usub.hpp" />
   </ItemGroup>

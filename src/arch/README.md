@@ -13,7 +13,8 @@ Some assembly files in subdirectories are taken from the GMP (GNU Multiple Preci
 
 ### Project Files
 All other source files in this directory are part of the Numetron project, e.g.
-`x86_64/detect_platform.*`, `x86_64/detect_mul_basecase.*` and `x86_64/add_sub_n.*`
+`x86_64/detect_platform.*`, `x86_64/detect_mul_basecase.*`, `x86_64/add_sub_n.*`,
+`x86_64/karatsuba_interp.*` and `x86_64/karatsuba_mul.*`
 (written for Numetron, not derived from GMP).
 
 **License**: **MIT License**

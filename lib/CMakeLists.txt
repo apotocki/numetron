@@ -27,7 +27,10 @@ else()
             ${LIBRARY_HOME}/src/arch/x86_64/detect_platform.s
             ${LIBRARY_HOME}/src/arch/x86_64/detect_mul_basecase.s
             ${LIBRARY_HOME}/src/arch/x86_64/add_sub_n.s
+            ${LIBRARY_HOME}/src/arch/x86_64/karatsuba_interp.s
+            ${LIBRARY_HOME}/src/arch/x86_64/karatsuba_mul.s
         )
+        set (_numetron_x64_asm ON)
     elseif (_numetron_proc MATCHES "^(arm|arm64|aarch64)$")
         #message(STATUS "Numetron: ARM assembly not available yet; building without ASM sources.")
         set (_numetron_aarch64_detect_src ${LIBRARY_HOME}/src/arch/aarch64/detect_mul_basecase.s)
@@ -49,6 +52,12 @@ else()
 endif()
 
 add_library(${LIBRARY_NAME} STATIC ${NUMETRON_LIB_SOURCES})
+
+# Without NUMETRON_USE_ASM the headers are pure C++ (header-only); linking the x86-64 assembly
+# is what turns it on, for everything that links this target.
+if (_numetron_x64_asm)
+    target_compile_definitions(${LIBRARY_NAME} INTERFACE NUMETRON_USE_ASM)
+endif()
 
 # This target only ever compiles .s sources. Whichever project embeds it (annium-lang,
 # standalone or nested under sonia-ui) may set directory-scoped C++ flags/defines

@@ -8,14 +8,17 @@
 #include "toom/engine.hpp"
 #include "toom/thresholds.hpp"
 #include "numetron/detail/stack_allocator.hpp"
+#include "numetron/config/implementation.hpp" // NUMETRON_KARATSUBA_IMPL, NUMETRON_TOOM3_IMPL
 
-#ifdef NUMETRON_EXPLICIT_KARATSUBA
-#   include "umul_karatsuba.hpp"
+#include "umul_karatsuba.hpp"
+#include "umul_karatsuba_fused.hpp"
+#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#   include "umul_karatsuba_asm.hpp"
 #endif
 
 // Always included: besides the hand-written Toom-3 it defines detail::toom3_split_fits(), which
-// also gates the engine's balanced Toom-3 plan. NUMETRON_EXPLICIT_TOOM3 only picks which of the
-// two runs for balanced operands.
+// also gates the engine's balanced Toom-3 plan. NUMETRON_TOOM3_IMPL only picks which of the two
+// runs for balanced operands.
 #include "umul_toom3.hpp"
 
 namespace numetron::limb_arithmetic {
@@ -84,7 +87,7 @@ inline LimbT* umul_dispatch(
 
     if (is_toom3_applicable(un, vn)) {
         if (detail::toom3_split_fits(un, vn)) {
-#ifdef NUMETRON_EXPLICIT_TOOM3
+#if NUMETRON_TOOM3_IMPL == NUMETRON_TOOM3_IMPL_CXX
             return detail::umul_toom3_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
 #else
             return toom3_balanced_engine::umul(u, un, v, vn, rb, std::move(alloc));
@@ -94,8 +97,12 @@ inline LimbT* umul_dispatch(
     }
 
     if (is_karatsuba_applicable(un, vn)) {
-#ifndef NUMETRON_EXPLICIT_KARATSUBA
+#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ENGINE
         return toom_engine<2, 2>::umul(u, un, v, vn, rb, std::move(alloc));
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+        return detail::umul_karatsuba_asm_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_FUSED
+        return detail::umul_karatsuba_fused_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
 #else
         return detail::umul_karatsuba_impl(std::span{u, un}, std::span{v, vn}, rb, alloc);
 #endif
@@ -138,7 +145,7 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
             }
             if (toom3) {
                 if (detail::toom3_split_fits(u.size(), v.size())) {
-    #ifdef NUMETRON_EXPLICIT_TOOM3
+    #if NUMETRON_TOOM3_IMPL == NUMETRON_TOOM3_IMPL_CXX
                     return umul_toom3(u, v, std::move(alloc), scratch_alloc);
     #else
                     return toom3_balanced_engine::umul(u, v, std::move(alloc), scratch_alloc);
@@ -146,8 +153,12 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
                 }
                 return toom_engine<3, 3>::umul(u, v, std::move(alloc), scratch_alloc);
             }
-    #ifndef NUMETRON_EXPLICIT_KARATSUBA
+    #if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ENGINE
             return toom_engine<2, 2>::umul(u, v, std::move(alloc), scratch_alloc);
+    #elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+            return umul_karatsuba_asm(u, v, std::move(alloc), scratch_alloc);
+    #elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_FUSED
+            return umul_karatsuba_fused(u, v, std::move(alloc), scratch_alloc);
     #else
             return umul_karatsuba(u, v, std::move(alloc), scratch_alloc);
     #endif

@@ -28,12 +28,19 @@ For reference, at the start of this work numetron was at 0.65 at 4096 limbs.
 - **12288+ limbs: slower and falling** — GMP switches to FFT (its time grows ~1.36x from 8192
   to 12288 limbs, 1.5x the size). No Toom variant closes that; it needs FFT (see § 9).
 
-Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler — see § 6):
+Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and Karatsuba
+implementation — see § 6):
 
 | | karatsuba | toom3 | toom4 | toom6h | toom8h |
 |---|---|---|---|---|---|
-| MSVC | 38 | 115 | 330 | 717 | 967 |
-| GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 |
+| asm Karatsuba (default with `NUMETRON_USE_ASM`), MSVC | 29 | 115 | 444 | 717* | 967* |
+| asm Karatsuba, GCC (and Clang, untuned) | 29 | 115 | 444 | 675 | 967 |
+| C++ Karatsuba, MSVC | 38 | 115 | 330 | 717 | 967 |
+| C++ Karatsuba, GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 |
+
+\* `--tune` gave 2249 / 2249 on MSVC, but the measured node curves are the same as GCC's
+(§ 4, Toom-6.5), so the thresholds are set by the curves, not by that run. The gmp/reuse table above predates the asm
+Karatsuba.
 
 ---
 
@@ -45,13 +52,22 @@ Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler — see §
    `toom8h_split_fits(un, vn)` (v reaches u's top eighth: `vn > 7*ceil(un/8)`).
 2. **Toom-6.5** (balanced 6 x 6, engine plan) — same pattern with sixths.
 3. **Toom-4** (balanced 4 x 4, engine plan) — same pattern with quarters.
-4. **Toom-3** — balanced (`toom3_split_fits`): the hand-written `detail::umul_toom3_impl`
-   (default) or the engine's `toom3_balanced` plan (`NUMETRON_TOOM3_USE_ENGINE`); unbalanced:
-   the old generic engine plan `toom_engine<3,3>`.
-5. **Karatsuba** — hand-written `umul_karatsuba_impl` (`NUMETRON_EXPLICIT_KARATSUBA`, always on).
+4. **Toom-3** — balanced (`toom3_split_fits`): `NUMETRON_TOOM3_IMPL` picks the hand-written
+   `detail::umul_toom3_impl` (`_CXX`, default) or the engine's `toom3_balanced` plan (`_ENGINE`);
+   unbalanced: the old generic engine plan `toom_engine<3,3>`.
+5. **Karatsuba** — `NUMETRON_KARATSUBA_IMPL` picks the all-assembly `umul_karatsuba_asm_impl`
+   (`_ASM`, x86-64 only; the default with `NUMETRON_USE_ASM`) (§ 4), the hand-written
+   `umul_karatsuba_impl` (`_CXX`, the default without the assembly), `umul_karatsuba_fused_impl`
+   (`_FUSED`), or the engine's 2 x 2 plan (`_ENGINE`).
 6. **Basecase** — `umul_basecase`, the GMP-derived asm `mul_basecase` (`src/arch`, LGPL,
    runtime-selected alderlake/core2/k8), with `umul_basecase_2x` as a loop-free special case for
    operands of at most 2 limbs.
+
+The implementation choices (and their defaults) are all in `numetron/config/implementation.hpp`;
+override one per build with a compiler flag, e.g.
+`-DNUMETRON_KARATSUBA_IMPL=NUMETRON_KARATSUBA_IMPL_FUSED` (shorthands: `NUMETRON_KARATSUBA_FUSED`,
+`NUMETRON_KARATSUBA_ASM`, `NUMETRON_TOOM3_USE_ENGINE`). `numetron_bench_mul` prints the ones its
+build uses.
 
 Only *balanced* products get Toom-4/6.5/8.5. Anything more lopsided falls through to Toom-3
 or Karatsuba (§ 9: unbalanced variants are an open item).
@@ -147,14 +163,112 @@ compile time (`lincomb_dual_interleaves`), from measurements:
 Points are symmetric pairs wherever possible, so each pair splits into an even and an odd half
 with one lincomb each, and the interpolation separates into two independent halves.
 
-### Karatsuba (`umul_karatsuba.hpp`)
-GMP-toom22-like split by un, hand-written. The engine's 2 x 2 plan exists but isn't used.
+### Karatsuba (`umul_karatsuba.hpp`, `umul_karatsuba_fused.hpp`, `umul_karatsuba_asm.hpp`)
+GMP-toom22-like split by un. Three implementations of the same algorithm: the hand-written C++
+one, the fused variant and the all-assembly one — the default wherever the assembly is in use
+(`NUMETRON_USE_ASM` on x86-64). The engine's 2 x 2 plan exists but isn't used.
+
+**Where a Karatsuba node's time goes** (one level, both halves basecase, both compilers alike;
+scratch `karatsuba_cost.cpp`):
+
+| n | \|a0−a1\|, \|b0−b1\| | interpolation | rest (dispatch, allocator, memsets; noisy) |
+|---|---|---|---|
+| 38–40 | 3.3–3.6% | 5.7–6.5% | 2–8% |
+| 64 | 1.6–1.8% | 3.4–3.9% | 2–7% |
+| 114 | 0.9% | 2.0% | 1–3% |
+
+The rest is the three basecase products. The interpolation is 4 passes (3 add_n over the middle
+columns, 1 add/sub_n of vm1 over 2n), as in GMP; most of them already run the asm
+`numetron_add_n`/`numetron_sub_n`. So no rewrite of the node can win much on its own; the
+all-assembly variant below measures what removing all of it (plus the glue) gives.
+
+**Fused variant** (`umul_karatsuba_fused.hpp`, `NUMETRON_KARATSUBA_IMPL_FUSED`): the same algorithm,
+but the three middle-column add passes are one pass, `detail::karatsuba_interp` — the MIT asm
+`numetron_karatsuba_interp` (`src/arch/x86_64/karatsuba_interp.{s,asm}`) with `NUMETRON_USE_ASM`,
+a C++ loop otherwise. It keeps three carry chains (X = H0 + Li, X + L0, X + Hi) in byte registers
+between 4-limb blocks and reads 4 / writes 2 limbs per index instead of 6 / 3. The vm1 pass stays
+`numetron_sub_n`/`numetron_add_n`. Measured (2026-09-23; correctness: 11148 products and
+kernel cases vs GMP / a C++ reference, and gtest with the flag, both compilers — all pass):
+
+- Kernel alone vs the three passes (n = 19..64): MSVC 25–35% faster (9.0 vs 13.6 ns at n = 20),
+  GCC 0–18% (its three passes were already fast; 9.3 vs 9.9 ns at n = 20).
+- One node (halves basecase), interleaved A/B: +0.2–0.5% on both compilers for n = 44..128. n = 38–40
+  shows +5–10% on both, more than the kernel saves (1–4 ns); likely code placement, not the pass.
+- `numetron_bench_mul`, 2 runs each, ABBA: MSVC −1.6..+3.5% (mean ~+0.5%), GCC −0.9..+4.8% (mean
+  ~+1.9%) over 96–8192 limbs. The bench noise is ±3–4% (compare the sizes below the Karatsuba
+  threshold, where both builds run identical code), so the gain is within noise.
+
+Superseded by the all-assembly variant below; kept selectable for comparison.
+
+**All-assembly variant** (`umul_karatsuba_asm.hpp`, `NUMETRON_KARATSUBA_IMPL_ASM`, x86-64, the
+default with `NUMETRON_USE_ASM`; MIT `src/arch/x86_64/karatsuba_mul.s` for SysV,
+`karatsuba_mul.asm` for Microsoft x64 — same bodies, Win64 calls out with home space and the fifth
+argument on the stack, no red zone, unwind info): the whole recursion in asm. The C++
+wrapper allocates the scratch for all levels once (a node takes 2n limbs, children get the rest;
+`karatsuba_asm_scratch`) and passes it, the threshold and the CPU's `mul_basecase` pointer in a
+context struct. Below the threshold the asm tail-jumps into `mul_basecase` (a linked call, not
+inlined: the call is ~1% of a 20 x 20 basecase, and inlining GMP code would make the file LGPL).
+Beyond the fused variant: every product writes exactly un+vn limbs (no memsets, no zero
+stripping), |a0−a1| subtracts only up to the highest differing limb, and vm1 is folded into the
+middle-column pass as two more carry chains (5 in all, al/ah/bl/bh/cl), so the interpolation is
+one pass instead of four. Measured with GCC 13 (2026-09-24, scratch `karatsuba_asm_check.cpp`;
+37884 products vs GMP with guard limbs around result and scratch, thresholds 4..16 and single
+node, and gtest `mul`/`mpn_mul` with the flag — all pass), two runs, n x n, Toom-3 off:
+
+- One node (halves basecase), vs the original: +5–8% at n = 24–40, +1.5–3% at 48–80,
+  ±1–3% (noise) above.
+- Whole recursion, default threshold 38: +2–8%, typically ~3% (n = 48..384); fused alone is
+  within ±3% of the original there.
+- The MSVC version runs the same checks (gtest `mul`/`mpn_mul`, the Toom-3 checks vs GMP); `--tune`
+  moves the Karatsuba threshold 38 → 29 on both compilers, and every threshold above it with it
+  (§ 1 table, § 6).
 
 ### Toom-3 (`umul_toom3.hpp` explicit; `toom_3x3.hpp` `toom3_balanced` engine plan)
 Points 0, ±1, 2, ∞. The engine plan has 1 `eval_pm1` + 1 lincomb per operand, 5 products,
 5 lincomb interpolation passes, and 4 compose ops. The two versions are now equally fast (engine
 −0.6% on average, within ±3%). **Whether to switch the default to the engine is still an open
-decision** — keep `NUMETRON_EXPLICIT_TOOM3` until it is made.
+decision** — keep `NUMETRON_TOOM3_IMPL_CXX` the default until it is made.
+
+**MSVC vs GCC, one node** (2026-09-24, scratch `toom3_cost.cpp`; hand-written Toom-3 at the top,
+products on the asm Karatsuba, threshold 29, and asm basecase — identical on both compilers; two
+runs each, stable). With `NUMETRON_KARATSUBA_IMPL_ASM`, `--tune` gave toom3 206 (MSVC) vs 109
+(GCC); this is why:
+
+| N | full MSVC / GCC (ns) | interp MSVC / GCC | eval | overhead over the 5 products |
+|---|---|---|---|---|
+| 90 | 1290 / 1244 | 150 / 125 | 71 / 65 | 17–20% / 15% |
+| 150 | 2880 / 2810 | 253 / 205 | 110 / 110–124 | 14.5% / 12% |
+| 300 | 8410 / 7870–8285 | 512 / 414–452 | 219 / 206 | 10% / 4.5–9% |
+| 600 | 25040 / 23525–24817 | 1029 / 930 | 443 / 393–415 | 6.5% / 6% |
+
+- The node costs MSVC only ~2–4% more. Interpolation is 15–25% slower (1–2.5% of the node), eval3
+  5–15%; compose and the rest (split, scratch, dispatch) are equal.
+- Per kernel (ns/limb, L = 61..201): add_n / sub_n (asm) and divexact_by3 are equal; **rshift1 is
+  2.5–3x slower on MSVC** (0.27–0.37 vs 0.09–0.14 — GCC vectorizes it with -march=native; MSVC
+  runs `__shiftright128` per limb) and **lshift1 1.6x** (0.22–0.28 vs 0.14–0.15).
+- **The threshold gap is mostly the shape of the curve, not the code.** Toom-3 node / asm
+  Karatsuba for N = 60..330 is 1.04 → 0.92 on MSVC and 1.00 → 0.93 on GCC, flat and
+  non-monotonic (split parities: MSVC 180 → 0.997, GCC 150 → 1.000, 330 → 1.01). A 2–4% offset on
+  such a curve moves the first sustained win by ~100 limbs. Running MSVC at 206 instead of ~110
+  costs at most ~5% for N in between.
+- **Tried: fusing the shifts into the neighbouring passes in C++ — slower on both compilers.**
+  `wm = (w1 ± wm) >> 1`, `w2 = (w2 − w1) >> 1` as one pass each (C++ `rsh1add_n` / `rsh1sub_n`
+  in `toom/kernels.hpp`, like GMP's) and `w2 −= 2·c4` via `sublsh_n(…, 1, …)` remove three passes,
+  but the fused C++ loops (carry chain + shrd per limb) cost more than the asm `add_n`/`sub_n`
+  (0.17 ns/limb) plus a separate shift. Interpolation, before → after (ns): GCC 125 → 157 (N=90),
+  205 → 276 (150), 414–452 → 598–605 (300), 930 → 1150–1247 (600), i.e. +25–45%; MSVC 150 → 148,
+  251 → 271, 512 → 573, 1029 → 1170, i.e. −1..+14%. Correct (10912 kernel and Toom-3-vs-GMP
+  checks on both compilers, gtest mul/mpn_mul on GCC). Reverted. Only asm versions of these
+  kernels could pay off (GMP has them in asm), and would gain ~1% of the node on MSVC, ~0 on GCC.
+- Instead, the MSVC-specific loss is addressed in the shift kernels themselves: under MSVC with
+  `/arch:AVX2`, `lshift1` / `rshift1` in `toom/kernels.hpp` run explicit AVX2 loops (4 limbs per
+  step from two overlapping loads), i.e. what GCC's auto-vectorization does. This also reaches
+  eval3's lshift1 and the engine's shift ops (Toom-4/6.5/8.5). Measured (MSVC, two runs):
+  rshift1 0.27–0.37 → 0.12–0.15 ns/limb, lshift1 0.22–0.28 → 0.10–0.12 (GCC: 0.09–0.14 /
+  0.14–0.15); interpolation 150 → 119–124 ns (N=90), 251 → 197 (150), 512 → 413–428 (300),
+  1029 → 862–870 (600), −15..−22%, now level with GCC; eval3 −5%; the whole node −1.5..−2%.
+  Correct: 8672 kernel (vs a scalar reference, in and out of place) and Toom-3-vs-GMP checks on
+  both compilers, gtest mul/mpn_mul on MSVC.
 
 ### Toom-4 (`toom_4x4.hpp`)
 Points 0, ±1, ±2, ½, ∞. Evaluation: 6 ops per operand. Interpolation: 12 lincomb passes
@@ -169,6 +283,31 @@ mirrored coefficients: 13 `lincomb_dual` steps. The division by **189 = 27·7 ca
 for 5 points of the form 4^k, the Vandermonde differences always include 4^3 − 1 = 63, and 7
 doesn't divide 2^64 − 1. The 12-point 6 x 7 variant (the ".5", for mildly unbalanced operands)
 is not implemented.
+
+**Toom-6.5 / 8.5 thresholds, MSVC vs GCC** (2026-09-24, scratch `toom68_cost.cpp`, two runs each;
+one top node of Toom-4 / 6.5 / 8.5, children through karatsuba 29 (asm) / toom3 115 / toom4 444
+on both). With the asm Karatsuba, `--tune` gave toom6h / toom8h = 2249 / 2249 on MSVC and 675 / 967
+on GCC. The node curves don't show that difference:
+
+| N | t6/t4 MSVC | t6/t4 GCC | t8/t6 MSVC | t8/t6 GCC |
+|---|---|---|---|---|
+| 500 | 1.01 | 1.02 | 1.07 | 1.05 |
+| 700 | 0.93–0.96 | 0.94–0.99 | 1.00–1.01 | 1.01–1.02 |
+| 1000 | 0.96 | 0.97–0.98 | 0.98 | 0.98 |
+| 1400 | 0.93–0.95 | 0.96 | 1.00–1.02 | 0.99–1.00 |
+| 1800 | 0.96 | 0.95 | 0.97 | 0.97 |
+| 2500 | 0.92–0.93 | 0.92–0.93 | 0.98–0.99 | 0.98–0.99 |
+| 4000 | 0.93 | 0.93–0.94 | 0.94–0.95 | 0.94–0.95 |
+
+- Toom-6.5 beats Toom-4 from ~650–700 limbs on both compilers (by 3–8%; MSVC slightly more);
+  Toom-8.5 is level with Toom-6.5 from ~700 to ~1600 and ahead (2–6%) from ~1800.
+- The linear part (node minus its 7 / 11 / 15 pointwise products) is the same or a bit smaller on
+  MSVC: ~5–7 / 10–11 / 15–17 ns per limb of N for Toom-4 / 6.5 / 8.5 (GCC 5–7 / 11–12 / 15–17).
+  No codegen gap here (the AVX2 shift kernels included).
+- So the MSVC 2249 is the tuner, not the code: Toom-6.5's gain is a few % and the validation
+  phase takes the *largest* candidate whose full-product score is within `tie_tolerance` (0.3%)
+  of the best; with gains this small, which candidate falls inside that band depends on the run.
+  The defaults (717 / 967 on MSVC, 675 / 967 on GCC) follow the curves.
 
 ### Toom-8.5 (`toom_8x8.hpp`, balanced 8 x 8 case of GMP's toom8h)
 15 points: 0, ±1, ±2, ±4, ±8, ±½, ±¼, ±⅛. Each half is a sextic at y = 1, 4, 16, 64 plus its
@@ -235,10 +374,11 @@ buy only small overall gains; Hensel passes in the big Tooms are the most expens
 
 ## 6. Thresholds and the tuner
 
-Thresholds are runtime atomics (`set_*_threshold()`, relaxed loads) with per-compiler
-compile-time defaults (`NUMETRON_DEFAULT_*` in `toom/thresholds.hpp`, overridable with
-`NUMETRON_*_THRESHOLD`). They differ per compiler because everything above the asm basecase is
-compiled C++.
+Thresholds are runtime atomics (`set_*_threshold()`, relaxed loads) with compile-time defaults
+(`NUMETRON_DEFAULT_*` in `toom/thresholds.hpp`, overridable with `NUMETRON_*_THRESHOLD`), one
+set per Karatsuba implementation (asm vs C++: a faster level moves every crossover above it)
+and per compiler (the Toom kernels are compiled C++). The header-only build (no
+`NUMETRON_USE_ASM`) takes the C++ set; it has never been tuned.
 
 `tune_mul_thresholds()` (`mul_tuning.hpp`; `numetron_bench_mul --tune[=samples] [--trace]`)
 tunes Karatsuba, Toom-3, Toom-4, Toom-6.5 and Toom-8.5 in that order, each against the tuned
@@ -260,7 +400,8 @@ ones below. **Why it works the way it does**:
 - **Ties**: candidates within `tie_tolerance` (0.3%) of the best count as equal, and the largest
   threshold is chosen. Toom-4's and Toom-8.5's candidates are often within 0.5% of each other,
   so their thresholds may move between runs — harmless, since that is exactly when the choice
-  doesn't matter.
+  doesn't matter. The same rule gave toom6h = toom8h = 2249 in one MSVC run although the node
+  curves match GCC's (§ 4, Toom-6.5): on a plateau, read the curves, not a single `--tune`.
 - The whole `--tune` takes about 25 s.
 
 What each level buys (full product time vs. the higher algorithm off, MSVC): Karatsuba ~29%,
@@ -314,6 +455,12 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
 - **Timing under Docker on Windows** (WSL2 VM) is noisier than native.
 - Scratch builds must use the same flags as the real ones (`/arch:AVX2` for MSVC), or kernel
   timings don't match the bench.
+- **Passing a define to an MSBuild build**: the `CL` / `_CL_` environment variables did not
+  reach the compiler (the A/B builds came out identical). What works without editing the project:
+  `/p:ForceImportBeforeCppTargets=<file>.props` with an `ItemDefinitionGroup` that adds to
+  `PreprocessorDefinitions`.
+- **Fusing a shift into an add/sub pass in C++ can lose**: the asm `add_n`/`sub_n` plus a
+  separate (vectorized) shift beat a fused C++ carry-chain loop (§ 4, Toom-3).
 
 ---
 
@@ -329,3 +476,12 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
    benchmark on unequal sizes first.
 4. **Decide Toom-3 explicit vs engine** default (now equal speed).
 5. Retune thresholds after any kernel change, on both compilers, and update the defaults.
+6. **Refresh the § 1 gmp/reuse table** with the current defaults (asm Karatsuba, new thresholds,
+   AVX2 shifts on MSVC).
+7. **Header-only build** (no `NUMETRON_USE_ASM`, now the default): the C++ 64-bit basecase path
+   (`umul_basecase_unrolled`, plus 1 x 1) has not been run yet — neither gtest nor timing — and
+   its thresholds are untuned.
+8. **Tuner on plateaus**: the tie rule picks the largest threshold within 0.3%, which makes
+   Toom-6.5/8.5 (and Toom-3 over the asm Karatsuba) thresholds jump between runs; a median over
+   several runs, or a smaller tie band there, would make `--tune` repeatable.
+9. Toom-3 `eval3` still has one `lshift1` (p2 = 2·(p1 + x2) − x0) — minor.

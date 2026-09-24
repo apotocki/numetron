@@ -259,8 +259,8 @@ template <std::unsigned_integral LimbT>
 requires (sizeof(LimbT) == 8)
 inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
 {
-    if constexpr (sizeof(LimbT) == 8) {
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
+    if constexpr (sizeof(LimbT) == 8) {
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
         static const detect_mul_basecase_type detected_mul_basecase_ptr = []() -> detect_mul_basecase_type {
             uint64_t platform_descriptor = numetron_detect_platform();
@@ -268,12 +268,20 @@ inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t 
             return detect_mul_basecase(platform_descriptor);
         }();
 #   endif
-    NUMETRON_mul_basecase(rb, ub, un, vb, vn);
-    return rb + un + vn;
+        NUMETRON_mul_basecase(rb, ub, un, vb, vn);
+        return rb + un + vn;
+    } else
 #endif
-    } else {
+    {
+        // Pure C++ (header-only build, or no assembly for this target). The unrolled loop needs
+        // un >= 2, so the 1 x 1 product is done here.
+        if (un == 1) {
+            auto [h, l] = arithmetic::umul1(*ub, *vb);
+            rb[0] = l;
+            rb[1] = h;
+            return rb + 2;
+        }
         return umul_basecase_unrolled<LimbT>(ub, ub + un, vb, vb + vn, rb);
-        //return umul<LimbT, LimbT*>(ub, ue, vb, ve, rb);
     }
 }
 

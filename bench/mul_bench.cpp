@@ -6,16 +6,19 @@
 // mpz_mul across a range of operand sizes (in 64-bit limbs). Not part of the GoogleTest
 // suite -- build the numetron_bench_mul target and run the resulting executable directly.
 //
-// NUMETRON_USE_ASM / NUMETRON_PLATFORM_AUTODETECT are the library's own defaults (set at
-// the top of limb_arithmetic.hpp), so as long as this target is linked against the
-// src/arch assembly -- which the numetron_bench_mul CMake target does, the same way
-// numetron_tests does -- this measures Numetron's best runtime-selected mul_basecase
-// implementation, not the plain C++ fallback.
+// The library is header-only (pure C++) unless NUMETRON_USE_ASM is defined. This target links
+// the src/arch assembly and gets NUMETRON_USE_ASM with it (the CMake `numetron` target exports
+// it; msvc/numetron_bench_mul.vcxproj sets it), so it measures Numetron's best runtime-selected
+// mul_basecase implementation, not the plain C++ fallback. The other implementation choices (Karatsuba,
+// Toom-3) are defaults from the same header, overridable per build with compiler flags, e.g.
+// -DNUMETRON_KARATSUBA_IMPL=NUMETRON_KARATSUBA_IMPL_FUSED; the output header names the ones in use.
 
 #ifdef _WIN32
 #   pragma warning(disable : 4244 4146)
 #endif
 #include "gmp.h"
+
+#define NUMETRON_KARATSUBA_ASM
 
 #include "numetron/basic_integer.hpp"
 #include "numetron/limb_arithmetic/mul_tuning.hpp"
@@ -303,6 +306,21 @@ void run_add_bench()
               << "(sink: " << g_sink << ")\n";
 }
 
+// Which implementations this build runs (numetron/config/implementation.hpp) and the thresholds
+// in effect, so bench outputs of different builds can be told apart.
+void print_configuration()
+{
+    namespace la = numetron::limb_arithmetic;
+    std::cout << "implementations: karatsuba " << numetron::config::karatsuba_impl_name
+              << ", toom3 " << numetron::config::toom3_impl_name
+              << ", mul_basecase " << numetron::config::mul_basecase_name << "\n"
+              << "thresholds (limbs): karatsuba " << la::karatsuba_threshold()
+              << ", toom3 " << la::toom3_threshold()
+              << ", toom4 " << la::toom4_threshold()
+              << ", toom6h " << la::toom6h_threshold()
+              << ", toom8h " << la::toom8h_threshold() << "\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -377,7 +395,9 @@ int main(int argc, char** argv)
     std::mt19937_64 rng{ 0x5EED1234ULL };
 
     std::cout << "Numetron vs GMP multiplication benchmark\n";
-    std::cout << "(" << samples_per_tier << " random operand pairs per tier, best of " << attempts << " attempts)\n\n";
+    std::cout << "(" << samples_per_tier << " random operand pairs per tier, best of " << attempts << " attempts)\n";
+    print_configuration();
+    std::cout << "\n";
     std::cout << std::right
                << std::setw(10) << "limbs"
                << std::setw(12) << "bits"

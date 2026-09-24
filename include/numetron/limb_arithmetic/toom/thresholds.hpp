@@ -8,24 +8,47 @@
 #include <cstddef>
 #include <algorithm>
 
+#include "numetron/config/implementation.hpp" // NUMETRON_KARATSUBA_IMPL
+
 // Compile-time defaults for the runtime thresholds below; override by defining these before
 // including numetron, or retune at runtime with set_*_threshold() / tune_mul_thresholds()
 // (numetron/limb_arithmetic/mul_tuning.hpp).
-// The defaults come from tune_mul_thresholds() on x86-64 (Alder Lake class): they differ per
-// compiler, since everything above the asm basecase -- Karatsuba, the Toom evaluation and
-// interpolation kernels -- is compiled C++ and the compilers make rather different code of it.
-#if defined(_MSC_VER) && !defined(__clang__)
-#   define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
-#   define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
-#   define NUMETRON_DEFAULT_TOOM4_THRESHOLD 330
-#   define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
-#   define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
-#else // GCC (and Clang, untuned)
-#   define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
-#   define NUMETRON_DEFAULT_TOOM3_THRESHOLD 57
-#   define NUMETRON_DEFAULT_TOOM4_THRESHOLD 500
-#   define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
-#   define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+// The defaults come from tune_mul_thresholds() on x86-64 (Alder Lake class). They depend on the
+// configuration: on the Karatsuba implementation (the asm one is faster, which moves every
+// crossover above it) and on the compiler, since the Toom evaluation and interpolation kernels
+// are compiled C++ and the compilers make rather different code of them.
+#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+// asm basecase + asm Karatsuba (the default with NUMETRON_USE_ASM), MSVC with the AVX2 shift
+// kernels; tuned 2026-09-24.
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 29
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 444
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717 // --tune said 2249 / 2249, but the node curves are
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967 // those of GCC (docs/multiplication.md, Toom-6.5)
+#   else // GCC (and Clang, untuned)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 29
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 444
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 675
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#   endif
+#else
+// The C++ Karatsuba implementations over the asm basecase (tuned before the asm Karatsuba). The
+// pure C++ build (no NUMETRON_USE_ASM) uses these too; it is not tuned.
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 330
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#   else // GCC (and Clang, untuned)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 57
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 500
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#   endif
 #endif
 
 #ifndef NUMETRON_KARATSUBA_THRESHOLD
@@ -48,13 +71,8 @@
 #   define NUMETRON_TOOM8H_THRESHOLD NUMETRON_DEFAULT_TOOM8H_THRESHOLD
 #endif
 
-#define NUMETRON_EXPLICIT_KARATSUBA
-
-// Balanced Toom-3 runs the hand-written umul_toom3_impl() unless NUMETRON_TOOM3_USE_ENGINE is
-// defined, in which case the same algorithm runs as the engine's toom3_balanced plan.
-#ifndef NUMETRON_TOOM3_USE_ENGINE
-#   define NUMETRON_EXPLICIT_TOOM3
-#endif
+// Which Karatsuba / Toom-3 implementation runs: NUMETRON_KARATSUBA_IMPL / NUMETRON_TOOM3_IMPL in
+// numetron/config/implementation.hpp.
 
 namespace numetron::limb_arithmetic {
 

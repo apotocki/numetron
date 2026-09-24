@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "numetron/config/implementation.hpp" // NUMETRON_USE_ASM, NUMETRON_PLATFORM_*
+
 // For the thin layers in front of the limb add/sub kernels: a short run is only a handful of
 // instructions, so a call that the compiler declined to inline would cost as much as the work.
 #ifndef NUMETRON_FORCEINLINE
@@ -35,6 +37,21 @@
 // detection). rp may coincide with up or vp, or trail them.
 extern "C" uint64_t numetron_add_n(uint64_t* rp, const uint64_t* up, const uint64_t* vp, size_t n) noexcept;
 extern "C" uint64_t numetron_sub_n(uint64_t* rp, const uint64_t* up, const uint64_t* vp, size_t n) noexcept;
+
+// src/arch/x86_64/karatsuba_interp.{asm,s}: the fused middle-column pass of the Karatsuba
+// interpolation (see detail::karatsuba_interp in umul_karatsuba_fused.hpp). Returns the carry into
+// limb 2n in bits 0..31 and the carry into limb 3n in bits 32..63.
+extern "C" uint64_t numetron_karatsuba_interp(uint64_t* rp, size_t n, size_t h) noexcept;
+
+// src/arch/x86_64/karatsuba_mul.{asm,s}: the whole recursive Karatsuba in assembly, selected by
+// NUMETRON_KARATSUBA_IMPL_ASM (see umul_karatsuba_asm.hpp).
+struct numetron_karatsuba_ctx
+{
+    void (*mul_basecase)(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn);
+    size_t threshold;
+    uint64_t* scratch;
+};
+extern "C" void numetron_karatsuba_mul(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn, const numetron_karatsuba_ctx* ctx) noexcept;
 
 namespace numetron::limb_arithmetic::detail {
 // Below this length the inline C++ loop wins: the call itself costs about as much as the few
