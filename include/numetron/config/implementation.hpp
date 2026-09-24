@@ -17,11 +17,54 @@
 // (lib/CMakeLists.txt) exports this define to whatever links it on x86-64; the MSVC test and bench
 // projects set it themselves.
 
-// Which mul_basecase: picked at run time from CPUID (NUMETRON_PLATFORM_AUTODETECT) unless one is
-// pinned with NUMETRON_PLATFORM_ALDERLAKE, NUMETRON_PLATFORM_CORE2 or NUMETRON_PLATFORM_K8.
+// NUMETRON_ASM_LICENSE: which assembly NUMETRON_USE_ASM may bring in, one of:
+#define NUMETRON_ASM_LICENSE_MIT      1 // numetron's own code only (MIT): the mul_basecase is
+                                        // mul_basecase_adx on CPUs with BMI2 + ADX, the C++
+                                        // basecase (NUMETRON_CXX_BASECASE) on older ones
+#define NUMETRON_ASM_LICENSE_GMP_LGPL 2 // also the GMP-derived mul_basecase routines
+                                        // (src/arch/x86_64/{alderlake,core2,k8}, LGPL): picked
+                                        // per CPU; a binary using them is subject to the LGPL
+// The shorthand flag NUMETRON_USE_GMP_LGPL selects GMP_LGPL (the CMake option NUMETRON_GMP_LGPL
+// builds the LGPL sources into the `numetron` library and exports that flag). Default: MIT.
+#ifndef NUMETRON_ASM_LICENSE
+#   if defined(NUMETRON_USE_GMP_LGPL)
+#       define NUMETRON_ASM_LICENSE NUMETRON_ASM_LICENSE_GMP_LGPL
+#   else
+#       define NUMETRON_ASM_LICENSE NUMETRON_ASM_LICENSE_MIT
+#   endif
+#endif
+
+// Which mul_basecase: picked at run time from CPUID (NUMETRON_PLATFORM_AUTODETECT; among the
+// licenses allowed above) unless one is pinned with NUMETRON_PLATFORM_ADX (our own, MIT; needs
+// BMI2 + ADX), or with NUMETRON_PLATFORM_ALDERLAKE, NUMETRON_PLATFORM_CORE2 or
+// NUMETRON_PLATFORM_K8 (the GMP-derived ones; need NUMETRON_ASM_LICENSE_GMP_LGPL).
 #if !defined(NUMETRON_PLATFORM_AUTODETECT) && !defined(NUMETRON_PLATFORM_ALDERLAKE) \
-    && !defined(NUMETRON_PLATFORM_CORE2) && !defined(NUMETRON_PLATFORM_K8)
+    && !defined(NUMETRON_PLATFORM_CORE2) && !defined(NUMETRON_PLATFORM_K8) && !defined(NUMETRON_PLATFORM_ADX)
 #   define NUMETRON_PLATFORM_AUTODETECT
+#endif
+
+#if defined(NUMETRON_USE_ASM) && NUMETRON_ASM_LICENSE != NUMETRON_ASM_LICENSE_GMP_LGPL \
+    && (defined(NUMETRON_PLATFORM_ALDERLAKE) || defined(NUMETRON_PLATFORM_CORE2) || defined(NUMETRON_PLATFORM_K8))
+#   error "NUMETRON_PLATFORM_ALDERLAKE / CORE2 / K8 are the GMP-derived (LGPL) mul_basecase: define NUMETRON_USE_GMP_LGPL"
+#endif
+
+// The C++ basecase, used without NUMETRON_USE_ASM, and with it on CPUs no assembly basecase is
+// picked for (limb_arithmetic/umul_basecase_variants.hpp), NUMETRON_CXX_BASECASE, one of:
+#define NUMETRON_CXX_BASECASE_UNROLLED 1 // umul_basecase_unrolled: portable C++, the reference
+#define NUMETRON_CXX_BASECASE_ADX      2 // umul_basecase_adx: rows in GCC / Clang inline assembly
+                                         // with mulx + adcx/adox; needs -march with ADX and BMI2
+#define NUMETRON_CXX_BASECASE_BLOCKED  3 // umul_basecase_blocked: rows four limbs at a time with
+                                         // x64 intrinsics (mul, adc); what MSVC compiles best
+// Default: ADX where the compiler targets it (GCC / Clang, __ADX__ && __BMI2__), BLOCKED with MSVC
+// on x64, UNROLLED otherwise. Products of fewer than four limbs always take UNROLLED.
+#ifndef NUMETRON_CXX_BASECASE
+#   if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__) && defined(__ADX__) && defined(__BMI2__)
+#       define NUMETRON_CXX_BASECASE NUMETRON_CXX_BASECASE_ADX
+#   elif defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
+#       define NUMETRON_CXX_BASECASE NUMETRON_CXX_BASECASE_BLOCKED
+#   else
+#       define NUMETRON_CXX_BASECASE NUMETRON_CXX_BASECASE_UNROLLED
+#   endif
 #endif
 
 // ---- Karatsuba --------------------------------------------------------------------------------
@@ -132,15 +175,25 @@ inline constexpr const char* fft_impl_name =
 
 inline constexpr const char* mul_basecase_name =
 #if !defined(NUMETRON_USE_ASM) || !(defined(__x86_64__) || defined(_M_X64))
+#   if NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+    "c++ adx";
+#   elif NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_BLOCKED
+    "c++ blocked";
+#   else
     "c++";
+#   endif
 #elif defined(NUMETRON_PLATFORM_ALDERLAKE)
-    "asm alderlake";
+    "asm alderlake (GMP-derived, LGPL)";
 #elif defined(NUMETRON_PLATFORM_CORE2)
-    "asm core2";
+    "asm core2 (GMP-derived, LGPL)";
 #elif defined(NUMETRON_PLATFORM_K8)
-    "asm k8";
+    "asm k8 (GMP-derived, LGPL)";
+#elif defined(NUMETRON_PLATFORM_ADX)
+    "asm adx (numetron, MIT)";
+#elif NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
+    "asm, runtime-detected (GMP-derived, LGPL)";
 #else
-    "asm, runtime-detected";
+    "asm, runtime-detected (numetron adx, MIT; c++ without BMI2 + ADX)";
 #endif
 
 }

@@ -41,12 +41,6 @@
 #   define NUMETRON_SVOBODA_DIV_THRESHOLD ((std::numeric_limits<size_t>::max)())
 #endif
 
-#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
-#   if defined(NUMETRON_PLATFORM_AUTODETECT)
-extern "C" uint64_t numetron_detect_platform();
-#   endif
-#endif // NUMETRON_USE_ASM
-
 namespace numetron::limb_arithmetic {
 
 using numetron::detail::small_array;

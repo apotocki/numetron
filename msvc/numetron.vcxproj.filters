@@ -60,6 +60,9 @@
     <MASM Include="..\src\arch\x86_64\karatsuba_mul.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
+    <MASM Include="..\src\arch\x86_64\mul_basecase_adx.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
     <MASM Include="..\src\arch\x86_64\detect_mul_basecase.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
@@ -87,6 +90,9 @@
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\karatsuba_mul.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\mul_basecase_adx.s">
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\detect_mul_basecase.s">
@@ -184,6 +190,9 @@
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul_fft.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_basecase_variants.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\fft\ntt.hpp">

@@ -12,6 +12,7 @@
 #include "numetron/detail/assert.hpp"
 
 #include "platform.hpp"
+#include "umul_basecase.hpp" // detail::detected_mul_basecase
 #include "toom/thresholds.hpp"
 
 // Experimental Karatsuba running entirely in assembly (src/arch/x86_64/karatsuba_mul.s): the
@@ -32,9 +33,7 @@ namespace detail {
 inline auto karatsuba_asm_basecase() noexcept -> decltype(numetron_karatsuba_ctx::mul_basecase)
 {
 #if defined(NUMETRON_PLATFORM_AUTODETECT)
-    static const auto fn = reinterpret_cast<decltype(numetron_karatsuba_ctx::mul_basecase)>(
-        detect_mul_basecase(numetron_detect_platform()));
-    return fn;
+    return detected_mul_basecase(); // the same choice as umul_basecase()
 #else
     return reinterpret_cast<decltype(numetron_karatsuba_ctx::mul_basecase)>(&NUMETRON_mul_basecase);
 #endif

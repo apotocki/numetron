@@ -40,8 +40,10 @@ Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implem
 | C++ Karatsuba, GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 | |
 | FFT, AVX2 kernel (default with AVX2), MSVC / GCC | | | | | | 2696 / 2538 |
 | FFT, scalar kernel, MSVC / GCC | | | | | | 11530 / 13828 |
-| header-only (no `NUMETRON_USE_ASM`), MSVC | 14 | 70 | 231 | 418 | 675 | AVX2 418 / scalar 2389 |
-| header-only, GCC (and Clang, untuned) | 20 | 137 | 218 | 311 | 500 | AVX2 599 / scalar 2696 |
+| header-only (no `NUMETRON_USE_ASM`), GCC/Clang with ADX: `c++ adx` basecase | 36 | 212 | 330 | 471 | 761 | AVX2 1388 / scalar 10852 |
+| header-only, MSVC x64: `c++ blocked` basecase | 24 | 57 | 194 | 564 | 636 | AVX2 1231 / scalar 5247 |
+| header-only, reference basecase, MSVC | 14 | 70 | 231 | 418 | 675 | AVX2 418 / scalar 2389 |
+| header-only, reference basecase, GCC (and Clang, untuned) | 20 | 137 | 218 | 311 | 500 | AVX2 599 / scalar 2696 |
 
 \* `--tune` gave 2249 / 2249 on MSVC once (and 1231 / 1766, 761 / 1766 in other runs), but the
 measured node curves are the same as GCC's (§ 4, Toom-6.5), so the thresholds are set by the
@@ -68,9 +70,37 @@ curves, not by single runs. The FFT thresholds were the same in two runs each.
    (`_ASM`, x86-64 only; the default with `NUMETRON_USE_ASM`) (§ 4), the hand-written
    `umul_karatsuba_impl` (`_CXX`, the default without the assembly), `umul_karatsuba_fused_impl`
    (`_FUSED`), or the engine's 2 x 2 plan (`_ENGINE`).
-6. **Basecase** — `umul_basecase`, the GMP-derived asm `mul_basecase` (`src/arch`, LGPL,
-   runtime-selected alderlake/core2/k8), with `umul_basecase_2x` as a loop-free special case for
-   operands of at most 2 limbs.
+6. **Basecase** — `umul_basecase`. With `NUMETRON_USE_ASM` the routine is chosen once at run
+   time (`detail::detected_mul_basecase`, also what the asm Karatsuba calls): by default
+   (`NUMETRON_ASM_LICENSE_MIT`) our own `numetron_mul_basecase_adx` (below) on CPUs with BMI2 +
+   ADX; with `NUMETRON_USE_GMP_LGPL` the GMP-derived one for the CPU family (`src/arch`, LGPL,
+   alderlake/core2/k8), falling back to ours for a family it has none for; the C++ basecase on
+   CPUs with neither. Without the asm the C++ basecase `NUMETRON_CXX_BASECASE` picks (ADX rows /
+   blocked rows / the reference `umul_basecase_unrolled`, § 9 item 7).
+   `umul_basecase_2x` is a loop-free special case for operands of at most 2 limbs.
+
+**Our own asm basecase** (`src/arch/x86_64/mul_basecase_adx.{s,asm}`, MIT, BMI2 + ADX;
+`numetron_mul_basecase_adx`, the same signature as the GMP routines; the default since
+2026-09-25, pinned with `NUMETRON_PLATFORM_ADX`; the thresholds in `toom/thresholds.hpp` were tuned
+with the GMP one, the whole products below show no difference that would move them). Operand scanning:
+row 0 = u·v[0] with one adcx chain, then each row r += u·v[j] with the high halves on adcx (CF)
+and r on adox (OF); loop control with lea / jrcxz only. A row is a 16-limb unrolled body entered
+at step -un & 15 through a jump table (pointers moved back by that many limbs), so there is no
+remainder loop. Measured 2026-09-25 (190 shapes vs GMP incl. guard limbs, and the full gtest with
+it pinned, both compilers — all pass):
+
+- Basecase alone, ns per limb product relative to the GMP asm: 1.01–1.06 at 10–40 limbs (the
+  range the Karatsuba leaves use), 1.1–1.16 at 48–64, 1.1–1.2 at 4–8, 1.4–2.4 at 2–3 (GMP has
+  special code for short rows).
+- Whole products (`numetron_bench_mul`, reuse, best of two runs each, vs the same build with the
+  GMP basecase): within ±2–4% (noise level) from 16 limbs up on both compilers; +5–12% at 4–8
+  limbs; identical at 1–2 limbs (the 2-limb short paths).
+- Tried: a 4-limb body with a single-limb loop for un % 4 (the first version): +5–8% on whole
+  products at 16–2048 limbs; an 8-limb body with the jump table: the same basecase numbers as the
+  16-limb one. Rows two at a time (addmul_2) don't fit two carry flags (five addends per limb).
+- Open: the basecase is 10–16% behind GMP's for rows of 48+ limbs, not explained by the port
+  count of the loop (8 vs 16 limbs per pass changed nothing); GMP's loop issues the mulx of the
+  following limbs ahead of the adds (software pipelining), which may be the difference.
 
 The implementation choices (and their defaults) are all in `numetron/config/implementation.hpp`;
 override one per build with a compiler flag, e.g.
@@ -501,9 +531,48 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
    | GCC, AVX2 FFT | 0.73 | 0.61 | 0.64 | 0.64 | 0.67 | 0.63 | 0.65 | 1.03 | 1.27 | 1.58 | 1.93 | 1.50 |
    | GCC, portable (scalar FFT) | 0.71 | 0.57 | 0.67 | 0.66 | 0.68 | 0.65 | 0.67 | 0.70 | 0.70 | 0.96 | 1.17 | 1.00 |
 
-   Below ~1000 limbs the C++ basecase (~1.5x slower than the GMP-derived asm) keeps it at
-   0.6–0.75 of GMP; open: a faster C++ basecase, and the MSVC dip at 128 limbs (0.45 in two runs,
-   Toom-3 over the C++ Karatsuba there; GCC, still on Karatsuba at 128, has 0.67).
+   With the reference basecase, below ~1000 limbs it stays at 0.6–0.75 of GMP (MSVC: 0.45 at 128
+   limbs); the basecase variants below lift that.
+
+   **C++ basecase candidates** (`umul_basecase_variants.hpp`, not wired in; the reference stays
+   `umul_basecase_unrolled`; scratch `basecase_bench.cpp`, ns per limb product, n x n and
+   unbalanced shapes, all checked against GMP), relative to the GMP-derived asm (~0.23 ns):
+
+   | | GCC | MSVC |
+   |---|---|---|
+   | `umul_basecase_unrolled` (reference) | 1.9–2.2x | 1.8–2.1x |
+   | `umul_basecase_comba` (product scanning, 3-word column accumulator) | 2.9–3.6x | 2.1–2.4x |
+   | `umul_basecase_adx` (rows with mulx + adcx/adox) | **1.0–1.1x** (n ≥ 8; 1.5–2.3x at 2–3) | 2.4–2.7x |
+
+   - The asm's advantage is ADX: a row r += u·v[j] is two additions (low halves into r, high
+     halves into the next limb), which adcx (CF) and adox (OF) run as two independent chains; with
+     one carry flag they serialize through setc/adc. Neither GCC nor Clang ever emits adox, so on
+     GCC / Clang the ADX rows are inline assembly (under `__ADX__ && __BMI2__`, i.e. `-march` with
+     them) — header-only and our own code — and reach the asm's speed.
+   - MSVC has no x64 inline assembly, and from two interleaved `_addcarryx_u64` chains it did not
+     produce adcx/adox either (saves the flags instead): slower than the reference. On MSVC the
+     reference stays the best C++ basecase.
+   - Comba loses: each product's add/adc/adc waits for the previous one through the three-word
+     accumulator.
+   - `umul_basecase_blocked` (rows four limbs at a time: four products, then the whole high-half
+     chain, then the whole r chain, so the one carry flag is saved twice per block instead of per
+     limb; plain `mul`/`adc` intrinsics, no BMI2/ADX): MSVC **1.5–1.65x** (20–25% faster than the
+     reference); GCC 2.3–2.6x (its `_addcarry_u64` code is worse than the reference).
+
+   So `NUMETRON_CXX_BASECASE` (`config/implementation.hpp`) picks `_ADX` for GCC / Clang when they
+   target ADX + BMI2, `_BLOCKED` for MSVC x64, the reference `_UNROLLED` otherwise; products of
+   fewer than four limbs always take the reference (faster there). Each gets its own thresholds
+   (§ 1). gmp/reuse, header-only, AVX2 FFT, before → after (2026-09-24, full gtest passes in every
+   configuration):
+
+   | limbs | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 1536 | 2048 | 4096 | 8192 |
+   |---|---|---|---|---|---|---|---|---|---|---|---|
+   | GCC, reference → ADX | 0.61 → 0.83 | 0.64 → 1.07 | 0.64 → 0.98 | 0.67 → 1.01 | 0.63 → 0.97 | 0.65 → 0.92 | 1.03 → 0.95 | 1.06 → 1.08 | 1.27 → 1.26 | 1.58 → 1.61 | 1.93 → 1.92 |
+   | MSVC, reference → blocked | 0.57 → 0.63 | 0.68 → 0.80 | 0.69 → 0.81 | 0.45 → 0.80 | 0.62 → 0.85 | 0.75 → 0.79 | 0.97 → 0.82 | 1.03 → 1.01 | 1.23 → 1.19 | 1.54 → 1.51 | 1.81 → 1.82 |
+
+   (1024 limbs: the old set had the FFT from 418 / 599 already; with the faster basecase the FFT
+   starts at 1231 / 1388 and the Toom chain in between is a little slower there — within noise
+   of a one-run bench, but the tuned threshold says the same.) The MSVC dip at 128 limbs is gone.
 8. **Tuner on plateaus**: the tie rule picks the largest threshold within 0.3%, which makes
    Toom-6.5/8.5 (and Toom-3 over the asm Karatsuba) thresholds jump between runs; a median over
    several runs, or a smaller tie band there, would make `--tune` repeatable.

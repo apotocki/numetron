@@ -32,6 +32,12 @@
 
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#   include <intrin.h> // __cpuid, __cpuidex
+#else
+#   include <cpuid.h>  // __get_cpuid_count
+#endif
+
 // src/arch/x86_64/add_sub_n.{asm,s}: r[0..n) = u[0..n) +/- v[0..n), returning the carry/borrow
 // out. One generic x86-64 implementation (no per-CPU variants, so no dispatch through platform
 // detection). rp may coincide with up or vp, or trail them.
@@ -53,6 +59,12 @@ struct numetron_karatsuba_ctx
 };
 extern "C" void numetron_karatsuba_mul(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn, const numetron_karatsuba_ctx* ctx) noexcept;
 
+// src/arch/x86_64/mul_basecase_adx.{asm,s}: our own (MIT) schoolbook multiplication with mulx +
+// adcx/adox, the same contract as the GMP-derived mul_basecase routines; needs BMI2 + ADX. The
+// runtime choice on such CPUs unless NUMETRON_ASM_LICENSE_GMP_LGPL; pinned with
+// NUMETRON_PLATFORM_ADX.
+extern "C" void numetron_mul_basecase_adx(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn);
+
 namespace numetron::limb_arithmetic::detail {
 // Below this length the inline C++ loop wins: the call itself costs about as much as the few
 // limbs it would process (measured with numetron_bench_mul --add against GMP's mpn_add_n,
@@ -61,10 +73,31 @@ inline constexpr size_t asm_add_sub_n_min_limbs = 8;
 }
 
 #if defined(NUMETRON_PLATFORM_AUTODETECT)
+// The runtime choice is made once, by detail::detected_mul_basecase() (umul_basecase.hpp).
 typedef void (*detect_mul_basecase_type)(uint64_t*, const uint64_t*, size_t, const uint64_t*, size_t);
+#   if NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
+// src/arch/x86_64/detect_{platform,mul_basecase}: the GMP-derived routine for the CPU, or null.
 extern "C" uint64_t numetron_detect_platform();
 extern "C" detect_mul_basecase_type detect_mul_basecase(uint64_t);
-#define NUMETRON_mul_basecase detected_mul_basecase_ptr
+#   endif
+
+namespace numetron::limb_arithmetic::detail {
+// CPUID.(EAX=7, ECX=0):EBX bit 8 (BMI2) and bit 19 (ADX): what numetron_mul_basecase_adx needs.
+inline bool cpu_has_bmi2_adx() noexcept
+{
+#   if defined(_MSC_VER) && !defined(__clang__)
+    int r[4];
+    __cpuid(r, 0);
+    if (r[0] < 7) return false;
+    __cpuidex(r, 7, 0);
+    const unsigned ebx = static_cast<unsigned>(r[1]);
+#   else
+    unsigned a, ebx, c, d;
+    if (!__get_cpuid_count(7, 0, &a, &ebx, &c, &d)) return false;
+#   endif
+    return (ebx & (1u << 8)) && (ebx & (1u << 19));
+}
+}
 #endif
 
 #if defined(NUMETRON_PLATFORM_K8)
@@ -85,10 +118,17 @@ extern "C" detect_mul_basecase_type detect_mul_basecase(uint64_t);
 #   if defined(NUMETRON_mul_basecase)
 #       error "NUMETRON_mul_basecase already defined"
 #   endif
-#define NUMETRON_mul_basecase __core2_mul_basecase 
+#define NUMETRON_mul_basecase __core2_mul_basecase
 #endif
 
-#if !defined(NUMETRON_PLATFORM_AUTODETECT)
+#if defined(NUMETRON_PLATFORM_ADX)
+#   if defined(NUMETRON_mul_basecase)
+#       error "NUMETRON_mul_basecase already defined"
+#   endif
+#   define NUMETRON_mul_basecase numetron_mul_basecase_adx
+#endif
+
+#if !defined(NUMETRON_PLATFORM_AUTODETECT) && !defined(NUMETRON_PLATFORM_ADX)
 extern "C" void NUMETRON_mul_basecase(uint64_t* rp, const uint64_t* up, size_t un, uint64_t const* vp, uint64_t vn);
 #endif
 

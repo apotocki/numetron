@@ -6,6 +6,7 @@
 
 #include "platform.hpp"
 #include "umul1.hpp"
+#include "umul_basecase_variants.hpp" // the C++ basecase alternatives (NUMETRON_CXX_BASECASE)
 
 namespace numetron::limb_arithmetic {
 
@@ -255,34 +256,70 @@ inline LimbT* umul_basecase_unrolled(LimbT const* ub, LimbT const* ue, LimbT con
     }
 }
 
+// The C++ basecase: NUMETRON_CXX_BASECASE for four limbs and more, the reference below that
+// (faster there). The unrolled loop needs un >= 2, so the 1 x 1 product is done here.
+template <std::unsigned_integral LimbT>
+requires (sizeof(LimbT) == 8)
+inline LimbT* umul_basecase_cxx(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
+{
+#if NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+    if (un >= 4) return umul_basecase_adx<LimbT>(ub, un, vb, vn, rb);
+#elif NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_BLOCKED
+    if (un >= 4) return umul_basecase_blocked<LimbT>(ub, un, vb, vn, rb);
+#endif
+    if (un == 1) {
+        auto [h, l] = arithmetic::umul1(*ub, *vb);
+        rb[0] = l;
+        rb[1] = h;
+        return rb + 2;
+    }
+    return umul_basecase_unrolled<LimbT>(ub, ub + un, vb, vb + vn, rb);
+}
+
+#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64)) && defined(NUMETRON_PLATFORM_AUTODETECT)
+namespace detail {
+
+// The C++ basecase behind the mul_basecase signature, for CPUs no assembly basecase is picked for
+// (also called from the assembly Karatsuba, through numetron_karatsuba_ctx). That contract is all
+// un + vn limbs written; the C++ basecase may stop short of a zero top limb.
+inline void mul_basecase_cxx(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn) noexcept
+{
+    for (uint64_t* e = umul_basecase_cxx<uint64_t>(up, un, vp, vn, rp), *re = rp + un + vn; e != re; ++e) *e = 0;
+}
+
+// The mul_basecase for this CPU, chosen on the first call: with NUMETRON_ASM_LICENSE_GMP_LGPL the
+// GMP-derived routine for the CPU family; otherwise (or for a CPU that has none) our own
+// numetron_mul_basecase_adx when the CPU has BMI2 + ADX; the C++ basecase as the last resort.
+inline detect_mul_basecase_type detected_mul_basecase() noexcept
+{
+    static const detect_mul_basecase_type fn = []() noexcept -> detect_mul_basecase_type {
+#   if NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
+        if (auto gmp = detect_mul_basecase(numetron_detect_platform())) return gmp;
+#   endif
+        if (cpu_has_bmi2_adx()) return &numetron_mul_basecase_adx;
+        return &mul_basecase_cxx;
+    }();
+    return fn;
+}
+
+}
+#endif
+
 template <std::unsigned_integral LimbT>
 requires (sizeof(LimbT) == 8)
 inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
 {
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
-    if constexpr (sizeof(LimbT) == 8) {
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
-        static const detect_mul_basecase_type detected_mul_basecase_ptr = []() -> detect_mul_basecase_type {
-            uint64_t platform_descriptor = numetron_detect_platform();
-            //std::cout << "PLATFROM: " << std::hex << "0x" << platform_descriptor << std::dec << std::endl;
-            return detect_mul_basecase(platform_descriptor);
-        }();
+    detail::detected_mul_basecase()(rb, ub, un, vb, vn);
+#   else
+    NUMETRON_mul_basecase(rb, ub, un, vb, vn);
 #   endif
-        NUMETRON_mul_basecase(rb, ub, un, vb, vn);
-        return rb + un + vn;
-    } else
+    return rb + un + vn;
+#else
+    // Pure C++ (header-only build, or no assembly for this target).
+    return umul_basecase_cxx<LimbT>(ub, un, vb, vn, rb);
 #endif
-    {
-        // Pure C++ (header-only build, or no assembly for this target). The unrolled loop needs
-        // un >= 2, so the 1 x 1 product is done here.
-        if (un == 1) {
-            auto [h, l] = arithmetic::umul1(*ub, *vb);
-            rb[0] = l;
-            rb[1] = h;
-            return rb + 2;
-        }
-        return umul_basecase_unrolled<LimbT>(ub, ub + un, vb, vb + vn, rb);
-    }
 }
 
 }
