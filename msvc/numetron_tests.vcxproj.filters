@@ -122,6 +122,9 @@
     <ClCompile Include="..\tests\mpn_mul_test.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="..\tests\mul_shapes_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="..\tests\float16_test.cpp">
       <Filter>tests</Filter>
     </ClCompile>

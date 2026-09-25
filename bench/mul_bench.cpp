@@ -12,6 +12,9 @@
 // mul_basecase implementation, not the plain C++ fallback. The other implementation choices (Karatsuba,
 // Toom-3) are defaults from the same header, overridable per build with compiler flags, e.g.
 // -DNUMETRON_KARATSUBA_IMPL=NUMETRON_KARATSUBA_IMPL_FUSED; the output header names the ones in use.
+//
+// Modes: --balanced (un == vn), --unbalanced (un > vn, several vn x un/vn); neither: both.
+// --tune[=N] [--trace] retunes the thresholds first; --add benchmarks limb add/sub instead.
 
 #ifdef _WIN32
 #   pragma warning(disable : 4244 4146)
@@ -30,6 +33,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -61,12 +65,12 @@ struct operand_pair
     std::string u_hex, v_hex;
 };
 
-std::vector<operand_pair> make_operands(std::mt19937_64& rng, size_t limb_count, size_t count)
+std::vector<operand_pair> make_operands(std::mt19937_64& rng, size_t u_limbs, size_t v_limbs, size_t count)
 {
     std::vector<operand_pair> result;
     result.reserve(count);
     for (size_t i = 0; i < count; ++i) {
-        result.push_back({ random_hex_operand(rng, limb_count), random_hex_operand(rng, limb_count) });
+        result.push_back({ random_hex_operand(rng, u_limbs), random_hex_operand(rng, v_limbs) });
     }
     return result;
 }
@@ -119,7 +123,7 @@ void verify_against_gmp(std::vector<operand_pair> const& operands)
         std::string numetron_hex = to_string(product, 16, false);
 
         if (numetron_hex != gmp_hex.get()) {
-            std::cerr << "MISMATCH for " << (o.u_hex.size() / 16) << "-limb operands:\n"
+            std::cerr << "MISMATCH for " << (o.u_hex.size() / 16) << " x " << (o.v_hex.size() / 16) << "-limb operands:\n"
                       << "  numetron: " << numetron_hex << "\n"
                       << "  gmp     : " << gmp_hex.get() << "\n";
             std::exit(1);
@@ -214,25 +218,29 @@ double time_gmp_mul(std::vector<operand_pair> const& operands, int repeats)
 // total work. The n^2 estimate is only a rough guide for keeping the run within a few
 // seconds -- it doesn't need to model Numetron's actual (sub-quadratic for large operands)
 // complexity.
-int repeats_for(size_t limb_count)
+int repeats_for(size_t u_limbs, size_t v_limbs, double budget = 4.0e8)
 {
-    double budget = 4.0e8;
-    double estimate = budget / (double(limb_count) * double(limb_count) + 1.0);
+    double estimate = budget / (double(u_limbs) * double(v_limbs) + 1.0);
     int repeats = std::clamp(int(estimate), 1, 20000);
 
     // At <=16 limbs a single multiply takes only a few nanoseconds, close enough to the clock's
     // resolution/call overhead that the measurement noise floor starts to matter -- run 10x more
     // repeats there so the timed interval stays comfortably above it.
-    if (limb_count <= 16) repeats *= 10;
+    if (u_limbs <= 16) repeats *= 10;
 
     return repeats;
 }
+
+int repeats_for(size_t limb_count) { return repeats_for(limb_count, limb_count); }
 
 double ns_to_us(double ns) { return ns / 1000.0; }
 
 static constexpr int attempts = 3;
 
-void run_tier(std::string const& limbs_label, std::string const& bits_label, std::vector<operand_pair> const& operands, int repeats)
+// with_plain = false leaves out the plain operator* column (and its timing): --unbalanced shows
+// only reuse, the allocation-free product that compares with GMP's mpz_mul into a reused result.
+void run_tier(std::string const& limbs_label, std::string const& bits_label, std::vector<operand_pair> const& operands, int repeats,
+    int label_width = 10, bool with_plain = true)
 {
     verify_against_gmp(operands);
 
@@ -240,15 +248,15 @@ void run_tier(std::string const& limbs_label, std::string const& bits_label, std
     double best_reuse_ns = std::numeric_limits<double>::infinity();
     double best_gmp_ns = std::numeric_limits<double>::infinity();
     for (int attempt = 0; attempt < attempts; ++attempt) {
-        best_numetron_ns = std::min(best_numetron_ns, time_numetron_mul(operands, repeats));
+        if (with_plain) best_numetron_ns = std::min(best_numetron_ns, time_numetron_mul(operands, repeats));
         best_reuse_ns = std::min(best_reuse_ns, time_numetron_mul_reuse(operands, repeats));
         best_gmp_ns = std::min(best_gmp_ns, time_gmp_mul(operands, repeats));
     }
 
-    std::cout << std::setw(10) << limbs_label
-               << std::setw(12) << bits_label
-               << std::setw(16) << std::fixed << std::setprecision(3) << ns_to_us(best_numetron_ns)
-               << std::setw(16) << std::fixed << std::setprecision(3) << ns_to_us(best_reuse_ns)
+    std::cout << std::setw(label_width) << limbs_label
+               << std::setw(12) << bits_label;
+    if (with_plain) std::cout << std::setw(16) << std::fixed << std::setprecision(3) << ns_to_us(best_numetron_ns);
+    std::cout << std::setw(16) << std::fixed << std::setprecision(3) << ns_to_us(best_reuse_ns)
                << std::setw(16) << std::fixed << std::setprecision(3) << ns_to_us(best_gmp_ns)
                << std::setw(14) << std::fixed << std::setprecision(2) << (best_gmp_ns / best_reuse_ns)
                << "\n";
@@ -318,6 +326,11 @@ void print_configuration()
               << ", toom4 " << la::toom4_threshold()
               << ", toom6h " << la::toom6h_threshold()
               << ", toom8h " << la::toom8h_threshold()
+              << ", toom32 " << la::toom32_threshold()
+              << ", toom42 " << la::toom42_threshold()
+              << ", toom76 " << la::toom76_threshold()
+              << ", toom63 " << la::toom63_threshold()
+              << ", slicing " << la::slicing_threshold()
               << ", fft ";
     if (la::fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
     else std::cout << la::fft_threshold() << "\n";
@@ -327,6 +340,10 @@ void print_configuration()
 
 int main(int argc, char** argv)
 {
+    // Flush after every output operation: when stdout is a pipe (Docker, `| tee`) it is fully
+    // buffered otherwise, and rows would only appear in large chunks. Output is never timed.
+    std::cout << std::unitbuf;
+
     for (int i = 1; i < argc; ++i) {
         if (std::string{ argv[i] } == "--add") {
             run_add_bench();
@@ -341,6 +358,8 @@ int main(int argc, char** argv)
 
     // --tune[=N]: retune the multiplication thresholds on this machine before benchmarking,
     // taking the best of N samples per probe (default: mul_tuning_options' default).
+    // --tune-unbalanced[=N]: the same for the unbalanced thresholds alone (Toom-3/2, Toom-4/2;
+    // the balanced ones stay the defaults).
     // --trace (with --tune): print every probe: size, lower / higher algorithm time, ratio.
     bool trace = false;
     for (int i = 1; i < argc; ++i) {
@@ -350,6 +369,8 @@ int main(int argc, char** argv)
         std::string arg = argv[i];
         if (arg.rfind("--tune", 0) != 0) continue;
         numetron::limb_arithmetic::mul_tuning_options opts;
+        // --tune-unbalanced[=N]: only the unbalanced thresholds, against the balanced defaults
+        if (arg.rfind("--tune-unbalanced", 0) == 0) opts.tune_balanced = false;
         if (auto eq = arg.find('='); eq != std::string::npos) {
             opts.samples = static_cast<unsigned>(std::stoul(arg.substr(eq + 1)));
         }
@@ -381,6 +402,10 @@ int main(int argc, char** argv)
         auto before_t6 = numetron::limb_arithmetic::toom6h_threshold();
         auto before_t8 = numetron::limb_arithmetic::toom8h_threshold();
         auto before_fft = numetron::limb_arithmetic::fft_threshold();
+        auto before_t32 = numetron::limb_arithmetic::toom32_threshold();
+        auto before_t42 = numetron::limb_arithmetic::toom42_threshold();
+        auto before_t76 = numetron::limb_arithmetic::toom76_threshold();
+        auto before_t63 = numetron::limb_arithmetic::toom63_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
         auto show = [](size_t t) { return t == ~size_t{ 0 } ? std::string{ "off" } : std::to_string(t); };
         std::cout << "tuned thresholds (limbs):\n"
@@ -394,36 +419,88 @@ int main(int argc, char** argv)
                   << (tuned.toom6h_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  toom8h:    " << before_t8 << " -> " << tuned.toom8h_threshold
                   << (tuned.toom8h_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom32:    " << before_t32 << " -> " << tuned.toom32_threshold
+                  << (tuned.toom32_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom42:    " << before_t42 << " -> " << tuned.toom42_threshold
+                  << (tuned.toom42_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom76:    " << before_t76 << " -> " << tuned.toom76_threshold
+                  << (tuned.toom76_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom63:    " << before_t63 << " -> " << tuned.toom63_threshold
+                  << (tuned.toom63_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  fft:       " << show(before_fft) << " -> " << show(tuned.fft_threshold)
                   << (tuned.fft_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
+
+    // --balanced: un == vn over limb_counts; --unbalanced: un > vn over unbalanced_v_limbs x
+    // unbalanced_ratios. Neither given: both, balanced first.
+    bool balanced = false, unbalanced = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--balanced") balanced = true;
+        else if (arg == "--unbalanced") unbalanced = true;
+    }
+    if (!balanced && !unbalanced) balanced = unbalanced = true;
 
     std::mt19937_64 rng{ 0x5EED1234ULL };
 
     std::cout << "Numetron vs GMP multiplication benchmark\n";
     std::cout << "(" << samples_per_tier << " random operand pairs per tier, best of " << attempts << " attempts)\n";
     print_configuration();
-    std::cout << "\n";
-    std::cout << std::right
-               << std::setw(10) << "limbs"
-               << std::setw(12) << "bits"
-               << std::setw(16) << "numetron(us)"
-               << std::setw(16) << "reuse(us)"
-               << std::setw(16) << "gmp(us)"
-               << std::setw(14) << "gmp/reuse"
-               << "\n";
 
-    // "1*" isolates the raw single-limb multiply from the allocation the plain "1" row below
-    // pays for its (almost always 2-limb) product -- see make_small_operands() for why.
-    run_tier("1*", "<=62", make_small_operands(rng, samples_per_tier), repeats_for(1));
+    if (balanced) {
+        std::cout << "\nbalanced (un == vn)\n\n";
+        std::cout << std::right
+                   << std::setw(10) << "limbs"
+                   << std::setw(12) << "bits"
+                   << std::setw(16) << "numetron(us)"
+                   << std::setw(16) << "reuse(us)"
+                   << std::setw(16) << "gmp(us)"
+                   << std::setw(14) << "gmp/reuse"
+                   << "\n";
 
-    for (size_t limb_count : limb_counts) {
-        auto operands = make_operands(rng, limb_count, samples_per_tier);
-        run_tier(std::to_string(limb_count), std::to_string(limb_count * 64), operands, repeats_for(limb_count));
+        // "1*" isolates the raw single-limb multiply from the allocation the plain "1" row below
+        // pays for its (almost always 2-limb) product -- see make_small_operands() for why.
+        run_tier("1*", "<=62", make_small_operands(rng, samples_per_tier), repeats_for(1));
+
+        for (size_t limb_count : limb_counts) {
+            auto operands = make_operands(rng, limb_count, limb_count, samples_per_tier);
+            run_tier(std::to_string(limb_count), std::to_string(limb_count * 64), operands, repeats_for(limb_count));
+        }
     }
 
-    std::cout << "\n* both factors <= 31 bits: product guaranteed to fit in 1 limb, no result allocation\n";
-    std::cout << "numetron(us): plain operator* (builds a fresh result every call, like u * v)\n";
+    if (unbalanced) {
+        // vn from below the Karatsuba threshold to below the FFT one (where the FFT takes any
+        // shape); un/vn from the Toom-3 range (1.5, 2) to far past it, where only slicing u into
+        // vn-sized pieces keeps the product sub-quadratic.
+        static constexpr size_t unbalanced_v_limbs[] = { 16, 24, 32, 64, 128, 256, 512, 1024, 2048 };
+        static constexpr double unbalanced_ratios[] = { 1.25, 1.35, 1.5, 1.75, 1.9, 2, 3, 4, 8, 16, 32 };
+
+        std::mt19937_64 urng{ 0x0B1A5EEDULL }; // own seed: the same operands with or without --balanced
+
+        std::cout << "\nunbalanced (un > vn)\n\n";
+        std::cout << std::right
+                   << std::setw(14) << "un x vn"
+                   << std::setw(12) << "un/vn"
+                   << std::setw(16) << "reuse(us)"
+                   << std::setw(16) << "gmp(us)"
+                   << std::setw(14) << "gmp/reuse"
+                   << "\n";
+
+        for (size_t vn : unbalanced_v_limbs) {
+            for (double ratio : unbalanced_ratios) {
+                const auto un = static_cast<size_t>(double(vn) * ratio + 0.5);
+                std::ostringstream ratio_label;
+                ratio_label << ratio;
+                auto operands = make_operands(urng, un, vn, samples_per_tier);
+                // A quarter of the balanced budget: 99 shapes, and the product sizes grow with un/vn.
+                run_tier(std::to_string(un) + "x" + std::to_string(vn), ratio_label.str(), operands, repeats_for(un, vn, 1.0e8), 14, false);
+            }
+        }
+    }
+
+    std::cout << "\n";
+    if (balanced) std::cout << "* both factors <= 31 bits: product guaranteed to fit in 1 limb, no result allocation\n";
+    if (balanced) std::cout << "numetron(us): plain operator* (builds a fresh result every call, like u * v)\n";
     std::cout << "reuse(us):    assign_mul() into one result reused across the whole run, like GMP's mpz_mul(r, u, v)\n";
     std::cout << "(sink: " << g_sink << ")\n"; // keeps g_sink itself from looking unused to -Wunused warnings
     return 0;

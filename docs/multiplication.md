@@ -59,13 +59,59 @@ curves, not by single runs. The FFT thresholds were the same in two runs each.
    number-theoretic transform, 2 limbs per coefficient; `NUMETRON_FFT_IMPL` picks the AVX2 + FMA
    kernel (default when the compiler targets AVX2) or the portable scalar one. Design,
    measurements and history: `docs/fft.md`.
+0a. **Slicing** (`detail::umul_sliced`) — `vn >= min(karatsuba_threshold(), slicing_threshold())`
+   and `un >= 2vn`: u is cut into vn-limb pieces (the last one shorter), each piece × v goes
+   through this same dispatch (balanced, so the whole chain below applies; a short last piece is
+   sliced again), written straight into the result at its offset with the overlapping vn limbs
+   saved and added back. Pieces are 2vn - 1 limbs (one toom42 / toom63 product each, against two
+   balanced vn x vn — GMP's mpn_mul does the same) from the Toom-4/2 threshold up (where the
+   balanced pieces would take Toom-6.5 / 8.5, only from the Toom-6/3 threshold), vn limbs
+   otherwise (§ 9 item 3, steps 4 and 6). `slicing_threshold()` (default 24) lets it start below a late Karatsuba
+   threshold, with basecase pieces: one long basecase runs rows of un limbs, and the basecase is
+   slower per limb on long rows (§ 2, the asm basecase notes) than on vn-limb ones. Below both
+   thresholds one basecase keeps any un (pieces of 16 limbs cost more than the long rows).
 1. **Toom-8.5** (balanced 8 x 8, engine plan) — `vn >= toom8h_threshold()` and
    `toom8h_split_fits(un, vn)` (v reaches u's top eighth: `vn > 7*ceil(un/8)`).
 2. **Toom-6.5** (balanced 6 x 6, engine plan) — same pattern with sixths.
+2a. **Toom-6.5 7 x 6** (`toom_7x6.hpp`, engine plan; the "half" case of GMP's toom6h) —
+   `vn >= toom76_threshold()` and un/vn < 1.4, what the balanced 6 x 6 doesn't take: u in seven
+   pieces, v in six, c = max(ceil(un/7), ceil(vn/6)) (two traits as for toom32); the balanced
+   plan's 11 points plus infinity (c11 = a6 b5 straight into rb). Splitting each pair into its
+   halves also takes c11's share and the one-step-larger scaling of the fractional points out,
+   after which the values are exactly the balanced plan's and its 13 `lincomb_dual` steps run
+   unchanged. Checked before Toom-4 and toom32, which would take these shapes otherwise.
+   Thresholds (`--tune-unbalanced`, 2026-09-25): asm Karatsuba GCC 371, MSVC 636; header-only ADX
+   basecase 253, blocked 394, reference 245 (MSVC) / 154 (GCC); C++ Karatsuba over the asm
+   basecase 531 (MSVC) / 371 (GCC).
 3. **Toom-4** (balanced 4 x 4, engine plan) — same pattern with quarters.
-4. **Toom-3** — balanced (`toom3_split_fits`): `NUMETRON_TOOM3_IMPL` picks the hand-written
-   `detail::umul_toom3_impl` (`_CXX`, default) or the engine's `toom3_balanced` plan (`_ENGINE`);
-   unbalanced: the old generic engine plan `toom_engine<3,3>`.
+4. **Toom-3** — balanced only (`toom3_split_fits`): `NUMETRON_TOOM3_IMPL` picks the
+   hand-written `detail::umul_toom3_impl` (`_CXX`, default) or the engine's `toom3_balanced` plan
+   (`_ENGINE`). Unbalanced products below 2vn fall through to Toom-3/2 or Karatsuba (the old
+   generic engine plan `toom_engine<3,3>` used to take them and is no longer dispatched to).
+4a. **Toom-3/2** (`toom_3x2.hpp`, engine plan; GMP's toom32) — `vn >= toom32_threshold()` and
+   1.25 <= un/vn < 1.75 (GMP's window): u in three pieces, v in two, c = max(ceil(un/3),
+   ceil(vn/2)); points 0, ±1, ∞ (four products of ~vn/2 limbs), two lincomb passes of
+   interpolation. The engine takes c from one operand, so the one plan has two traits
+   (`toom32_u_engine` / `toom32_v_engine`, picked by `detail::toom32_split_by_u`). Thresholds
+   (`--tune-unbalanced`, then named `--tune-toom32`, 2026-09-25): asm Karatsuba 44 (both compilers); header-only ADX basecase 34,
+   blocked 28, reference 23 (MSVC) / 26 (GCC) — below the Karatsuba threshold there, i.e. toom32
+   beats the basecase on 1.5n x n; C++ Karatsuba over the asm basecase 32 (both compilers).
+4b. **Toom-4/2** (`toom_4x2.hpp`, engine plan; GMP's toom42) — `vn >= toom42_threshold()` and
+   1.75 <= un/vn < 2 (from where toom32's window ends to where slicing starts): u in four pieces,
+   v in two, c = max(ceil(un/4), ceil(vn/2)); points 0, ±1, 2, ∞ (five products of ~vn/2 limbs
+   against one Karatsuba level's three of ~0.9 vn). A degree-4 product at the balanced Toom-3's
+   points, so its interpolation and result layout are that plan's. Two traits as for toom32.
+   Thresholds (`--tune-unbalanced`, 2026-09-25): asm Karatsuba 70 (both compilers); header-only
+   ADX basecase 63, blocked 38, reference 42 (MSVC) / 66 (GCC); C++ Karatsuba over the asm
+   basecase 38 (MSVC) / 78 (GCC).
+4c. **Toom-6/3** (`toom_6x3.hpp`, engine plan; GMP's toom63) — `vn >= toom63_threshold()` and
+   1.75 <= un/vn < 2, checked before toom42 (eight products of ~vn/3 against five of ~vn/2): u in
+   six pieces, v in three, c = max(ceil(un/6), ceil(vn/3)) (two traits); points 0, ±1, ±2, ±4, ∞
+   (c0, c7 into rb). The pairs split into halves with c0 and c7 taken out; both halves are a
+   quadratic known at 1, 4, 16 — three `lincomb_dual` steps, divisions by 45 (two dbm1 stages) and
+   3. Also what slicing's 2vn - 1 pieces take from its threshold up (item 0a). Thresholds (asm
+   Karatsuba): GCC 218, MSVC 394; header-only ADX basecase 231, blocked 260, reference 137 (both
+   compilers); C++ Karatsuba over the asm basecase 371 (MSVC) / 350 (GCC).
 5. **Karatsuba** — `NUMETRON_KARATSUBA_IMPL` picks the all-assembly `umul_karatsuba_asm_impl`
    (`_ASM`, x86-64 only; the default with `NUMETRON_USE_ASM`) (§ 4), the hand-written
    `umul_karatsuba_impl` (`_CXX`, the default without the assembly), `umul_karatsuba_fused_impl`
@@ -108,8 +154,8 @@ override one per build with a compiler flag, e.g.
 `NUMETRON_KARATSUBA_ASM`, `NUMETRON_TOOM3_USE_ENGINE`). `numetron_bench_mul` prints the ones its
 build uses.
 
-Only *balanced* products get Toom-4/6.5/8.5. Anything more lopsided falls through to Toom-3
-or Karatsuba (§ 9: unbalanced variants are an open item).
+Only *balanced* products get Toom-3/4/6.5/8.5. un < 2vn otherwise takes Karatsuba, un >= 2vn
+slicing (§ 9 item 3: unbalanced Toom plans are the next step).
 
 **Scratch memory**: `umul()` is the single place that creates the scratch allocator — a
 thread-local LIFO `numetron::detail::stack_allocator` — and passes it down. Everything below
@@ -320,8 +366,8 @@ little.
 known at y = 1, 4, 16 plus its reverse at 4, 16. It is solved through sums and differences of
 mirrored coefficients: 13 `lincomb_dual` steps. The division by **189 = 27·7 cannot be avoided**:
 for 5 points of the form 4^k, the Vandermonde differences always include 4^3 − 1 = 63, and 7
-doesn't divide 2^64 − 1. The 12-point 6 x 7 variant (the ".5", for mildly unbalanced operands)
-is not implemented.
+doesn't divide 2^64 − 1. The 12-point 7 x 6 variant (the ".5", for mildly unbalanced operands)
+is `toom_7x6.hpp` (§ 2 item 2a): the same interpolation after c11's share is taken out.
 
 **Toom-6.5 / 8.5 thresholds, MSVC vs GCC** (2026-09-24, scratch `toom68_cost.cpp`, two runs each;
 one top node of Toom-4 / 6.5 / 8.5, children through karatsuba 29 (asm) / toom3 115 / toom4 444
@@ -420,9 +466,16 @@ and per compiler (the Toom kernels are compiled C++). The header-only build (no
 `NUMETRON_USE_ASM`) has a set of its own, FFT included (§ 1, § 9 item 7).
 
 `tune_mul_thresholds()` (`mul_tuning.hpp`; `numetron_bench_mul --tune[=samples] [--trace]`)
-tunes Karatsuba, Toom-3, Toom-4, Toom-6.5, Toom-8.5 and the FFT in that order, each against the
-tuned ones below (the FFT from the Toom-4 threshold up to `fft_max` = 16384, against the whole
-Toom chain; everything above the stage being tuned is off, the FFT included). **Why it works the way it does**:
+tunes Karatsuba, Toom-3, Toom-4, Toom-6.5, Toom-8.5, Toom-3/2, Toom-4/2 and the FFT in that order, each
+against the tuned ones below (the FFT from the Toom-4 threshold up to `fft_max` = 16384, against
+the whole Toom chain; everything above the stage being tuned is off, the FFT included). Toom-3/2
+is tuned on 1.5n x n products (the middle of its window; the threshold is on vn) from its
+minimum (8) up to `toom32_max` = 1024, against what those shapes take otherwise (the Karatsuba
+level, below the Karatsuba threshold the basecase); Toom-4/2 the same way on 1.875n x n up to
+`toom42_max` = 1024; Toom-6.5 7 x 6 on 1.3n x n from the Toom-4 threshold up to `toom76_max` =
+4096; Toom-6/3 after Toom-4/2 on the same 1.875n x n shapes, from the toom42 threshold up to
+`toom63_max` = 4096. `--tune-unbalanced[=samples]` tunes just these four, against the installed
+(default) balanced thresholds. **Why it works the way it does**:
 
 - A one-level comparison (threshold n vs n+1: only the top node changes) is **not a smooth
   curve**. The higher/lower time ratio swings in bands about an octave wide as the two
@@ -513,8 +566,236 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
    `mul()`/`umul()` (dispatch, allocation, normalization).
 3. **Unbalanced products**: the generic `toom_engine<3,3>` plan still uses the old slow ops.
    Candidates: a Toom-3 2 x 3-style plan (v split into 2) for un/vn ≈ 1.5–2.5, a lincomb-based
-   rewrite of the generic plan, and the 6 x 7 / 8 x 9 ("half") Toom-6.5/8.5 variants. Needs a
-   benchmark on unequal sizes first.
+   rewrite of the generic plan, and the 6 x 7 / 8 x 9 ("half") Toom-6.5/8.5 variants.
+   **Baseline** (`numetron_bench_mul --unbalanced`, GCC, asm defaults, 2026-09-25; gmp/reuse,
+   > 1: numetron faster):
+
+   | vn \ un/vn | 1.5 | 2 | 3 | 4 | 8 | 16 | 32 |
+   |---|---|---|---|---|---|---|---|
+   | 16 | 1.30 | 1.30 | 1.33 | 1.29 | 1.26 | 1.23 | 1.21 |
+   | 32 | 1.10 | 1.01 | 0.96 | 0.96 | 0.92 | 0.91 | 0.90 |
+   | 64 | 1.04 | 0.68 | 0.69 | 0.67 | 0.65 | 0.65 | 0.64 |
+   | 128 | 0.53 | 0.44 | 0.50 | 0.48 | 0.47 | 0.46 | 0.46 |
+   | 256 | 0.44 | 0.34 | 0.35 | 0.33 | 0.33 | 0.33 | 0.33 |
+   | 512 | 0.27 | 0.24 | 0.24 | 0.22 | 0.22 | 0.23 | 0.22 |
+   | 1024 | 0.21 | 0.17 | 0.16 | 0.16 | 0.16 | 0.16 | 0.16 |
+   | 2048 | 0.14 | 0.11 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 |
+
+   From the dispatch (`umul_dispatch`, un >= vn): Karatsuba needs 2vn > un and Toom-3 3vn > un,
+   so (a) un >= 3vn is always the basecase, O(un·vn); (b) 2vn <= un < 3vn with vn below the
+   Toom-3 threshold (115) is the basecase too; (c) vn >= 115 and un < 3vn that isn't a balanced
+   Toom-3 split goes to the old generic `toom_engine<3,3>` — checked before Karatsuba, so even
+   un/vn = 1.5 takes it (192 x 128: 7.0 us, more than the balanced 192 x 192 at 4.2 us).
+
+   **Step 1, slicing** (`detail::umul_sliced` for un >= 2vn, vn >= the Karatsuba threshold;
+   Toom-3 balanced only, the rest below 2vn to Karatsuba), 2026-09-25, gmp/reuse, GCC / MSVC
+   (`mul_shapes` test: 3024 products against GMP, both compilers, all pass):
+
+   | vn \ un/vn | 1.5 | 2 | 3 | 4 | 8 | 16 | 32 |
+   |---|---|---|---|---|---|---|---|
+   | 16 | 1.30 / 1.25 | 1.33 / 1.29 | 1.31 / 1.26 | 1.33 / 1.28 | 1.26 / 1.24 | 1.23 / 1.24 | 1.20 / 1.21 |
+   | 32 | 1.04 / 1.10 | 1.24 / 1.17 | 1.22 / 1.19 | 1.24 / 1.20 | 1.21 / 1.19 | 1.23 / 1.20 | 1.22 / 1.20 |
+   | 64 | 1.04 / 1.05 | 1.16 / 1.15 | 1.16 / 1.17 | 1.16 / 1.14 | 1.13 / 1.15 | 1.14 / 1.13 | 1.12 / 1.13 |
+   | 128 | 0.98 / 0.97 | 1.05 / 1.09 | 1.13 / 1.15 | 1.07 / 1.09 | 1.09 / 1.11 | 1.06 / 1.10 | 1.06 / 1.10 |
+   | 256 | 0.90 / 0.89 | 1.06 / 1.03 | 1.08 / 1.10 | 1.05 / 1.05 | 1.04 / 1.04 | 1.03 / 1.04 | 1.03 / 1.04 |
+   | 512 | 0.73 / 0.74 | 1.00 / 1.04 | 1.07 / 1.08 | 1.02 / 1.03 | 1.03 / 1.04 | 1.03 / 1.04 | 1.04 / 1.07 |
+   | 1024 | 0.61 / 0.62 | 1.09 / 1.08 | 1.11 / 1.12 | 1.09 / 1.07 | 1.06 / 1.07 | 1.10 / 1.07 | 1.13 / 1.05 |
+   | 2048 | 0.45 / 0.45 | 1.04 / 1.03 | 1.06 / 1.05 | 1.06 / 1.02 | 1.04 / 1.01 | 1.04 / 1.03 | 1.04 / 1.02 |
+
+   From 2vn up everything is ahead of GMP now (was 0.10–0.7). Left: un/vn = 1.5 from vn = 256,
+   falling with vn — the asm Karatsuba (the default) takes these and stays in Karatsuba all the
+   way down (its recursion never returns to the dispatch), while the balanced products of that
+   size get Toom-3/4/6.5.
+
+   **Step 1b**: with the asm Karatsuba, from the Toom-3 threshold up (where only unbalanced
+   operands reach Karatsuba) one C++ level (`umul_karatsuba_impl`) instead, whose children go
+   back through the dispatch (the n x n halves to Toom, the uneven part to slicing). The un/vn =
+   1.5 column, GCC / MSVC (the other columns unchanged within noise; tests pass on both):
+
+   | vn | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 |
+   |---|---|---|---|---|---|---|---|---|
+   | before | 1.30 / 1.25 | 1.04 / 1.10 | 1.04 / 1.05 | 0.98 / 0.97 | 0.90 / 0.89 | 0.73 / 0.74 | 0.61 / 0.62 | 0.45 / 0.45 |
+   | after | 1.36 / 1.25 | 1.08 / 1.10 | 1.03 / 1.05 | 0.98 / 1.00 | 1.03 / 1.02 | 0.96 / 1.00 | 1.03 / 1.00 | 0.96 / 0.95 |
+
+   The 1.5 column is now at parity (0.95–1.03), the only one not clearly ahead: GMP uses toom32
+   there (4 products of vn/2 limbs against Karatsuba's 3 of ~0.75 vn) — the next candidate.
+
+   **Step 2, Toom-3/2** (`toom_3x2.hpp`, § 2 item 4a; `mul_shapes` 8064 products against GMP on
+   both compilers, and GCC Debug with the engine's checks, all pass). The 1.5 column by the
+   toom32 threshold (GCC / MSVC; the other columns unchanged within noise):
+
+   | vn | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 |
+   |---|---|---|---|---|---|---|---|---|
+   | Karatsuba (step 1b) | 1.36 / 1.25 | 1.08 / 1.10 | 1.03 / 1.05 | 0.98 / 1.00 | 1.03 / 1.02 | 0.96 / 1.00 | 1.03 / 1.00 | 0.96 / 0.95 |
+   | toom32 from 115 | 1.32 / 1.26 | 1.07 / 1.10 | 1.05 / 1.03 | 1.18 / 1.15 | 1.19 / 1.20 | 1.13 / 1.12 | 1.14 / 1.16 | 1.14 / 1.09 |
+   | toom32 from 60 | 1.31 / 1.27 | 1.06 / 1.09 | 1.13 / 1.10 | 1.17 / 1.16 | 1.19 / 1.17 | 1.14 / 1.13 | 1.19 / 1.16 | 1.13 / 1.08 |
+   | toom32 from 40 | 1.31 / 1.26 | 1.08 / 1.06 | 1.14 / 1.09 | 1.20 / 1.16 | 1.17 / 1.18 | 1.12 / 1.12 | 1.15 / 1.20 | 1.10 / 1.07 |
+
+   Default 60 with the asm Karatsuba (40 ties with it on this grid); the other configurations
+   keep the Toom-3 threshold until tuned. With 60 the whole unbalanced grid is at 1.01–1.33 on
+   MSVC and 0.97–1.33 on GCC (the 0.97 at 8192 x 512 is a slicing shape toom32 doesn't touch,
+   1.03–1.04 in the runs before — noise); the 1.5 column itself is 1.06–1.31.
+
+   **Tuner stage** (§ 6): `--tune` puts toom32 at **44 on both compilers** (the one-level scan
+   crosses 1 at 42–44 and stays at 0.82–0.95 up to 967), now the default with the asm Karatsuba.
+   `--unbalanced` with the defaults (toom32 44), **gmp/numetron** (plain `operator*`; this run
+   was made while the bench timed only that in `--unbalanced` — it has since been switched to
+   `assign_mul` only, gmp/reuse, like the earlier tables), GCC / MSVC:
+
+   | vn \ un/vn | 1.5 | 2 | 3 | 4 | 8 | 16 | 32 |
+   |---|---|---|---|---|---|---|---|
+   | 16 | 1.27 / 1.02 | 1.31 / 1.09 | 1.32 / 1.15 | 1.31 / 1.19 | 1.24 / 1.20 | 1.23 / 1.20 | 1.20 / 1.18 |
+   | 32 | 1.05 / 1.02 | 1.23 / 1.14 | 1.19 / 1.17 | 1.23 / 1.20 | 1.20 / 1.17 | 1.21 / 1.20 | 1.22 / 1.18 |
+   | 64 | 1.12 / 1.06 | 1.14 / 1.13 | 1.16 / 1.15 | 1.15 / 1.13 | 1.15 / 1.13 | 1.14 / 1.13 | 1.13 / 1.12 |
+   | 128 | 1.15 / 1.16 | 1.09 / 1.08 | 1.14 / 1.13 | 1.09 / 1.08 | 1.09 / 1.08 | 1.07 / 1.09 | 1.10 / 1.12 |
+   | 256 | 1.17 / 1.20 | 1.03 / 1.03 | 1.08 / 1.10 | 1.05 / 1.03 | 1.03 / 1.04 | 1.01 / 1.01 | 1.02 / 1.04 |
+   | 512 | 1.13 / 1.13 | 1.05 / 1.04 | 1.08 / 1.07 | 1.03 / 1.04 | 1.05 / 1.03 | 1.03 / 1.04 | 1.01 / 1.03 |
+   | 1024 | 1.15 / 1.19 | 1.12 / 1.08 | 1.12 / 1.15 | 1.10 / 1.09 | 1.09 / 1.08 | 1.14 / 1.07 | 1.12 / 1.08 |
+   | 2048 | 1.10 / 1.08 | 1.01 / 1.02 | 1.09 / 1.06 | 1.06 / 1.02 | 1.04 / 1.03 | 1.00 / 0.99 | 1.03 / 1.00 |
+
+   **Window edges** (the grid now has 1.25, 1.75, 1.9 too; gmp/reuse, defaults, GCC / MSVC):
+
+   | vn | 1.25 | 1.75 | 1.9 |
+   |---|---|---|---|
+   | 64 | 1.10 / 1.09 | 1.10 / 1.10 | 1.10 / 1.10 |
+   | 128 | 1.17 / 1.15 | 1.04 / 1.02 | 1.06 / 1.06 |
+   | 256 | 1.21 / 1.17 | **0.99 / 0.98** | **0.98 / 0.97** |
+   | 512 | 1.11 / 1.07 | **0.92 / 0.96** | **0.97 / 0.94** |
+   | 1024 | 1.06 / 1.07 | **0.97 / 0.95** | 1.00 / 1.00 |
+   | 2048 | 1.02 / 1.01 | **0.92 / 0.93** | **0.96 / 0.93** |
+
+   1.25 (toom32's lower edge) is ahead; 1.75–1.9 — the one-level Karatsuba (C++, then Toom and
+   slicing below) — is 2–8% behind GMP from vn = 256, where GMP uses toom42: the next plan.
+
+   **Step 3, Toom-4/2** (`toom_4x2.hpp`, § 2 item 4b; `mul_shapes` 9272 products against GMP on
+   both compilers and in GCC Debug, all pass). `--tune-unbalanced` (1.875n x n): asm Karatsuba
+   **70 on both compilers** (the one-level scan crosses 1 at ~66 and falls to 0.86–0.90 at
+   250–500 limbs); header-only ADX 63, blocked 38, reference 42 (MSVC) / 66 (GCC). The toom32
+   thresholds came out as before (44 / 44, 34, 28, 23 / 32 — 26 kept, all within the tie band).
+   `--unbalanced` with toom42 at 70 (gmp/reuse, GCC / MSVC):
+
+   | vn | 1.75 before | 1.75 | 1.9 before | 1.9 |
+   |---|---|---|---|---|
+   | 128 | 1.04 / 1.02 | 1.13 / 1.14 | 1.06 / 1.06 | 1.16 / 1.17 |
+   | 256 | 0.99 / 0.98 | 1.08 / 1.09 | 0.98 / 0.97 | 1.10 / 1.06 |
+   | 512 | 0.92 / 0.96 | 1.05 / 1.04 | 0.97 / 0.94 | 1.01 / 1.07 |
+   | 1024 | 0.97 / 0.95 | 1.04 / 1.09 | 1.00 / 1.00 | 1.08 / 1.09 |
+   | 2048 | 0.92 / 0.93 | 1.05 / 1.00 | 0.96 / 0.93 | 1.05 / 1.00 |
+
+   **The whole unbalanced grid (vn 16–2048 × un/vn 1.25–32) is now at or ahead of GMP on both
+   compilers: 1.00–1.33** (single runs; the vn = 2048 row moves by ±0.03 between runs).
+
+   **The rare configuration** `NUMETRON_USE_ASM` + a C++ Karatsuba (`_CXX`; `_FUSED` / `_ENGINE`
+   share its default thresholds), tuned with `_CXX`: toom32 32 on both compilers; toom42 38
+   (MSVC; 60 was +0.7%) / 78 (GCC, a plateau: 36–78 within 0.3%). Its grid is 0.96–1.33 except
+   one row: vn = 32 at un/vn >= 3 is 0.90–0.97 on both compilers. That is not the unbalanced
+   plans but this configuration's balanced Karatsuba threshold, 38 (tuned before the asm
+   Karatsuba, with the GMP basecase): vn = 32 stays below it, so those shapes are one long
+   basecase instead of slices through Karatsuba (the default configuration, Karatsuba from 29,
+   is at 1.19–1.23 there). Retuning that configuration's balanced thresholds would fix it.
+
+   **Retuned, and fixed another way.** Two full `--tune` runs of that configuration (GCC) put
+   Karatsuba at 36 / 34 again — the C++ Karatsuba loses to the basecase at 32 on balanced
+   operands (by ~2%) — so thresholds can't fix the row (the other balanced thresholds jumped
+   between plateau values: toom3 57 / 63, toom4 260 / 500, toom6h 675 / 717; left as they were).
+   The balanced 32 x 32 basecase is ahead of GMP there (1.12); what loses is one long basecase
+   of 1024 x 32, its rows 1024 limbs long. So slicing got its own threshold,
+   `slicing_threshold()` = 24 (§ 2 item 0a): slice from min(Karatsuba threshold, 24), with
+   basecase pieces where Karatsuba doesn't apply yet. `--unbalanced`, slicing threshold 24
+   against off, GCC / MSVC (gmp/reuse, un/vn >= 2):
+
+   | configuration, vn | off | 24 |
+   |---|---|---|
+   | asm basecase + C++ Karatsuba, 32 | 0.89–1.06 / 0.91–1.06 | 1.10–1.13 / 1.08–1.14 |
+   | asm basecase + C++ Karatsuba, 24 | 1.19–1.33 / 1.19–1.32 | 1.36–1.47 / 1.35–1.46 |
+   | default (asm Karatsuba from 29), 24 | 1.18–1.33 / 1.20–1.30 | 1.37–1.46 / 1.35–1.46 |
+   | header-only ADX (Karatsuba from 36), 32 (GCC) | 0.89–1.05 | 1.03–1.06 |
+
+   Rows with vn at or above the Karatsuba threshold don't change (they were sliced already); the
+   bench grid now has vn = 24 as well. `mul_shapes`: 11336 products, both compilers, pass.
+
+   **Step 4, toom42-sized slices.** The vn = 2048 row sat at 0.94–1.07 while the balanced
+   2048 x 2048 is at 1.13–1.16: the loss is in slicing into vn-limb pieces, where GMP slices
+   into ~2vn-limb ones taken by toom42 (five products of vn/2 against two of vn: 5 · 0.38 ≈ 1.9
+   against 2 at an exponent of ~1.4). Pieces of 2vn - 1 limbs (every one in toom42's window),
+   A/B against vn-limb pieces, `--unbalanced`, best of two runs each, time ratio (< 1: faster),
+   un/vn >= 2:
+
+   | vn | GCC | MSVC |
+   |---|---|---|
+   | 16–64 (below toom42) | 0.99–1.01 | 0.98–1.02 |
+   | 128 | 0.93–0.98 | 0.95–0.98 |
+   | 256 | 0.93 | 0.93–0.98 |
+   | 512 | 0.94–0.98 | 0.93–0.97 |
+   | 1024 (first try, no upper bound) | 0.99–1.06 | |
+   | 2048 (first try, no upper bound) | 0.95–1.02 | |
+
+   From the Toom-6.5 threshold up the balanced pieces take Toom-6.5 / 8.5 and toom42 doesn't
+   beat them (vn = 1024: up to +5%), so 2vn - 1 pieces are used only for toom42_threshold <= vn <
+   toom6h_threshold; with that bound 1024 / 2048 run the old code (±4% run-to-run in the A/B).
+   The vn = 2048 row is left for GMP's own answer there (toom63 / the unbalanced Toom-6.5 and
+   8.5 variants, § 9 item 3 candidates).
+
+   **Step 5, Toom-6.5 7 x 6** (`toom_7x6.hpp`, § 2 item 2a; `mul_shapes` 13552 products against
+   GMP on both compilers and in GCC Debug, all pass). `--tune-unbalanced` on 1.3n x n (searched
+   from the Toom-3 threshold up), asm Karatsuba: GCC 371 (the one-level scan crosses 1 at ~350,
+   0.88–0.93 from ~1000 up), MSVC 636 (crosses at ~500–636, 0.87–0.95 from ~900 up); the other
+   configurations were tuned afterwards (see the header-only paragraph after step 6). `--unbalanced` (GCC, toom76 from 444
+   in that run), the columns inside its window:
+
+   | vn | 1.25 before | 1.25 | 1.35 |
+   |---|---|---|---|
+   | 512 | 1.10 | 1.15 | 1.07 |
+   | 1024 | 1.06 | 1.19 | 1.17 |
+   | 2048 | 1.00 | 1.16 | 1.14 |
+
+   **Tried and rejected: toom76-sized slices.** A rough count (12 products of vn/6 covering 1.39 vn
+   of u, against Toom-8.5's 15 of vn/8 covering vn) promised ~14%; pieces of (7vn - 1)/5 limbs
+   from the toom76 threshold up measured −4..+4% against the current slicing (GCC slightly
+   ahead, MSVC slightly behind; best of two runs each) — at 1.39 v's top piece is nearly empty,
+   the least efficient toom76 shape. Not kept; the vn = 2048 row at un/vn >= 2 stays at ~1.00–1.06.
+
+   **Step 6, Toom-6/3** (`toom_6x3.hpp`, § 2 item 4c; `mul_shapes` 15136 products against GMP on
+   both compilers and in GCC Debug, all pass). Over toom42 in its window (1.75 <= un/vn < 2):
+   `--tune-unbalanced` on 1.875n x n, asm Karatsuba: GCC 218 (crosses 1 at ~210, 0.90–0.95 from
+   ~400 up), MSVC 394 (crosses at ~390, 0.91–0.97 above). And as the slice: 2vn - 1-limb pieces
+   now also where the balanced ones would take Toom-6.5 / 8.5 (from the toom63 threshold up; with
+   toom42 that was up to +5% at vn = 1024), A/B against vn-limb pieces there, best of two each:
+   vn = 1024 0.93–0.97 / 0.92–0.97, 2048 0.93–0.97 / 0.94–0.98 (GCC / MSVC; the other rows
+   unchanged). The grid with everything in (gmp/reuse, best of two, GCC / MSVC):
+
+   | vn \ un/vn | 1.25 | 1.35 | 1.5 | 1.75 | 1.9 | 2 | 3 | 4 | 8 | 16 | 32 |
+   |---|---|---|---|---|---|---|---|---|---|---|---|
+   | 256 | 1.18 / 1.17 | 1.03 / 1.02 | 1.18 / 1.17 | 1.06 / 1.09 | 1.11 / 1.09 | 1.15 / 1.10 | 1.15 / 1.13 | 1.15 / 1.12 | 1.15 / 1.12 | 1.13 / 1.10 | 1.16 / 1.12 |
+   | 512 | 1.16 / 1.08 | 1.07 / 1.01 | 1.12 / 1.17 | 1.09 / 1.06 | 1.14 / 1.09 | 1.16 / 1.09 | 1.15 / 1.11 | 1.13 / 1.10 | 1.19 / 1.10 | 1.13 / 1.09 | 1.14 / 1.09 |
+   | 1024 | 1.20 / 1.14 | 1.14 / 1.11 | 1.17 / 1.17 | 1.11 / 1.07 | 1.17 / 1.10 | 1.15 / 1.15 | 1.16 / 1.11 | 1.17 / 1.13 | 1.16 / 1.16 | 1.15 / 1.15 | 1.21 / 1.12 |
+   | 2048 | 1.15 / 1.08 | 1.15 / 1.11 | 1.14 / 1.08 | 1.07 / 1.08 | 1.09 / 1.09 | 1.15 / 1.08 | 1.12 / 1.11 | 1.12 / 1.07 | 1.11 / 1.03 | 1.07 / 1.07 | 1.13 / 1.08 |
+
+   **The whole grid (vn 16–2048 × un/vn 1.25–32) is now ahead of GMP on both compilers: 1.03–1.46
+   (GCC), 1.01–1.44 (MSVC).** The lowest cells are 1.35 at vn = 256–512 (toom32 there: toom76 starts
+   at 371 / 636).
+
+   The small MSVC shapes (vn = 16, 32 at low un/vn) are lower than in the tables above because
+   of the switch to gmp/numetron, not of toom32: the plain `operator*` pays for a result
+   allocation, which on MSVC's heap is up to ~25% of a 24 x 16 product (0.130 vs 0.104 us with
+   `assign_mul`); on GCC it is 0–4%.
+
+   **toom76 / toom63 in the other configurations** (2026-09-25, `--tune-unbalanced --trace`, two
+   runs each; the toom63 search now starts at the toom42 threshold — from the Toom-3 one it won at
+   the first probe in the header-only builds):
+
+   | configuration | toom76 | toom63 |
+   |---|---|---|
+   | header-only, `c++ adx` basecase (GCC) | 253 / 253 | 231 / 231 (~1.0 from 115) |
+   | header-only, `c++ blocked` basecase (MSVC) | 394 / 394 | 260 / 260 |
+   | header-only, reference basecase, MSVC | 245 / 245 | 137 / 97 (jagged: 1.2 at 122–129, 371, 500 in both runs) |
+   | header-only, reference basecase, GCC | 154 / 145 | 129 / 137 |
+   | C++ Karatsuba over the asm basecase, MSVC | 500 / 531 | 371 / 371 |
+   | C++ Karatsuba over the asm basecase, GCC | 371 / 371 | 350 / 350 |
+
+   The defaults: the table's values (reference GCC 154 / 137, reference MSVC 137, C++ Karatsuba
+   MSVC 531, where both runs are below 1). Previously these configurations took the Toom-6.5 /
+   Toom-4 thresholds (311–717 / 194–500).
 4. **Decide Toom-3 explicit vs engine** default (now equal speed).
 5. Retune thresholds after any kernel change, on both compilers, and update the defaults.
 6. The § 1 table is current (2026-09-24, FFT included); refresh it after the next change.

@@ -63,6 +63,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="..\tests\ct_test.cpp" />
+    <ClCompile Include="..\tests\mul_shapes_test.cpp" />
     <ClCompile Include="..\tests\float16_test.cpp" />
     <ClCompile Include="..\tests\mpn_mul_test.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</ExcludedFromBuild>

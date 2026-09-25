@@ -27,6 +27,13 @@ The existing plans are the best reference:
 - `toom_3x3.hpp` — `toom3_balanced` (short, a good first read); the old generic
   `toom_stage_traits<3,3>` plan is in the same file.
 - `toom_4x4.hpp`, `toom_6x6.hpp`, `toom_8x8.hpp` — the balanced Toom-4, Toom-6.5 and Toom-8.5.
+- `toom_3x2.hpp` — the unbalanced Toom-3/2 (N = 3, M = 2): one plan with two traits, since its
+  chunk max(ceil(un/3), ceil(vn/2)) comes from either operand. `toom_4x2.hpp` — Toom-4/2 the same
+  way (N = 4, M = 2), reusing the balanced Toom-3's interpolation (same degree, same points).
+- `toom_6x3.hpp` — Toom-6/3: points 0, ±1, ±2, ±4, ∞; after c0 / c7 are taken out both halves
+  are the same quadratic, solved with three `lincomb_dual` steps.
+- `toom_7x6.hpp` — Toom-6.5 7 x 6: the balanced Toom-6.5 plus infinity; the pair-splitting
+  steps take the extra top coefficient out, then the balanced interpolation runs as is.
 
 ---
 

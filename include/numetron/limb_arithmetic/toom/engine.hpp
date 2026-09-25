@@ -18,6 +18,10 @@
 #include "numetron/detail/scope_exit.hpp"
 
 #include "toom_2x2.hpp"
+#include "toom_3x2.hpp"
+#include "toom_4x2.hpp"
+#include "toom_6x3.hpp"
+#include "toom_7x6.hpp"
 #include "toom_3x3.hpp"
 #include "toom_4x4.hpp"
 #include "toom_6x6.hpp"
@@ -648,6 +652,26 @@ struct toom_engine_t
 
 template <size_t N, size_t M>
 struct toom_engine : toom_engine_t<toom_runtime_detail::toom_stage_traits<N, M>> {};
+
+// Toom-3/2 plan (toom_3x2.hpp) for un ~ 1.5 vn, operands detail::toom32_split_fits() accepts;
+// the _u engine when detail::toom32_split_by_u(), the _v one otherwise.
+using toom32_u_engine = toom_engine_t<toom_runtime_detail::toom32_u_traits>;
+using toom32_v_engine = toom_engine_t<toom_runtime_detail::toom32_v_traits>;
+
+// Toom-4/2 plan (toom_4x2.hpp) for un ~ 1.75..2 vn, operands detail::toom42_split_fits()
+// accepts; the _u engine when detail::toom42_split_by_u(), the _v one otherwise.
+using toom42_u_engine = toom_engine_t<toom_runtime_detail::toom42_u_traits>;
+using toom42_v_engine = toom_engine_t<toom_runtime_detail::toom42_v_traits>;
+
+// Toom-6/3 plan (toom_6x3.hpp) for un ~ 1.75..2 vn in the larger range (over toom42), operands
+// detail::toom63_split_fits() accepts; the _u engine when detail::toom63_split_by_u().
+using toom63_u_engine = toom_engine_t<toom_runtime_detail::toom63_u_traits>;
+using toom63_v_engine = toom_engine_t<toom_runtime_detail::toom63_v_traits>;
+
+// Toom-6.5 7 x 6 plan (toom_7x6.hpp) for 1 < un/vn < 1.4 from the Toom-6.5 range up, operands
+// detail::toom76_split_fits() accepts; the _u engine when detail::toom76_split_by_u().
+using toom76_u_engine = toom_engine_t<toom_runtime_detail::toom76_u_traits>;
+using toom76_v_engine = toom_engine_t<toom_runtime_detail::toom76_v_traits>;
 
 // Balanced Toom-3 plan (toom_3x3.hpp), for operands detail::toom3_split_fits() accepts.
 using toom3_balanced_engine = toom_engine_t<toom_runtime_detail::toom3_balanced_traits>;

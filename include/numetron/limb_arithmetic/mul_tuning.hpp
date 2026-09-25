@@ -65,10 +65,19 @@ struct mul_tuning_options
     size_t toom6h_max = 8192;
     size_t toom8h_max = 16384;
     size_t fft_max = 16384;
+    size_t toom32_max = 1024; // vn, with un = 1.5 vn
+    size_t toom42_max = 1024; // vn, with un = 1.875 vn
+    size_t toom76_max = 4096; // vn, with un = 1.3 vn
+    size_t toom63_max = 4096; // vn, with un = 1.875 vn
 
     // Install the found thresholds; when false they are only returned and the previous values
     // are restored.
     bool apply = true;
+
+    // false: tune only the unbalanced stages (Toom-3/2, Toom-4/2), against the balanced thresholds as they
+    // are installed (e.g. the defaults); the balanced ones and the FFT are returned unchanged
+    // and reported as found.
+    bool tune_balanced = true;
 };
 
 struct mul_tuning_result
@@ -79,12 +88,20 @@ struct mul_tuning_result
     size_t toom6h_threshold;
     size_t toom8h_threshold;
     size_t fft_threshold;
+    size_t toom32_threshold;
+    size_t toom42_threshold;
+    size_t toom76_threshold;
+    size_t toom63_threshold;
     bool karatsuba_found;
     bool toom3_found;
     bool toom4_found;
     bool toom6h_found;
     bool toom8h_found;
     bool fft_found;
+    bool toom32_found;
+    bool toom42_found;
+    bool toom76_found;
+    bool toom63_found;
 };
 
 namespace mul_tuning_detail {
@@ -106,17 +123,18 @@ public:
         for (auto& x : v_) x = rng() | 1;
     }
 
-    double batch_ns(size_t n, size_t reps)
+    // un x vn products (un >= vn, both <= max_limbs).
+    double batch_ns(size_t un, size_t vn, size_t reps)
     {
-        // Pairs are packed back to back (pair k at offset k*n), not at a fixed max_limbs stride:
-        // a power-of-two-ish stride would map every pair onto the same L1 sets.
+        // Pairs are packed back to back (pair k at offsets k*un, k*vn), not at a fixed max_limbs
+        // stride: a power-of-two-ish stride would map every pair onto the same L1 sets.
         constexpr size_t operand_bytes_budget = 64 * 1024;
-        const size_t pairs = (std::clamp)(operand_bytes_budget / (2 * n * sizeof(limb_type)), size_t{ 1 }, max_pairs_);
+        const size_t pairs = (std::clamp)(operand_bytes_budget / ((un + vn) * sizeof(limb_type)), size_t{ 1 }, max_pairs_);
 
         size_t k = 0;
         auto start = clock_type::now();
         for (size_t i = 0; i < reps; ++i) {
-            umul_dispatch(u_.data() + k * n, n, v_.data() + k * n, n, r_.data(), numetron::detail::stack_allocator<limb_type>{});
+            umul_dispatch(u_.data() + k * un, un, v_.data() + k * vn, vn, r_.data(), numetron::detail::stack_allocator<limb_type>{});
             if (++k == pairs) k = 0;
         }
         auto finish = clock_type::now();
@@ -124,28 +142,28 @@ public:
         return std::chrono::duration<double, std::nano>(finish - start).count();
     }
 
-    // Best per-multiplication times of n x n products under each of several threshold settings
+    // Best per-multiplication times of un x vn products under each of several threshold settings
     // (install(k) installs setting k), `samples` batches per setting, every batch sized to last at
     // least min_sample_time. The settings are measured interleaved, in alternately forward and
     // backward order (ABBA...), so that a drift of the machine's speed during the probe (clock
     // boost, thermal throttling, background load) hits all of them alike instead of biasing the
     // comparison.
     template <typename InstallF>
-    std::vector<double> measure_ns(size_t n, size_t settings, mul_tuning_options const& opts, InstallF&& install)
+    std::vector<double> measure_ns(size_t un, size_t vn, size_t settings, mul_tuning_options const& opts, InstallF&& install)
     {
         const double min_ns = std::chrono::duration<double, std::nano>(opts.min_sample_time).count();
 
         // warm-up of every path: caches, stack allocator slabs
         for (size_t k = 0; k < settings; ++k) {
             install(k);
-            batch_ns(n, 1);
+            batch_ns(un, vn, 1);
         }
 
         size_t reps = 1;
-        double elapsed = batch_ns(n, reps);
+        double elapsed = batch_ns(un, vn, reps);
         while (elapsed < min_ns && reps < (size_t{ 1 } << 30)) {
             reps *= 2;
-            elapsed = batch_ns(n, reps);
+            elapsed = batch_ns(un, vn, reps);
         }
 
         const double r = static_cast<double>(reps);
@@ -155,7 +173,7 @@ public:
             for (size_t j = 0; j < settings; ++j) {
                 const size_t k = (i & 1) ? settings - 1 - j : j;
                 install(k);
-                best[k] = (std::min)(best[k], batch_ns(n, reps) / r);
+                best[k] = (std::min)(best[k], batch_ns(un, vn, reps) / r);
             }
         }
         return best;
@@ -186,19 +204,23 @@ private:
 //    candidate to hi (steps of ~1/8), interleaved per size. The candidate with the least total
 //    log time over those sizes wins -- that is the quantity a threshold actually decides.
 //
+// The products are n x n, or (un_num / un_den) n x n for an unbalanced algorithm (Toom-3/2: 3/2);
+// n, and so the threshold, is vn either way.
+//
 // Returns the threshold, or nothing when leaving the higher algorithm off is best.
 template <typename SetThresholdF>
 std::optional<size_t> tune_threshold(workload& work, mul_tuning_options const& opts, char const* name,
-    SetThresholdF&& set_threshold, size_t lo, size_t hi)
+    SetThresholdF&& set_threshold, size_t lo, size_t hi, size_t un_num = 1, size_t un_den = 1)
 {
     constexpr size_t off = (std::numeric_limits<size_t>::max)();
     constexpr size_t max_candidates = 8;
+    auto un_of = [&](size_t n) { return n * un_num / un_den; };
 
     // Phase 1: scan.
     std::vector<size_t> sizes;
     std::vector<double> ratios;
     for (size_t n = lo; n <= hi; n += (std::max)(size_t{ 1 }, n / 16)) {
-        auto t = work.measure_ns(n, 2, opts, [&](size_t k) { set_threshold(k ? n : n + 1); });
+        auto t = work.measure_ns(un_of(n), n, 2, opts, [&](size_t k) { set_threshold(k ? n : n + 1); });
         if (opts.trace) opts.trace(name, n, t[0], t[1]);
         sizes.push_back(n);
         ratios.push_back(t[1] / t[0]);
@@ -232,7 +254,7 @@ std::optional<size_t> tune_threshold(workload& work, mul_tuning_options const& o
     std::vector<double> score(thresholds.size(), 0.0);
     size_t points = 0;
     for (size_t n = thresholds.front(); n <= hi; n += (std::max)(size_t{ 1 }, n / 8)) {
-        auto t = work.measure_ns(n, thresholds.size(), opts, [&](size_t k) { set_threshold(thresholds[k]); });
+        auto t = work.measure_ns(un_of(n), n, thresholds.size(), opts, [&](size_t k) { set_threshold(thresholds[k]); });
         for (size_t k = 0; k < t.size(); ++k) score[k] += std::log(t[k]);
         ++points;
     }
@@ -261,8 +283,9 @@ std::optional<size_t> tune_threshold(workload& work, mul_tuning_options const& o
 // machine and (by default) installs the results as the runtime thresholds. Karatsuba is tuned
 // first against basecase, then Toom-3 against whatever the tuned Karatsuba threshold selects
 // below it, then Toom-4 against the tuned Toom-3/Karatsuba below it, then Toom-6.5 and Toom-8.5
-// against all of those below them, and last the FFT against the whole Toom chain. See
-// mul_tuning_detail::tune_threshold() for how each threshold is chosen.
+// against all of those below them, then the unbalanced Toom-3/2 on 1.5n x n products against
+// Karatsuba (whose halves take the tuned balanced chain), and last the FFT against the whole Toom
+// chain. See mul_tuning_detail::tune_threshold() for how each threshold is chosen.
 //
 // While it runs, the global thresholds are temporarily forced to other values. Multiplications
 // on other threads still produce correct results but may run at suboptimal speed, and their
@@ -275,10 +298,18 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     const size_t prev_toom6h = toom6h_threshold();
     const size_t prev_toom8h = toom8h_threshold();
     const size_t prev_fft = fft_threshold();
+    const size_t prev_toom32 = toom32_threshold();
+    const size_t prev_toom42 = toom42_threshold();
+    const size_t prev_toom76 = toom76_threshold();
+    const size_t prev_toom63 = toom63_threshold();
 
     bool committed = false;
     NUMETRON_SCOPE_EXIT([&] {
         if (!committed) {
+            set_toom63_threshold(prev_toom63);
+            set_toom32_threshold(prev_toom32);
+            set_toom42_threshold(prev_toom42);
+            set_toom76_threshold(prev_toom76);
             set_karatsuba_threshold(prev_karatsuba);
             set_toom3_threshold(prev_toom3);
             set_toom4_threshold(prev_toom4);
@@ -288,10 +319,68 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         }
     });
 
-    mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max, opts.toom8h_max, opts.fft_max }), opts.operand_pairs };
+    mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max, opts.toom8h_max, opts.fft_max,
+        opts.toom32_max * 3 / 2, opts.toom42_max * 15 / 8, opts.toom76_max * 13 / 10, opts.toom63_max * 15 / 8 }), opts.operand_pairs };
 
     constexpr size_t off = (std::numeric_limits<size_t>::max)();
     mul_tuning_result result{};
+
+    // The unbalanced stages, against whatever balanced thresholds are installed, the FFT off. Each
+    // on shapes from the middle of its window, against what takes those shapes otherwise: the
+    // Karatsuba level, and below the Karatsuba threshold the basecase (which the Toom plans may
+    // beat too), so each from its own minimum up. Toom-3/2 (1.25 <= un/vn < 1.75) on 1.5n x n,
+    // then Toom-4/2 (1.75 <= un/vn < 2) on 1.875n x n; their windows don't overlap.
+    auto tune_unbalanced = [&] {
+        auto toom32 = mul_tuning_detail::tune_threshold(work, opts, "toom32", &set_toom32_threshold,
+            min_toom32_threshold, opts.toom32_max, 3, 2);
+        result.toom32_found = toom32.has_value();
+        result.toom32_threshold = toom32.value_or(prev_toom32);
+        set_toom32_threshold(result.toom32_threshold);
+
+        auto toom42 = mul_tuning_detail::tune_threshold(work, opts, "toom42", &set_toom42_threshold,
+            min_toom42_threshold, opts.toom42_max, 15, 8);
+        result.toom42_found = toom42.has_value();
+        result.toom42_threshold = toom42.value_or(prev_toom42);
+        set_toom42_threshold(result.toom42_threshold);
+
+        // Toom-6/3 (same window as toom42, checked before it) on 1.875n x n, against toom42 and
+        // below, from the toom42 threshold up (the header-only builds won already at the Toom-3
+        // threshold, where the search used to start).
+        auto toom63 = mul_tuning_detail::tune_threshold(work, opts, "toom63", &set_toom63_threshold,
+            (std::max)(min_toom63_threshold, result.toom42_threshold), opts.toom63_max, 15, 8);
+        result.toom63_found = toom63.has_value();
+        result.toom63_threshold = toom63.value_or(prev_toom63);
+        set_toom63_threshold(result.toom63_threshold);
+
+        // Toom-6.5 7 x 6 (un/vn < 1.4) on 1.3n x n, against Toom-4 / toom32 below it, from the
+        // Toom-3 threshold up (it is a large-operand plan; from the Toom-4 one it won everywhere).
+        auto toom76 = mul_tuning_detail::tune_threshold(work, opts, "toom76", &set_toom76_threshold,
+            (std::max)(min_toom76_threshold, toom3_threshold()), opts.toom76_max, 13, 10);
+        result.toom76_found = toom76.has_value();
+        result.toom76_threshold = toom76.value_or(prev_toom76);
+        set_toom76_threshold(result.toom76_threshold);
+    };
+
+    set_toom32_threshold(off);
+    set_toom42_threshold(off);
+    set_toom76_threshold(off);
+    set_toom63_threshold(off);
+    set_fft_threshold(off);
+
+    if (!opts.tune_balanced) {
+        tune_unbalanced();
+        result.karatsuba_threshold = prev_karatsuba;
+        result.toom3_threshold = prev_toom3;
+        result.toom4_threshold = prev_toom4;
+        result.toom6h_threshold = prev_toom6h;
+        result.toom8h_threshold = prev_toom8h;
+        result.fft_threshold = prev_fft;
+        result.karatsuba_found = result.toom3_found = result.toom4_found = true;
+        result.toom6h_found = result.toom8h_found = result.fft_found = true;
+        set_fft_threshold(prev_fft);
+        if (opts.apply) committed = true; // else the scope exit restores the previous toom32/42
+        return result;
+    }
 
     // Algorithms above the one being tuned are switched off until their own turn; one that ends
     // up not found stays off for the tuning of the next one, and is restored afterwards.
@@ -330,6 +419,8 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     result.toom8h_threshold = toom8h.value_or(prev_toom8h);
     set_toom8h_threshold(toom8h.value_or(off));
 
+    tune_unbalanced(); // the FFT is still off
+
     // The FFT takes any size (and has no sub-products), so it is searched from the Toom-4
     // threshold up against everything below.
     auto fft = mul_tuning_detail::tune_threshold(work, opts, "fft", &set_fft_threshold,
@@ -344,6 +435,10 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         set_toom6h_threshold(result.toom6h_threshold);
         set_toom8h_threshold(result.toom8h_threshold);
         set_fft_threshold(result.fft_threshold);
+        set_toom32_threshold(result.toom32_threshold);
+        set_toom42_threshold(result.toom42_threshold);
+        set_toom76_threshold(result.toom76_threshold);
+        set_toom63_threshold(result.toom63_threshold);
         committed = true;
     }
     return result;

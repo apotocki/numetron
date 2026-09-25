@@ -134,6 +134,10 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\thresholds.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_2x2.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_3x3.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_3x2.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x2.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_6x3.hpp" />
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_7x6.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x4.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_6x6.hpp" />
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_8x8.hpp" />

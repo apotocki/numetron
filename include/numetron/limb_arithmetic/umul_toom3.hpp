@@ -95,7 +95,7 @@ namespace detail {
 
 // Whether umul_toom3_impl() can take un x vn (un >= vn): it splits u into thirds of
 // n = ceil(un/3) limbs and needs v to reach into its third part (vn > 2n). More unbalanced
-// products that are still Toom-3 territory stay with the generic toom_engine<3, 3>.
+// products go to Karatsuba (un < 2vn) or to slicing (un >= 2vn); see umul_dispatch().
 inline bool toom3_split_fits(size_t un, size_t vn) noexcept
 {
     return vn > 2 * ((un + 2) / 3);

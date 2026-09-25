@@ -36,6 +36,7 @@ void ct_test();
 
 void mul_test();
 void mpn_mul_test();
+void mul_shapes_test();
 void udiv_test();
 void assign_mul_test();
 void assign_mul_no_realloc_test();

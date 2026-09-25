@@ -64,6 +64,7 @@ TEST(NumetronTest, compile_time) { ct_test(); }
 TEST(NumetronTest, udiv) { udiv_test(); }
 TEST(NumetronTest, assign_mul) { assign_mul_test(); }
 TEST(NumetronTest, assign_mul_no_realloc) { assign_mul_no_realloc_test(); }
+TEST(NumetronTest, mul_shapes) { mul_shapes_test(); }
 #else
 TEST(NumetronTest, mul) { mul_test(); }
 TEST(NumetronTest, mpn_mul) { mpn_mul_test(); }
