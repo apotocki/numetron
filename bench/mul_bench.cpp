@@ -14,6 +14,7 @@
 // -DNUMETRON_KARATSUBA_IMPL=NUMETRON_KARATSUBA_IMPL_FUSED; the output header names the ones in use.
 //
 // Modes: --balanced (un == vn), --unbalanced (un > vn, several vn x un/vn); neither: both.
+// --large: the unbalanced shapes with vn = 4096 .. 16384 (the FFT range) instead.
 // --tune[=N] [--trace] retunes the thresholds first; --add benchmarks limb add/sub instead.
 
 #ifdef _WIN32
@@ -33,6 +34,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -330,6 +332,12 @@ void print_configuration()
               << ", toom42 " << la::toom42_threshold()
               << ", toom76 " << la::toom76_threshold()
               << ", toom63 " << la::toom63_threshold()
+              << ", toom98 " << la::toom98_threshold()
+              << ", toom107 " << la::toom107_threshold()
+              << ", toom116 " << la::toom116_threshold()
+              << ", toom54 " << la::toom54_threshold()
+              << ", toom53 " << la::toom53_threshold()
+              << ", toom43 " << la::toom43_threshold()
               << ", slicing " << la::slicing_threshold()
               << ", fft ";
     if (la::fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
@@ -358,8 +366,8 @@ int main(int argc, char** argv)
 
     // --tune[=N]: retune the multiplication thresholds on this machine before benchmarking,
     // taking the best of N samples per probe (default: mul_tuning_options' default).
-    // --tune-unbalanced[=N]: the same for the unbalanced thresholds alone (Toom-3/2, Toom-4/2;
-    // the balanced ones stay the defaults).
+    // --tune-unbalanced[=N]: the same for the unbalanced thresholds alone (Toom-3/2 .. Toom-8.5
+    // 11 x 6; the balanced ones stay the defaults).
     // --trace (with --tune): print every probe: size, lower / higher algorithm time, ratio.
     bool trace = false;
     for (int i = 1; i < argc; ++i) {
@@ -406,6 +414,12 @@ int main(int argc, char** argv)
         auto before_t42 = numetron::limb_arithmetic::toom42_threshold();
         auto before_t76 = numetron::limb_arithmetic::toom76_threshold();
         auto before_t63 = numetron::limb_arithmetic::toom63_threshold();
+        auto before_t98 = numetron::limb_arithmetic::toom98_threshold();
+        auto before_t107 = numetron::limb_arithmetic::toom107_threshold();
+        auto before_t116 = numetron::limb_arithmetic::toom116_threshold();
+        auto before_t54 = numetron::limb_arithmetic::toom54_threshold();
+        auto before_t53 = numetron::limb_arithmetic::toom53_threshold();
+        auto before_t43 = numetron::limb_arithmetic::toom43_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
         auto show = [](size_t t) { return t == ~size_t{ 0 } ? std::string{ "off" } : std::to_string(t); };
         std::cout << "tuned thresholds (limbs):\n"
@@ -427,17 +441,31 @@ int main(int argc, char** argv)
                   << (tuned.toom76_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  toom63:    " << before_t63 << " -> " << tuned.toom63_threshold
                   << (tuned.toom63_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom98:    " << before_t98 << " -> " << tuned.toom98_threshold
+                  << (tuned.toom98_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom107:   " << before_t107 << " -> " << tuned.toom107_threshold
+                  << (tuned.toom107_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom116:   " << before_t116 << " -> " << tuned.toom116_threshold
+                  << (tuned.toom116_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom54:    " << before_t54 << " -> " << tuned.toom54_threshold
+                  << (tuned.toom54_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom53:    " << before_t53 << " -> " << tuned.toom53_threshold
+                  << (tuned.toom53_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  toom43:    " << before_t43 << " -> " << tuned.toom43_threshold
+                  << (tuned.toom43_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  fft:       " << show(before_fft) << " -> " << show(tuned.fft_threshold)
                   << (tuned.fft_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
 
     // --balanced: un == vn over limb_counts; --unbalanced: un > vn over unbalanced_v_limbs x
-    // unbalanced_ratios. Neither given: both, balanced first.
-    bool balanced = false, unbalanced = false;
+    // unbalanced_ratios. Neither given: both, balanced first. --large: the unbalanced shapes over
+    // unbalanced_large_v_limbs (the FFT range) instead.
+    bool balanced = false, unbalanced = false, large = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--balanced") balanced = true;
         else if (arg == "--unbalanced") unbalanced = true;
+        else if (arg == "--large") large = true;
     }
     if (!balanced && !unbalanced) balanced = unbalanced = true;
 
@@ -473,6 +501,8 @@ int main(int argc, char** argv)
         // shape); un/vn from the Toom-3 range (1.5, 2) to far past it, where only slicing u into
         // vn-sized pieces keeps the product sub-quadratic.
         static constexpr size_t unbalanced_v_limbs[] = { 16, 24, 32, 64, 128, 256, 512, 1024, 2048 };
+        // --large: from the FFT threshold up (the FFT takes any shape there)
+        static constexpr size_t unbalanced_large_v_limbs[] = { 4096, 8192, 16384 };
         static constexpr double unbalanced_ratios[] = { 1.25, 1.35, 1.5, 1.75, 1.9, 2, 3, 4, 8, 16, 32 };
 
         std::mt19937_64 urng{ 0x0B1A5EEDULL }; // own seed: the same operands with or without --balanced
@@ -486,7 +516,7 @@ int main(int argc, char** argv)
                    << std::setw(14) << "gmp/reuse"
                    << "\n";
 
-        for (size_t vn : unbalanced_v_limbs) {
+        for (size_t vn : large ? std::span<const size_t>{ unbalanced_large_v_limbs } : std::span<const size_t>{ unbalanced_v_limbs }) {
             for (double ratio : unbalanced_ratios) {
                 const auto un = static_cast<size_t>(double(vn) * ratio + 0.5);
                 std::ostringstream ratio_label;

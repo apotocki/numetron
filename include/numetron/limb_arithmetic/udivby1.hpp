@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <concepts>
 #include <limits>
 #include <span>

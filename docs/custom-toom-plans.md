@@ -34,6 +34,16 @@ The existing plans are the best reference:
   are the same quadratic, solved with three `lincomb_dual` steps.
 - `toom_7x6.hpp` — Toom-6.5 7 x 6: the balanced Toom-6.5 plus infinity; the pair-splitting
   steps take the extra top coefficient out, then the balanced interpolation runs as is.
+- `toom_5x3.hpp`, `toom_5x4.hpp` — Toom-5/3 and Toom-5/4: a new evaluation (five pieces of u)
+  in front of an existing interpolation of the same degree, the balanced Toom-4's and toom63's.
+  The cheapest way to a new unbalanced plan.
+- `toom_4x3.hpp` — Toom-4/3: a small interpolation of its own (degree 5 at 0, ±1, ±2, ∞), the
+  halves then two `lincomb_dual` steps; a compact example of the whole pattern.
+- `toom_8h_half.hpp` — Toom-8.5 N x (17 − N) (9 x 8, 10 x 7, 11 x 6, ...): the same idea on the
+  balanced Toom-8.5, as one plan template. The evaluation passes are generated in a loop,
+  sums of more than four terms taking several `lincomb` passes, and the rest of the plan is
+  fixed. An example of building a plan imperatively into a `std::array` instead of one
+  brace-list.
 
 ---
 

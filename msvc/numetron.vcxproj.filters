@@ -258,6 +258,18 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_7x6.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_8h_half.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_5x3.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_5x4.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x3.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_4x4.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>

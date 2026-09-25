@@ -4,10 +4,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <type_traits>
 #include <concepts>
 #include <limits>
 #include <utility>
+#include <tuple>
 #include <cassert>
 
 #ifdef _MSC_VER

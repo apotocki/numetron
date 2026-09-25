@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <concepts>
 
+#include "numetron/arithmetic.hpp"
 #include "platform.hpp"
 
 namespace numetron::limb_arithmetic {

@@ -5,6 +5,8 @@
 #pragma once
 
 #include <span>
+#include <memory>
+#include <cassert>
 #include <algorithm>
 #include <type_traits>
 #include <utility>

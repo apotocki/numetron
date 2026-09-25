@@ -5,6 +5,7 @@
 #pragma once
 
 #include "numetron/config/implementation.hpp" // NUMETRON_ARITHMETIC_USE_INVINT_DIV
+#include "numetron/limb_arithmetic.hpp" // NUMETRON_INPLACE_LIMB_RESERVE_COUNT
 #include "udivby1.hpp"
 
 namespace numetron::limb_arithmetic {

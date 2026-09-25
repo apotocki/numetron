@@ -199,8 +199,152 @@
 #   endif
 #endif
 
+// Toom-8.5 N x (17 - N) (toom_8h_half.hpp; the thresholds are on vn): 9 x 8 for 1.08 <= un/vn < 1.2,
+// 10 x 7 for 1.32 <= un/vn < 5/3, 11 x 6 for 5/3 <= un/vn < 2 (also slicing's 2vn - 1 pieces, from
+// 7/4 of its threshold, see is_toom116_applicable()). tune_mul_thresholds() on 1.15n x n,
+// 1.5n x n, 1.875n x n (--tune-unbalanced), two runs each, 2026-09-25; the same value unless
+// noted. toom98 steps at each configuration's Toom-6.5 threshold: from there the balanced
+// Toom-6.5 takes 1.15n x n, and 9 x 8 is ~0.9 of it.
+#if !defined(NUMETRON_USE_ASM)
+#   if NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+#       define NUMETRON_TOOM98_TUNED_  471
+#       define NUMETRON_TOOM107_TUNED_ 371
+#       define NUMETRON_TOOM116_TUNED_ 371
+#   elif NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_BLOCKED
+#       define NUMETRON_TOOM98_TUNED_  564
+#       define NUMETRON_TOOM107_TUNED_ 371      // 500 / 371 (~1.0 at 471)
+#       define NUMETRON_TOOM116_TUNED_ 330      // 330 / 311
+#   elif defined(_MSC_VER) && !defined(__clang__) // reference basecase
+#       define NUMETRON_TOOM98_TUNED_  418
+#       define NUMETRON_TOOM107_TUNED_ 231
+#       define NUMETRON_TOOM116_TUNED_ 245      // 245 / 231
+#   else                                        // reference basecase, GCC
+#       define NUMETRON_TOOM98_TUNED_  311
+#       define NUMETRON_TOOM107_TUNED_ 231      // 231 / 218
+#       define NUMETRON_TOOM116_TUNED_ 231
+#   endif
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+// asm Karatsuba: toom107 0.93-0.96 from the threshold, toom116 0.95-0.98 up to ~900, 0.90-0.93 above
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_TOOM98_TUNED_  717
+#       define NUMETRON_TOOM107_TUNED_ 599
+#       define NUMETRON_TOOM116_TUNED_ 531      // 500 / 531
+#   else
+#       define NUMETRON_TOOM98_TUNED_  675
+#       define NUMETRON_TOOM107_TUNED_ 564      // 500 / 564
+#       define NUMETRON_TOOM116_TUNED_ 500
+#   endif
+// C++ Karatsuba over the asm basecase (tuned with _CXX)
+#elif defined(_MSC_VER) && !defined(__clang__)
+#   define NUMETRON_TOOM98_TUNED_  717
+#   define NUMETRON_TOOM107_TUNED_ 599
+#   define NUMETRON_TOOM116_TUNED_ 531
+#else
+#   define NUMETRON_TOOM98_TUNED_  717
+#   define NUMETRON_TOOM107_TUNED_ 500          // 0.98 already at 500, where the search starts
+#   define NUMETRON_TOOM116_TUNED_ 675          // 675 / 500 (~1.0 at 564-636)
+#endif
+#ifndef NUMETRON_DEFAULT_TOOM98_THRESHOLD
+#   define NUMETRON_DEFAULT_TOOM98_THRESHOLD NUMETRON_TOOM98_TUNED_
+#endif
+#ifndef NUMETRON_DEFAULT_TOOM107_THRESHOLD
+#   define NUMETRON_DEFAULT_TOOM107_THRESHOLD NUMETRON_TOOM107_TUNED_
+#endif
+#ifndef NUMETRON_DEFAULT_TOOM116_THRESHOLD
+#   define NUMETRON_DEFAULT_TOOM116_THRESHOLD NUMETRON_TOOM116_TUNED_
+#endif
+
+// Toom-5/4 (toom_5x4.hpp; 1.2 <= un/vn < 1.45) and Toom-5/3 (toom_5x3.hpp; 1.55 <= un/vn < 1.85):
+// from these thresholds (on vn) up to the Toom-6.5 one (umul.hpp). tune_mul_thresholds() on
+// 1.3n x n and 1.7n x n (--tune-unbalanced), two runs each, 2026-09-25; the same value unless
+// noted. With the asm Karatsuba they are 0.88-0.96 of the path they replace up to the Toom-6.5
+// threshold (both compilers).
+#if !defined(NUMETRON_USE_ASM)
+#   if NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+#       define NUMETRON_TOOM54_TUNED_ 154
+#       define NUMETRON_TOOM53_TUNED_ 163      // 163 / 154
+#   elif NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_BLOCKED
+#       define NUMETRON_TOOM54_TUNED_ 115
+#       define NUMETRON_TOOM53_TUNED_ 82
+#   elif defined(_MSC_VER) && !defined(__clang__) // reference basecase
+#       define NUMETRON_TOOM54_TUNED_ 173      // 173 / 115, a jagged curve (the same in both runs)
+#       define NUMETRON_TOOM53_TUNED_ 63
+#   else                                        // reference basecase, GCC
+#       define NUMETRON_TOOM54_TUNED_ 97       // 97 / 87
+#       define NUMETRON_TOOM53_TUNED_ 74
+#   endif
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_TOOM54_TUNED_ 218
+#       define NUMETRON_TOOM53_TUNED_ 129
+#   else
+#       define NUMETRON_TOOM54_TUNED_ 218
+#       define NUMETRON_TOOM53_TUNED_ 173      // 163 / 173
+#   endif
+// C++ Karatsuba over the asm basecase (tuned with _CXX)
+#elif defined(_MSC_VER) && !defined(__clang__)
+#   define NUMETRON_TOOM54_TUNED_ 173          // 163 / 218 (both runs below 1 from 173)
+#   define NUMETRON_TOOM53_TUNED_ 122          // 115 / 122
+#else
+#   define NUMETRON_TOOM54_TUNED_ 173
+#   define NUMETRON_TOOM53_TUNED_ 129
+#endif
+#ifndef NUMETRON_DEFAULT_TOOM54_THRESHOLD
+#   define NUMETRON_DEFAULT_TOOM54_THRESHOLD NUMETRON_TOOM54_TUNED_
+#endif
+#ifndef NUMETRON_DEFAULT_TOOM53_THRESHOLD
+#   define NUMETRON_DEFAULT_TOOM53_THRESHOLD NUMETRON_TOOM53_TUNED_
+#endif
+
+// Toom-4/3 (toom_4x3.hpp; 1.3 <= un/vn < 1.45, before toom54): from this threshold (on vn) up to
+// the Toom-6.5 one. tune_mul_thresholds() on 1.375n x n (--tune-unbalanced), two runs each,
+// 2026-09-25; the same value unless noted.
+#if !defined(NUMETRON_USE_ASM)
+#   if NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+#       define NUMETRON_TOOM43_TUNED_ 115
+#   elif NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_BLOCKED
+#       define NUMETRON_TOOM43_TUNED_ 92
+#   elif defined(_MSC_VER) && !defined(__clang__) // reference basecase
+#       define NUMETRON_TOOM43_TUNED_ 51       // 51 / 42
+#   else                                        // reference basecase, GCC
+#       define NUMETRON_TOOM43_TUNED_ 78       // 70 / 78
+#   endif
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_TOOM43_TUNED_ 122      // 115 / 122
+#   else
+#       define NUMETRON_TOOM43_TUNED_ 115
+#   endif
+// C++ Karatsuba over the asm basecase (tuned with _CXX)
+#elif defined(_MSC_VER) && !defined(__clang__)
+#   define NUMETRON_TOOM43_TUNED_ 129
+#else
+#   define NUMETRON_TOOM43_TUNED_ 122
+#endif
+#ifndef NUMETRON_DEFAULT_TOOM43_THRESHOLD
+#   define NUMETRON_DEFAULT_TOOM43_THRESHOLD NUMETRON_TOOM43_TUNED_
+#endif
+
 #ifndef NUMETRON_KARATSUBA_THRESHOLD
 #   define NUMETRON_KARATSUBA_THRESHOLD NUMETRON_DEFAULT_KARATSUBA_THRESHOLD
+#endif
+#ifndef NUMETRON_TOOM98_THRESHOLD
+#   define NUMETRON_TOOM98_THRESHOLD NUMETRON_DEFAULT_TOOM98_THRESHOLD
+#endif
+#ifndef NUMETRON_TOOM107_THRESHOLD
+#   define NUMETRON_TOOM107_THRESHOLD NUMETRON_DEFAULT_TOOM107_THRESHOLD
+#endif
+#ifndef NUMETRON_TOOM116_THRESHOLD
+#   define NUMETRON_TOOM116_THRESHOLD NUMETRON_DEFAULT_TOOM116_THRESHOLD
+#endif
+#ifndef NUMETRON_TOOM54_THRESHOLD
+#   define NUMETRON_TOOM54_THRESHOLD NUMETRON_DEFAULT_TOOM54_THRESHOLD
+#endif
+#ifndef NUMETRON_TOOM53_THRESHOLD
+#   define NUMETRON_TOOM53_THRESHOLD NUMETRON_DEFAULT_TOOM53_THRESHOLD
+#endif
+#ifndef NUMETRON_TOOM43_THRESHOLD
+#   define NUMETRON_TOOM43_THRESHOLD NUMETRON_DEFAULT_TOOM43_THRESHOLD
 #endif
 #ifndef NUMETRON_TOOM63_THRESHOLD
 #   define NUMETRON_TOOM63_THRESHOLD NUMETRON_DEFAULT_TOOM63_THRESHOLD
@@ -304,6 +448,12 @@ inline constexpr size_t min_toom42_threshold = 8;
 inline constexpr size_t min_slicing_threshold = 1;
 inline constexpr size_t min_toom76_threshold = 12;
 inline constexpr size_t min_toom63_threshold = 12;
+inline constexpr size_t min_toom98_threshold = 16;
+inline constexpr size_t min_toom107_threshold = 16;
+inline constexpr size_t min_toom116_threshold = 16;
+inline constexpr size_t min_toom54_threshold = 12;
+inline constexpr size_t min_toom53_threshold = 12;
+inline constexpr size_t min_toom43_threshold = 12;
 inline constexpr size_t min_toom4_threshold = 20;
 inline constexpr size_t min_toom6h_threshold = 42;
 inline constexpr size_t min_toom8h_threshold = 72;
@@ -322,6 +472,12 @@ inline std::atomic<size_t> toom42_threshold_value{ (std::max)(size_t{ NUMETRON_T
 inline std::atomic<size_t> slicing_threshold_value{ (std::max)(size_t{ NUMETRON_SLICING_THRESHOLD }, min_slicing_threshold) };
 inline std::atomic<size_t> toom76_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM76_THRESHOLD }, min_toom76_threshold) };
 inline std::atomic<size_t> toom63_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM63_THRESHOLD }, min_toom63_threshold) };
+inline std::atomic<size_t> toom98_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM98_THRESHOLD }, min_toom98_threshold) };
+inline std::atomic<size_t> toom107_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM107_THRESHOLD }, min_toom107_threshold) };
+inline std::atomic<size_t> toom116_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM116_THRESHOLD }, min_toom116_threshold) };
+inline std::atomic<size_t> toom54_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM54_THRESHOLD }, min_toom54_threshold) };
+inline std::atomic<size_t> toom53_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM53_THRESHOLD }, min_toom53_threshold) };
+inline std::atomic<size_t> toom43_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM43_THRESHOLD }, min_toom43_threshold) };
 inline std::atomic<size_t> toom4_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold) };
 inline std::atomic<size_t> toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold) };
 inline std::atomic<size_t> toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold) };
@@ -377,6 +533,66 @@ inline size_t toom76_threshold() noexcept
 inline void set_toom76_threshold(size_t limbs) noexcept
 {
     detail::toom76_threshold_value.store((std::max)(limbs, min_toom76_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom98_threshold() noexcept
+{
+    return detail::toom98_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom98_threshold(size_t limbs) noexcept
+{
+    detail::toom98_threshold_value.store((std::max)(limbs, min_toom98_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom107_threshold() noexcept
+{
+    return detail::toom107_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom107_threshold(size_t limbs) noexcept
+{
+    detail::toom107_threshold_value.store((std::max)(limbs, min_toom107_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom116_threshold() noexcept
+{
+    return detail::toom116_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom116_threshold(size_t limbs) noexcept
+{
+    detail::toom116_threshold_value.store((std::max)(limbs, min_toom116_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom54_threshold() noexcept
+{
+    return detail::toom54_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom54_threshold(size_t limbs) noexcept
+{
+    detail::toom54_threshold_value.store((std::max)(limbs, min_toom54_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom53_threshold() noexcept
+{
+    return detail::toom53_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom53_threshold(size_t limbs) noexcept
+{
+    detail::toom53_threshold_value.store((std::max)(limbs, min_toom53_threshold), std::memory_order_relaxed);
+}
+
+inline size_t toom43_threshold() noexcept
+{
+    return detail::toom43_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_toom43_threshold(size_t limbs) noexcept
+{
+    detail::toom43_threshold_value.store((std::max)(limbs, min_toom43_threshold), std::memory_order_relaxed);
 }
 
 inline size_t slicing_threshold() noexcept

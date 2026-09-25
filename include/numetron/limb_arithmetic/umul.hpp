@@ -62,6 +62,60 @@ inline bool is_toom76_applicable(size_t un, size_t vn) noexcept
     return vn >= toom76_threshold() && 5 * un < 7 * vn && detail::toom76_split_fits(un, vn);
 }
 
+// Toom-8.5 N x (17 - N) (toom_8h_half.hpp), each in its un/vn window from its threshold up: 9 x 8
+// for 1.08 <= un/vn < 1.2, 10 x 7 for 1.32 <= un/vn < 5/3, 11 x 6 for 5/3 <= un/vn < 2. Checked
+// before the balanced Toom-8.5 / Toom-6.5, toom76 and the smaller unbalanced plans, which would
+// take these shapes otherwise (outside the windows those are as fast or faster).
+inline bool is_toom98_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= toom98_threshold() && 25 * un >= 27 * vn && 5 * un < 6 * vn && detail::toom8h_half_split_fits<9>(un, vn);
+}
+
+inline bool is_toom107_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= toom107_threshold() && 25 * un >= 33 * vn && detail::toom8h_half_split_fits<10>(un, vn);
+}
+
+// Near un/vn = 2 v's top piece is only about half a chunk while Toom-6/3 splits u into six full
+// ones, so from un >= 1.95 vn (slicing's 2vn - 1 pieces) 11 x 6 takes over only from 7/4 of its
+// threshold (2vn - 1 x vn: even at ~900 on GCC, ~800-960 on MSVC, with the thresholds at 500 / 531).
+inline bool is_toom116_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    const size_t t = toom116_threshold();
+    return vn >= t && un < 2 * vn && (20 * un < 39 * vn || vn - t >= t / 4 * 3) && detail::toom8h_half_split_fits<11>(un, vn);
+}
+
+// Toom-5/4 (toom_5x4.hpp) for 1.2 <= un/vn < 1.45 and Toom-5/3 (toom_5x3.hpp) for
+// 1.55 <= un/vn < 1.85, each from its threshold up to the Toom-6.5 one: below that they beat
+// what takes these shapes otherwise (toom32, toom42, toom63, toom76, the Toom-8.5 halves; 0.85-0.98
+// at vn = 192..512, both compilers), above it the plans of the Toom-6.5 / 8.5 family, splitting
+// into ~vn/6 pieces against their ~vn/3..vn/4, do. Checked first after slicing.
+inline bool is_toom54_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= toom54_threshold() && vn < toom6h_threshold() && 5 * un >= 6 * vn && 20 * un < 29 * vn
+        && detail::toom54_split_fits(un, vn);
+}
+
+// Toom-4/3 (toom_4x3.hpp) for 1.3 <= un/vn < 1.45, the same way, checked before toom54: there
+// its six products of ~vn/3 beat toom54's eight of ~vn/4 (0.92-0.98 at vn = 192..512).
+inline bool is_toom43_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= toom43_threshold() && vn < toom6h_threshold() && 10 * un >= 13 * vn && 20 * un < 29 * vn
+        && detail::toom43_split_fits(un, vn);
+}
+
+inline bool is_toom53_applicable(size_t un, size_t vn) noexcept
+{
+    assert(un >= vn);
+    return vn >= toom53_threshold() && vn < toom6h_threshold() && 20 * un >= 31 * vn && 20 * un < 37 * vn
+        && detail::toom53_split_fits(un, vn);
+}
+
 // Toom-6/3 for 1.75 <= un/vn < 2 from its threshold up: the same window as toom42, checked first
 // (eight products of ~vn/3 against toom42's five of ~vn/2).
 inline bool is_toom63_applicable(size_t un, size_t vn) noexcept
@@ -120,10 +174,13 @@ namespace detail {
 // Each piece product goes straight into rb at k*pl; its low vn limbs overlap the high vn limbs of
 // the previous one, which are saved to a vn-limb scratch first and added back. Every piece product
 // goes through umul_dispatch, so the balanced ones get the whole Karatsuba/Toom/FFT chain and
-// the short last piece is itself sliced again if it is short enough.
+// the short last piece is itself sliced again if it is short enough. pl = 0 picks the piece
+// length below; the FFT range passes its own (fft_slice_length()), with full_piece(dst, a) for
+// the full pl-limb pieces (dst[0..pl+vn) = a * v; umul_fft_sliced()).
 // Returns rb + un + vn.
-template <std::unsigned_integral LimbT, typename AllocatorT>
-LimbT* umul_sliced(const LimbT* u, size_t un, const LimbT* v, size_t vn, LimbT* rb, AllocatorT alloc)
+template <std::unsigned_integral LimbT, typename AllocatorT, typename FullPieceF = std::nullptr_t>
+LimbT* umul_sliced(const LimbT* u, size_t un, const LimbT* v, size_t vn, LimbT* rb, AllocatorT alloc, size_t pl = 0,
+    FullPieceF&& full_piece = nullptr)
 {
     NUMETRON_ASSERT(vn > 0 && un >= vn);
     LimbT* const re = rb + un + vn;
@@ -131,6 +188,12 @@ LimbT* umul_sliced(const LimbT* u, size_t un, const LimbT* v, size_t vn, LimbT* 
     // dst[0..an+vn) = a * v, zero-padding what umul_dispatch leaves above the significant limbs
     // (it strips leading zero limbs, and a piece from the middle of u may have them).
     auto mul_piece = [&](LimbT* dst, const LimbT* a, size_t an) {
+        if constexpr (!std::is_same_v<std::remove_cvref_t<FullPieceF>, std::nullptr_t>) {
+            if (an == pl) {
+                full_piece(dst, a);
+                return;
+            }
+        }
         LimbT* e = umul_dispatch(a, an, v, vn, dst, alloc);
         std::memset(e, 0, static_cast<size_t>(dst + an + vn - e) * sizeof(LimbT));
     };
@@ -140,7 +203,8 @@ LimbT* umul_sliced(const LimbT* u, size_t un, const LimbT* v, size_t vn, LimbT* 
     // as GMP's mpn_mul does: 2-8% faster at vn = 128..512 with toom42, 3-8% at 1024..2048 with
     // toom63. Where the balanced pieces would take Toom-6.5 / 8.5, only toom63 beats them (toom42
     // was up to +5% at vn = 1024), so there it needs the Toom-6/3 threshold.
-    const size_t pl = (vn >= toom42_threshold() && (vn < toom6h_threshold() || vn >= toom63_threshold())) ? 2 * vn - 1 : vn;
+    if (!pl) pl = (vn >= toom42_threshold() && (vn < toom6h_threshold() || vn >= toom63_threshold())) ? 2 * vn - 1 : vn;
+    NUMETRON_ASSERT(pl >= vn);
     mul_piece(rb, u, (std::min)(pl, un));
     if (un <= pl) return re;
 
@@ -161,6 +225,16 @@ LimbT* umul_sliced(const LimbT* u, size_t un, const LimbT* v, size_t vn, LimbT* 
     return re;
 }
 
+// umul_sliced in the FFT range: pl from fft_slice_length(), v transformed once for all the full
+// pieces (fft_fixed_v; created first, so its scratch is released last from the stack allocator).
+template <std::unsigned_integral LimbT, typename AllocatorT>
+requires(sizeof(LimbT) == 8)
+LimbT* umul_fft_sliced(const LimbT* u, size_t un, const LimbT* v, size_t vn, LimbT* rb, AllocatorT alloc, size_t pl)
+{
+    fft_fixed_v<LimbT, AllocatorT> fixed_v{ v, vn, pl, alloc };
+    return umul_sliced(u, un, v, vn, rb, alloc, pl, [&](LimbT* dst, const LimbT* a) { fixed_v.mul(dst, a); });
+}
+
 }
 
 template <std::unsigned_integral LimbT, typename AllocatorT>
@@ -179,12 +253,44 @@ inline LimbT* umul_dispatch(
 
     if constexpr (sizeof(LimbT) == 8) {
         if (is_fft_applicable<LimbT>(un, vn)) {
+            // a long u in pieces that fill a transform length (umul_fft.hpp)
+            if (const size_t pl = detail::fft_slice_length(un, vn)) return detail::umul_fft_sliced(u, un, v, vn, rb, std::move(alloc), pl);
             return detail::umul_fft_impl(u, un, v, vn, rb, std::move(alloc));
         }
     }
 
     if (is_slicing_applicable(un, vn)) {
         return detail::umul_sliced(u, un, v, vn, rb, std::move(alloc));
+    }
+
+    if (is_toom43_applicable(un, vn)) {
+        if (detail::toom43_split_by_u(un, vn)) return toom43_u_engine::umul(u, un, v, vn, rb, std::move(alloc));
+        return toom43_v_engine::umul(u, un, v, vn, rb, std::move(alloc));
+    }
+
+    if (is_toom54_applicable(un, vn)) {
+        if (detail::toom54_split_by_u(un, vn)) return toom54_u_engine::umul(u, un, v, vn, rb, std::move(alloc));
+        return toom54_v_engine::umul(u, un, v, vn, rb, std::move(alloc));
+    }
+
+    if (is_toom53_applicable(un, vn)) {
+        if (detail::toom53_split_by_u(un, vn)) return toom53_u_engine::umul(u, un, v, vn, rb, std::move(alloc));
+        return toom53_v_engine::umul(u, un, v, vn, rb, std::move(alloc));
+    }
+
+    if (is_toom98_applicable(un, vn)) {
+        if (detail::toom8h_half_split_by_u<9>(un, vn)) return toom8h_half_u_engine<9>::umul(u, un, v, vn, rb, std::move(alloc));
+        return toom8h_half_v_engine<9>::umul(u, un, v, vn, rb, std::move(alloc));
+    }
+
+    if (is_toom107_applicable(un, vn)) {
+        if (detail::toom8h_half_split_by_u<10>(un, vn)) return toom8h_half_u_engine<10>::umul(u, un, v, vn, rb, std::move(alloc));
+        return toom8h_half_v_engine<10>::umul(u, un, v, vn, rb, std::move(alloc));
+    }
+
+    if (is_toom116_applicable(un, vn)) {
+        if (detail::toom8h_half_split_by_u<11>(un, vn)) return toom8h_half_u_engine<11>::umul(u, un, v, vn, rb, std::move(alloc));
+        return toom8h_half_v_engine<11>::umul(u, un, v, vn, rb, std::move(alloc));
     }
 
     if (is_toom8h_applicable(un, vn)) {
@@ -261,19 +367,20 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
         return { nullptr, 0, 0 };
     }
 
-    if constexpr (sizeof(LimbT) == 8) {
-        if (is_fft_applicable<LimbT>(u.size(), v.size())) {
-            numetron::detail::stack_allocator<LimbT> scratch_alloc;
-            return umul_fft(u, v, std::move(alloc), scratch_alloc);
-        }
-    }
-
-    if (is_slicing_applicable(u.size(), v.size())) {
-        numetron::detail::stack_allocator<LimbT> scratch_alloc; // see below
+    // u in pieces (detail::umul_sliced), the result from alloc, the scratch from the stack
+    // allocator (see below); pl = 0: the slicing's own piece length. fft: pieces from fft_slice_length().
+    auto sliced = [&](size_t pl, bool fft) -> std::tuple<LimbT*, size_t, size_t> {
+        numetron::detail::stack_allocator<LimbT> scratch_alloc;
         const size_t rsz = u.size() + v.size();
         LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
         try {
-            LimbT* re = detail::umul_sliced(u.data(), u.size(), v.data(), v.size(), r, scratch_alloc);
+            LimbT* re;
+            if constexpr (sizeof(LimbT) == 8) {
+                if (fft) re = detail::umul_fft_sliced(u.data(), u.size(), v.data(), v.size(), r, scratch_alloc, pl);
+                else re = detail::umul_sliced(u.data(), u.size(), v.data(), v.size(), r, scratch_alloc, pl);
+            } else {
+                re = detail::umul_sliced(u.data(), u.size(), v.data(), v.size(), r, scratch_alloc, pl);
+            }
             while (re != r && *(re - 1) == 0) --re;
             return { r, static_cast<size_t>(re - r), rsz };
         }
@@ -281,20 +388,42 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
             std::allocator_traits<AllocatorT>::deallocate(alloc, r, rsz);
             throw;
         }
+    };
+
+    if constexpr (sizeof(LimbT) == 8) {
+        if (is_fft_applicable<LimbT>(u.size(), v.size())) {
+            // a long u in pieces that fill a transform length (umul_fft.hpp)
+            if (const size_t pl = detail::fft_slice_length(u.size(), v.size())) return sliced(pl, true);
+            numetron::detail::stack_allocator<LimbT> scratch_alloc;
+            return umul_fft(u, v, std::move(alloc), scratch_alloc);
+        }
+    }
+
+    if (is_slicing_applicable(u.size(), v.size())) {
+        return sliced(0, false);
     }
 
     //if (v.size() >= NUMETRON_KARATSUBA_THRESHOLD) {
-        const bool toom8h = is_toom8h_applicable(u.size(), v.size());
-        const bool toom6h = !toom8h && is_toom6h_applicable(u.size(), v.size());
-        const bool toom76 = !toom8h && !toom6h && is_toom76_applicable(u.size(), v.size());
-        const bool toom4 = !toom8h && !toom6h && !toom76 && is_toom4_applicable(u.size(), v.size());
+        const bool toom43 = is_toom43_applicable(u.size(), v.size());
+        const bool toom54 = !toom43 && is_toom54_applicable(u.size(), v.size());
+        const bool toom53 = !toom43 && !toom54 && is_toom53_applicable(u.size(), v.size());
+        const bool toom5x = toom43 || toom54 || toom53;
+        const bool toom98 = !toom5x && is_toom98_applicable(u.size(), v.size());
+        const bool toom107 = !toom5x && !toom98 && is_toom107_applicable(u.size(), v.size());
+        const bool toom116 = !toom5x && !toom98 && !toom107 && is_toom116_applicable(u.size(), v.size());
+        // everything checked before the Toom chain proper
+        const bool toom8hh = toom5x || toom98 || toom107 || toom116;
+        const bool toom8h = !toom8hh && is_toom8h_applicable(u.size(), v.size());
+        const bool toom6h = !toom8hh && !toom8h && is_toom6h_applicable(u.size(), v.size());
+        const bool toom76 = !toom8hh && !toom8h && !toom6h && is_toom76_applicable(u.size(), v.size());
+        const bool toom4 = !toom8hh && !toom8h && !toom6h && !toom76 && is_toom4_applicable(u.size(), v.size());
         // Balanced Toom-3 only; see umul_dispatch.
-        const bool toom3 = !toom8h && !toom6h && !toom76 && !toom4 && is_toom3_applicable(u.size(), v.size())
+        const bool toom3 = !toom8hh && !toom8h && !toom6h && !toom76 && !toom4 && is_toom3_applicable(u.size(), v.size())
             && detail::toom3_split_fits(u.size(), v.size());
-        const bool toom32 = !toom8h && !toom6h && !toom76 && !toom4 && !toom3 && is_toom32_applicable(u.size(), v.size());
-        const bool toom63 = !toom8h && !toom6h && !toom76 && !toom4 && !toom3 && !toom32 && is_toom63_applicable(u.size(), v.size());
-        const bool toom42 = !toom8h && !toom6h && !toom76 && !toom4 && !toom3 && !toom32 && !toom63 && is_toom42_applicable(u.size(), v.size());
-        if (toom8h || toom6h || toom76 || toom4 || toom3 || toom32 || toom63 || toom42 || is_karatsuba_applicable(u.size(), v.size())) {
+        const bool toom32 = !toom8hh && !toom8h && !toom6h && !toom76 && !toom4 && !toom3 && is_toom32_applicable(u.size(), v.size());
+        const bool toom63 = !toom8hh && !toom8h && !toom6h && !toom76 && !toom4 && !toom3 && !toom32 && is_toom63_applicable(u.size(), v.size());
+        const bool toom42 = !toom8hh && !toom8h && !toom6h && !toom76 && !toom4 && !toom3 && !toom32 && !toom63 && is_toom42_applicable(u.size(), v.size());
+        if (toom8hh || toom8h || toom6h || toom76 || toom4 || toom3 || toom32 || toom63 || toom42 || is_karatsuba_applicable(u.size(), v.size())) {
             // The one place scratch memory is chosen for a whole recursive multiplication: only
             // the result comes from the caller's allocator (it outlives this call), everything
             // below -- Toom slabs, Karatsuba temporaries, all nested levels -- from the
@@ -302,6 +431,30 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
             // instead of going to the heap per recursion node. Created here rather than up front
             // so the basecase path doesn't pay for the thread_local lookup.
             numetron::detail::stack_allocator<LimbT> scratch_alloc;
+            if (toom43) {
+                if (detail::toom43_split_by_u(u.size(), v.size())) return toom43_u_engine::umul(u, v, std::move(alloc), scratch_alloc);
+                return toom43_v_engine::umul(u, v, std::move(alloc), scratch_alloc);
+            }
+            if (toom54) {
+                if (detail::toom54_split_by_u(u.size(), v.size())) return toom54_u_engine::umul(u, v, std::move(alloc), scratch_alloc);
+                return toom54_v_engine::umul(u, v, std::move(alloc), scratch_alloc);
+            }
+            if (toom53) {
+                if (detail::toom53_split_by_u(u.size(), v.size())) return toom53_u_engine::umul(u, v, std::move(alloc), scratch_alloc);
+                return toom53_v_engine::umul(u, v, std::move(alloc), scratch_alloc);
+            }
+            if (toom98) {
+                if (detail::toom8h_half_split_by_u<9>(u.size(), v.size())) return toom8h_half_u_engine<9>::umul(u, v, std::move(alloc), scratch_alloc);
+                return toom8h_half_v_engine<9>::umul(u, v, std::move(alloc), scratch_alloc);
+            }
+            if (toom107) {
+                if (detail::toom8h_half_split_by_u<10>(u.size(), v.size())) return toom8h_half_u_engine<10>::umul(u, v, std::move(alloc), scratch_alloc);
+                return toom8h_half_v_engine<10>::umul(u, v, std::move(alloc), scratch_alloc);
+            }
+            if (toom116) {
+                if (detail::toom8h_half_split_by_u<11>(u.size(), v.size())) return toom8h_half_u_engine<11>::umul(u, v, std::move(alloc), scratch_alloc);
+                return toom8h_half_v_engine<11>::umul(u, v, std::move(alloc), scratch_alloc);
+            }
             if (toom8h) {
                 return toom8h_balanced_engine::umul(u, v, std::move(alloc), scratch_alloc);
             }

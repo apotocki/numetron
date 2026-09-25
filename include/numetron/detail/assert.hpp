@@ -5,6 +5,8 @@
 #pragma once
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
+#include <string_view>
 
 namespace numetron {
     inline void assert_failed(char const* expr_str, char const* file, int line) {

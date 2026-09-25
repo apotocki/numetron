@@ -329,6 +329,27 @@ With those defaults `numetron_bench_mul` (gmp/reuse, > 1: numetron faster), both
 (Before the FFT: 0.75–0.86 at 12288–16384.) The full gtest suite passes with the defaults on both
 compilers.
 
+### Unbalanced operands: pieces that fill a transform length (2026-09-25)
+
+The coefficient count is rounded up to the next transform length (2^k or 3 · 2^(k−2)). So one
+transform over a long u × v can be up to a third longer than it needs; at un = 32 vn it costs
+~1.4x per limb of u what a piece that fills its length does.
+
+`detail::fft_slice_length()` (`umul_fft.hpp`) picks a piece length pl = 2(L + 1 − ⌈vn/2⌉) for
+such a length L when a cost model says the pieces are at least 3% cheaper. The model costs a
+product as L log2 L + 6n, with n its coefficient count. The dispatch then runs `umul_sliced`
+with that length. Effect:
+- 0.70–0.95 of the one-transform time from un/vn ≈ 3.5 up;
+- vs GMP at un/vn = 8–32: 1.65–2.01, where it was 1.17–1.62.
+
+The full pieces share one transform length, so v is transformed once per prime
+(`detail::fft_fixed_v`), and each piece pays for its own forward transform and the inverse only.
+Effect:
+- 0.63–0.89 of one transform from un/vn = 8 up;
+- vs GMP at un/vn = 16–32: 1.82–2.16.
+
+Measurements: `multiplication.md` § 9 item 3, steps 8 and 8b.
+
 ---
 
 ## 6. Phases

@@ -69,14 +69,20 @@ struct mul_tuning_options
     size_t toom42_max = 1024; // vn, with un = 1.875 vn
     size_t toom76_max = 4096; // vn, with un = 1.3 vn
     size_t toom63_max = 4096; // vn, with un = 1.875 vn
+    size_t toom98_max = 4096;  // vn, with un = 1.15 vn
+    size_t toom107_max = 4096; // vn, with un = 1.5 vn
+    size_t toom116_max = 4096; // vn, with un = 1.875 vn
+    size_t toom54_max = 1024;  // vn, with un = 1.3 vn (it stops at the Toom-6.5 threshold)
+    size_t toom53_max = 1024;  // vn, with un = 1.7 vn (likewise)
+    size_t toom43_max = 1024;  // vn, with un = 1.375 vn (likewise)
 
     // Install the found thresholds; when false they are only returned and the previous values
     // are restored.
     bool apply = true;
 
-    // false: tune only the unbalanced stages (Toom-3/2, Toom-4/2), against the balanced thresholds as they
-    // are installed (e.g. the defaults); the balanced ones and the FFT are returned unchanged
-    // and reported as found.
+    // false: tune only the unbalanced stages (Toom-3/2 .. Toom-8.5 11 x 6, Toom-5/4, Toom-5/3,
+    // Toom-4/3), against the balanced thresholds as they are installed (e.g. the defaults); the
+    // balanced ones and the FFT are returned unchanged and reported as found.
     bool tune_balanced = true;
 };
 
@@ -92,6 +98,12 @@ struct mul_tuning_result
     size_t toom42_threshold;
     size_t toom76_threshold;
     size_t toom63_threshold;
+    size_t toom98_threshold;
+    size_t toom107_threshold;
+    size_t toom116_threshold;
+    size_t toom54_threshold;
+    size_t toom53_threshold;
+    size_t toom43_threshold;
     bool karatsuba_found;
     bool toom3_found;
     bool toom4_found;
@@ -102,6 +114,12 @@ struct mul_tuning_result
     bool toom42_found;
     bool toom76_found;
     bool toom63_found;
+    bool toom98_found;
+    bool toom107_found;
+    bool toom116_found;
+    bool toom54_found;
+    bool toom53_found;
+    bool toom43_found;
 };
 
 namespace mul_tuning_detail {
@@ -302,11 +320,23 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     const size_t prev_toom42 = toom42_threshold();
     const size_t prev_toom76 = toom76_threshold();
     const size_t prev_toom63 = toom63_threshold();
+    const size_t prev_toom98 = toom98_threshold();
+    const size_t prev_toom107 = toom107_threshold();
+    const size_t prev_toom116 = toom116_threshold();
+    const size_t prev_toom54 = toom54_threshold();
+    const size_t prev_toom53 = toom53_threshold();
+    const size_t prev_toom43 = toom43_threshold();
 
     bool committed = false;
     NUMETRON_SCOPE_EXIT([&] {
         if (!committed) {
             set_toom63_threshold(prev_toom63);
+            set_toom98_threshold(prev_toom98);
+            set_toom107_threshold(prev_toom107);
+            set_toom116_threshold(prev_toom116);
+            set_toom54_threshold(prev_toom54);
+            set_toom53_threshold(prev_toom53);
+            set_toom43_threshold(prev_toom43);
             set_toom32_threshold(prev_toom32);
             set_toom42_threshold(prev_toom42);
             set_toom76_threshold(prev_toom76);
@@ -320,7 +350,9 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     });
 
     mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max, opts.toom8h_max, opts.fft_max,
-        opts.toom32_max * 3 / 2, opts.toom42_max * 15 / 8, opts.toom76_max * 13 / 10, opts.toom63_max * 15 / 8 }), opts.operand_pairs };
+        opts.toom32_max * 3 / 2, opts.toom42_max * 15 / 8, opts.toom76_max * 13 / 10, opts.toom63_max * 15 / 8,
+        opts.toom98_max * 23 / 20, opts.toom107_max * 3 / 2, opts.toom116_max * 15 / 8,
+        opts.toom54_max * 13 / 10, opts.toom53_max * 17 / 10, opts.toom43_max * 11 / 8 }), opts.operand_pairs };
 
     constexpr size_t off = (std::numeric_limits<size_t>::max)();
     mul_tuning_result result{};
@@ -359,12 +391,60 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         result.toom76_found = toom76.has_value();
         result.toom76_threshold = toom76.value_or(prev_toom76);
         set_toom76_threshold(result.toom76_threshold);
+
+        // Toom-8.5 N x (17 - N), each in the middle of its window against what takes it otherwise
+        // (toom76 / Toom-6.5 / Toom-8.5, toom32, toom63), from the Toom-4 threshold up: 9 x 8 on
+        // 1.15n x n, 10 x 7 on 1.5n x n, 11 x 6 on 1.875n x n.
+        auto toom98 = mul_tuning_detail::tune_threshold(work, opts, "toom98", &set_toom98_threshold,
+            (std::max)(min_toom98_threshold, toom4_threshold()), opts.toom98_max, 23, 20);
+        result.toom98_found = toom98.has_value();
+        result.toom98_threshold = toom98.value_or(prev_toom98);
+        set_toom98_threshold(result.toom98_threshold);
+
+        auto toom107 = mul_tuning_detail::tune_threshold(work, opts, "toom107", &set_toom107_threshold,
+            (std::max)(min_toom107_threshold, toom4_threshold()), opts.toom107_max, 3, 2);
+        result.toom107_found = toom107.has_value();
+        result.toom107_threshold = toom107.value_or(prev_toom107);
+        set_toom107_threshold(result.toom107_threshold);
+
+        auto toom116 = mul_tuning_detail::tune_threshold(work, opts, "toom116", &set_toom116_threshold,
+            (std::max)(min_toom116_threshold, toom4_threshold()), opts.toom116_max, 15, 8);
+        result.toom116_found = toom116.has_value();
+        result.toom116_threshold = toom116.value_or(prev_toom116);
+        set_toom116_threshold(result.toom116_threshold);
+
+        // Toom-5/4 and Toom-5/3 (checked first below the Toom-6.5 threshold) on 1.3n x n and
+        // 1.7n x n, against everything else, from their minimum up.
+        auto toom54 = mul_tuning_detail::tune_threshold(work, opts, "toom54", &set_toom54_threshold,
+            min_toom54_threshold, opts.toom54_max, 13, 10);
+        result.toom54_found = toom54.has_value();
+        result.toom54_threshold = toom54.value_or(prev_toom54);
+        set_toom54_threshold(result.toom54_threshold);
+
+        auto toom53 = mul_tuning_detail::tune_threshold(work, opts, "toom53", &set_toom53_threshold,
+            min_toom53_threshold, opts.toom53_max, 17, 10);
+        result.toom53_found = toom53.has_value();
+        result.toom53_threshold = toom53.value_or(prev_toom53);
+        set_toom53_threshold(result.toom53_threshold);
+
+        // Toom-4/3 (checked before toom54) on 1.375n x n, against everything else.
+        auto toom43 = mul_tuning_detail::tune_threshold(work, opts, "toom43", &set_toom43_threshold,
+            min_toom43_threshold, opts.toom43_max, 11, 8);
+        result.toom43_found = toom43.has_value();
+        result.toom43_threshold = toom43.value_or(prev_toom43);
+        set_toom43_threshold(result.toom43_threshold);
     };
 
     set_toom32_threshold(off);
     set_toom42_threshold(off);
     set_toom76_threshold(off);
     set_toom63_threshold(off);
+    set_toom98_threshold(off);
+    set_toom107_threshold(off);
+    set_toom116_threshold(off);
+    set_toom54_threshold(off);
+    set_toom53_threshold(off);
+    set_toom43_threshold(off);
     set_fft_threshold(off);
 
     if (!opts.tune_balanced) {
@@ -439,6 +519,12 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         set_toom42_threshold(result.toom42_threshold);
         set_toom76_threshold(result.toom76_threshold);
         set_toom63_threshold(result.toom63_threshold);
+        set_toom98_threshold(result.toom98_threshold);
+        set_toom107_threshold(result.toom107_threshold);
+        set_toom116_threshold(result.toom116_threshold);
+        set_toom54_threshold(result.toom54_threshold);
+        set_toom53_threshold(result.toom53_threshold);
+        set_toom43_threshold(result.toom43_threshold);
         committed = true;
     }
     return result;

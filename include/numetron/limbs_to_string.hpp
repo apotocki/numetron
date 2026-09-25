@@ -12,6 +12,7 @@
 #include "ct.hpp"
 #include "config/cmath.hpp"
 
+#include "limbs_from_string.hpp" // detail::default_alphabet
 #include "limb_arithmetic/udiv.hpp"
 
 namespace numetron {

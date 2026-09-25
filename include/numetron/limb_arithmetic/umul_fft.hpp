@@ -5,6 +5,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <span>
 #include <tuple>
@@ -15,6 +16,7 @@
 #include "numetron/detail/assert.hpp"
 #include "numetron/arithmetic.hpp"
 #include "numetron/config/implementation.hpp" // NUMETRON_FFT_IMPL
+#include "toom/thresholds.hpp" // fft_threshold()
 
 #include "fft/ntt.hpp"
 #if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
@@ -295,6 +297,174 @@ LimbT* umul_fft_impl(LimbT const* u, size_t un, LimbT const* v, size_t vn, LimbT
 #else
     return umul_fft_scalar_impl(u, un, v, vn, rb, std::move(alloc));
 #endif
+}
+
+// v transformed once, mod every prime, at the transform length a pl x vn product takes, for
+// multiplying many pl-limb pieces of u by it (umul_sliced over fft_slice_length()'s pieces): each
+// piece then needs its own forward and the inverse transform only, two of the three. Holds
+// NP transforms of v and NP of the piece (2 NP L words) from alloc for its lifetime; construct
+// it before and destroy it after anything else that allocates from the same stack allocator.
+template <std::unsigned_integral LimbT, typename AllocatorT>
+requires(sizeof(LimbT) == 8)
+class fft_fixed_v
+{
+public:
+#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+    static constexpr size_t NP = ntt_avx2::prime_count;
+    using word = double;
+#else
+    static constexpr size_t NP = ntt::prime_count;
+    using word = ntt::u64;
+#endif
+    static_assert(sizeof(word) == sizeof(LimbT));
+
+    // pl even (a piece is whole coefficients)
+    fft_fixed_v(LimbT const* v, size_t vn, size_t pl, AllocatorT alloc)
+        : alloc_{ std::move(alloc) }, vn_{ vn }, pl_{ pl }
+        , n_{ pl / 2 + (vn + 1) / 2 - 1 }, len_{ ntt::choose_length(n_) }
+        , scratch_sz_{ 2 * NP * len_.L }
+    {
+        NUMETRON_ASSERT(vn >= 1 && pl >= vn && pl % 2 == 0);
+        scratch_ = std::allocator_traits<AllocatorT>::allocate(alloc_, scratch_sz_);
+        word* base = reinterpret_cast<word*>(scratch_);
+        for (size_t pi = 0; pi < NP; ++pi) {
+            vt_[pi] = base + pi * len_.L;
+            r_[pi] = base + (NP + pi) * len_.L;
+        }
+        ntt::u64 const* vv = reinterpret_cast<ntt::u64 const*>(v);
+        for (size_t pi = 0; pi < NP; ++pi) {
+#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+            namespace nt = ntt_avx2;
+            ntt::prime const& P = nt::primes[pi];
+            const double p = static_cast<double>(P.p), pinv = 1.0 / p;
+            nt::load(vt_[pi], vv, vn, len_.L, P, p, pinv);
+            nt::forward(vt_[pi], len_, pi, p, pinv);
+#else
+            ntt::prime const& P = ntt::primes[pi];
+            word* b = vt_[pi];
+            const size_t c = ntt::load_coefficients(vv, vn, P, [b](size_t i, ntt::u64 x) { b[i] = x; });
+            std::fill(b + c, b + len_.L, ntt::u64{ 0 });
+            ntt::forward(b, len_, pi);
+#endif
+        }
+    }
+
+    fft_fixed_v(fft_fixed_v const&) = delete;
+    fft_fixed_v& operator=(fft_fixed_v const&) = delete;
+
+    ~fft_fixed_v()
+    {
+        std::allocator_traits<AllocatorT>::deallocate(alloc_, scratch_, scratch_sz_);
+    }
+
+    // dst[0..pl+vn) = a[0..pl) * v
+    void mul(LimbT* dst, LimbT const* a) noexcept
+    {
+        ntt::u64 const* aa = reinterpret_cast<ntt::u64 const*>(a);
+        ntt::u64* out = reinterpret_cast<ntt::u64*>(dst);
+#if NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+        namespace nt = ntt_avx2;
+        for (size_t pi = 0; pi < NP; ++pi) {
+            ntt::prime const& P = nt::primes[pi];
+            const double p = static_cast<double>(P.p), pinv = 1.0 / p;
+            double* x = r_[pi];
+            nt::load(x, aa, pl_, len_.L, P, p, pinv);
+            nt::forward(x, len_, pi, p, pinv);
+            nt::pointwise(x, vt_[pi], len_.L, p, pinv);
+            nt::inverse(x, len_, pi, p, pinv);
+            nt::finish(x, n_, static_cast<double>(P.p - (P.p - 1) / len_.L), p, pinv);
+        }
+        ntt::crt_accumulator<NP, nt::primes> acc;
+        double const* const* r = r_;
+        size_t i = 0;
+        for (; i + 4 <= n_; i += 4) {
+            ntt::u64 t[NP][4];
+            nt::garner4(r, i, t);
+            for (size_t q = 0; q < 4; ++q) {
+                ntt::u64 d[NP];
+                for (size_t s = 0; s < NP; ++s) d[s] = t[s][q];
+                acc.push(d, out + 2 * (i + q));
+            }
+        }
+        for (; i < n_; ++i) {
+            ntt::u64 d[NP];
+            nt::garner1(r, i, d);
+            acc.push(d, out + 2 * i);
+        }
+        acc.flush(out, 2 * n_, pl_ + vn_);
+#else
+        for (size_t pi = 0; pi < NP; ++pi) {
+            ntt::prime const& P = ntt::primes[pi];
+            word* x = r_[pi];
+            const size_t c = ntt::load_coefficients(aa, pl_, P, [x](size_t i, ntt::u64 y) { x[i] = y; });
+            std::fill(x + c, x + len_.L, ntt::u64{ 0 });
+            ntt::forward(x, len_, pi);
+            word const* b = vt_[pi];
+            for (size_t i = 0; i < len_.L; ++i) x[i] = ntt::mont_mul(x[i], b[i], P);
+            ntt::inverse(x, len_, pi);
+            // times 1 / (L * R), as in ntt::convolve()
+            const ntt::u64 s = ntt::reduce(ntt::redc(0, P.p - (P.p - 1) / len_.L, P), P.p);
+            const ntt::u64 sq = ntt::shoup_const(s, P.p);
+            for (size_t i = 0; i < n_; ++i) x[i] = ntt::reduce(ntt::shoup_mul(x[i], s, sq, P.p), P.p);
+        }
+        ntt::u64 const* r[NP];
+        for (size_t pi = 0; pi < NP; ++pi) r[pi] = r_[pi];
+        ntt::crt_compose<NP, ntt::primes>(out, pl_ + vn_, r, n_);
+#endif
+    }
+
+private:
+    AllocatorT alloc_;
+    size_t vn_, pl_, n_;
+    ntt::length len_;
+    size_t scratch_sz_;
+    LimbT* scratch_ = nullptr;
+    word* vt_[NP];
+    word* r_[NP];
+};
+
+// Piece length for cutting u into FFT products of pl x vn limbs (umul_sliced) when that is
+// cheaper than one transform over the whole un x vn, or 0. The transform length rounds the
+// coefficient count up to 2^k or 3 * 2^(k-2), so one transform over a long u pays for up to a
+// third more than it needs, while pieces can fill a length exactly (pl = 2 (L + 1 - ceil(vn/2))),
+// v transformed once for all of them (fft_fixed_v). A product of n coefficients at transform
+// length L is costed as L log2 L for its three transforms (forward u, forward v, inverse) + 6 n
+// (loading, CRT: a piece's n exceeds its share of u by vn / 2); a piece pays two of the three
+// transforms, v's third once. That picks the measured best piece length or one within a few
+// percent of it (GCC, vn = 2688..16384, un/vn = 2..32; docs/fft.md); the pieces have to be
+// clearly (3%) cheaper than the whole.
+inline size_t fft_slice_length(size_t un, size_t vn) noexcept
+{
+    NUMETRON_ASSERT(un >= vn && vn >= 1);
+    auto cost_of = [](size_t n) {
+        const double L = static_cast<double>(ntt::choose_length(n).L);
+        return L * std::log2(L) + 6.0 * static_cast<double>(n);
+    };
+    auto product_cost = [&](size_t an, size_t bn) { return cost_of((an + 1) / 2 + (bn + 1) / 2 - 1); };
+    auto transforms = [](size_t L) { return static_cast<double>(L) * std::log2(static_cast<double>(L)); };
+
+    double best = 0.97 * product_cost(un, vn);
+    size_t best_pl = 0;
+    for (unsigned k = 1; k < 8 * sizeof(size_t) - 2; ++k) {
+        for (size_t L : { k >= 2 ? size_t{ 3 } << (k - 2) : size_t{ 0 }, size_t{ 1 } << k }) {
+            if (L + 1 < (vn + 1) / 2) continue;
+            const size_t pl = 2 * (L + 1 - (vn + 1) / 2);
+            if (pl < vn) continue;
+            if (pl >= un) return best_pl; // longer pieces: one product
+            const size_t pieces = un / pl, rest = un - pieces * pl;
+            // a remainder below the FFT threshold takes the Toom chain, which the model doesn't
+            // cost (MSVC, vn = 4096, un = 3.5 vn: 3vn + 0.5vn was 1.02-1.04 of one transform)
+            if (rest && rest < fft_threshold()) continue;
+            // a piece fills its length: n = L
+            double cost = transforms(L) / 3 + static_cast<double>(pieces) * (2 * transforms(L) / 3 + 6.0 * static_cast<double>(L));
+            if (rest) cost += rest >= vn ? product_cost(rest, vn) : product_cost(vn, rest);
+            if (cost < best) {
+                best = cost;
+                best_pl = pl;
+            }
+        }
+    }
+    return best_pl;
 }
 
 } // namespace detail

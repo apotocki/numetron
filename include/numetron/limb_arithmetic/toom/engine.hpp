@@ -21,11 +21,15 @@
 #include "toom_3x2.hpp"
 #include "toom_4x2.hpp"
 #include "toom_6x3.hpp"
+#include "toom_5x3.hpp"
+#include "toom_5x4.hpp"
+#include "toom_4x3.hpp"
 #include "toom_7x6.hpp"
 #include "toom_3x3.hpp"
 #include "toom_4x4.hpp"
 #include "toom_6x6.hpp"
 #include "toom_8x8.hpp"
+#include "toom_8h_half.hpp"
 
 #include "numetron/limb_arithmetic/toom/slot.hpp"
 
@@ -668,6 +672,21 @@ using toom42_v_engine = toom_engine_t<toom_runtime_detail::toom42_v_traits>;
 using toom63_u_engine = toom_engine_t<toom_runtime_detail::toom63_u_traits>;
 using toom63_v_engine = toom_engine_t<toom_runtime_detail::toom63_v_traits>;
 
+// Toom-5/3 plan (toom_5x3.hpp), operands detail::toom53_split_fits() accepts; the _u engine when
+// detail::toom53_split_by_u().
+using toom53_u_engine = toom_engine_t<toom_runtime_detail::toom53_u_traits>;
+using toom53_v_engine = toom_engine_t<toom_runtime_detail::toom53_v_traits>;
+
+// Toom-5/4 plan (toom_5x4.hpp), operands detail::toom54_split_fits() accepts; the _u engine when
+// detail::toom54_split_by_u().
+using toom54_u_engine = toom_engine_t<toom_runtime_detail::toom54_u_traits>;
+using toom54_v_engine = toom_engine_t<toom_runtime_detail::toom54_v_traits>;
+
+// Toom-4/3 plan (toom_4x3.hpp), operands detail::toom43_split_fits() accepts; the _u engine when
+// detail::toom43_split_by_u().
+using toom43_u_engine = toom_engine_t<toom_runtime_detail::toom43_u_traits>;
+using toom43_v_engine = toom_engine_t<toom_runtime_detail::toom43_v_traits>;
+
 // Toom-6.5 7 x 6 plan (toom_7x6.hpp) for 1 < un/vn < 1.4 from the Toom-6.5 range up, operands
 // detail::toom76_split_fits() accepts; the _u engine when detail::toom76_split_by_u().
 using toom76_u_engine = toom_engine_t<toom_runtime_detail::toom76_u_traits>;
@@ -684,5 +703,12 @@ using toom6h_balanced_engine = toom_engine_t<toom_runtime_detail::toom6h_balance
 
 // Balanced Toom-8.5 plan (toom_8x8.hpp), for operands detail::toom8h_split_fits() accepts.
 using toom8h_balanced_engine = toom_engine_t<toom_runtime_detail::toom8h_balanced_traits>;
+
+// Toom-8.5 N x (17 - N) plans (toom_8h_half.hpp) for operands detail::toom8h_half_split_fits<N>()
+// accepts; the _u engine when detail::toom8h_half_split_by_u<N>(), the _v one otherwise.
+template <size_t N>
+using toom8h_half_u_engine = toom_engine_t<toom_runtime_detail::toom8h_half_traits<N, true>>;
+template <size_t N>
+using toom8h_half_v_engine = toom_engine_t<toom_runtime_detail::toom8h_half_traits<N, false>>;
 
 } // namespace numetron::limb_arithmetic

@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <tuple>
+
 #include "platform.hpp"
 #include "umul1.hpp"
 #include "umul_basecase_variants.hpp" // the C++ basecase alternatives (NUMETRON_CXX_BASECASE)
