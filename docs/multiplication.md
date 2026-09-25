@@ -14,12 +14,13 @@ CMake). They are good for comparing variants, not as absolute numbers.
 
 `numetron_bench_mul` with the default configuration (`NUMETRON_USE_ASM`: asm basecase and asm
 Karatsuba; AVX2 FFT; the default thresholds below), n x n limbs, `gmp/reuse` = GMP time /
-numetron time with a reused result; > 1 means numetron is faster (2026-09-24):
+numetron time with a reused result; > 1 means numetron is faster (2026-09-24; the 1–8 limb
+columns 2026-09-25, after the small-size fast paths of § 9 item 2):
 
 | limbs | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 3072 | 4096 | 8192 | 12288 | 16384 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| GCC  | 0.70 | 0.57 | 0.68 | 0.95 | 1.16 | 1.15 | 1.18 | 1.26 | 1.20 | 1.17 | 1.16 | 1.15 | 1.39 | 1.59 | 1.98 | 1.57 | 1.61 |
-| MSVC | 0.63 | 0.71 | 0.53 | 0.82 | 1.12 | 1.16 | 1.18 | 1.26 | 1.19 | 1.16 | 1.15 | 1.16 | 1.33 | 1.51 | 1.79 | 1.58 | 1.54 |
+| GCC  | 1.05 | 1.00 | 0.97 | 1.07 | 1.16 | 1.15 | 1.18 | 1.26 | 1.20 | 1.17 | 1.16 | 1.15 | 1.39 | 1.59 | 1.98 | 1.57 | 1.61 |
+| MSVC | 1.08 | 1.04 | 0.98 | 1.14 | 1.12 | 1.16 | 1.18 | 1.26 | 1.19 | 1.16 | 1.15 | 1.16 | 1.33 | 1.51 | 1.79 | 1.58 | 1.54 |
 
 At the start of this work numetron was at 0.65 at 4096 limbs; before the FFT, 0.75–0.86 at
 12288–16384.
@@ -36,8 +37,9 @@ At the start of this work numetron was at 0.65 at 4096 limbs; before the FFT, 0.
   The plans and the measurements are in § 2 (items 0–0c) and § 9 item 3, steps 1–10.
 - **Squaring has no path of its own** (§ 9 item 10): a · a runs as a general product
   everywhere except in the FFT.
-- **1 .. 8 limbs: slower** (0.5–0.95). The work there is a handful of `mul` instructions; the
-  cost is the call/dispatch/allocation overhead around it (see § 9).
+- **1 .. 8 limbs: on a par** (0.97–1.14; single-limb values in place, the bench's "1*" row:
+  1.5–2.4). The work there is a handful of `mul` instructions, so it comes down to the overhead
+  around them; § 9 item 2 has it layer by layer and what was cut.
 
 Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implementation — § 6):
 
@@ -614,8 +616,89 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
    limbs with the AVX2 kernel; `docs/fft.md` (its § 6 lists what is left: the scalar Horner step of
    the CRT, AVX-512, finer lengths). Large un/vn in the FFT range is cut into pieces that fill a
    transform length, v transformed once for all of them (item 3, steps 8 and 8b).
-2. **Small operands (1–8 limbs, 0.6–0.9 vs GMP)**: overhead around the basecase in
-   `mul()`/`umul()` (dispatch, allocation, normalization).
+2. **Small operands (1–8 limbs)**: overhead around the basecase.
+   - **Where the time went** (2026-09-25; scratch `small_layers.cpp`: every layer of the path
+     timed on its own, n × n, 16 operand pairs cycled; ns at n = 4, GCC / MSVC; GMP's `mpn_mul`
+     7.0 / 7.6, `mpz_mul` 8.9 / 9.9):
+
+     | layer | before | after |
+     |---|---|---|
+     | asm kernel `numetron_mul_basecase_adx` | 6.6 / 7.2 | 6.6 / 7.2 |
+     | `umul_basecase` (kernel choice) | 6.9 / 7.3 | 6.7 / 7.1 |
+     | `umul_dispatch` | 9.5 / 22.7 | 8.5 / 9.5 |
+     | `umul()` | 10.8 / 22.6 | 8.4 / 9.4 |
+     | `limb_arithmetic::mul()` | 12.5 / 24.9 | 9.6 / 9.6 |
+     | `basic_integer::assign_mul` | 16.2 / 28.8 | 12.2 / 14.1 |
+     | `operator*` (allocates) | 19.6 / 53.1 | 16.5 / 36.4 |
+
+     The kernel is on a par with GMP's (faster from 5 limbs). The loss was the path to it.
+   - **The MSVC profile** (VTune, `umul` at n = 4) showed why its chain of checks was so costly.
+     The ~16 `is_*_applicable()` calls in `umul()`, the atomic threshold loads inside them and
+     `detected_mul_basecase()` were not inlined (`umul()` has grown too big for that). Together
+     they were ~15 ns, over a third of the time. The function-local static behind
+     `detected_mul_basecase()` also checked its initialization guard through TLS on every call.
+   - **What was cut:**
+     - `basecase_limit()` (`toom/thresholds.hpp`) is the minimum of all the thresholds,
+       recomputed by every setter. Below it `umul()`, `umul_dispatch` and `mul()` go straight to
+       the basecase, skipping the checks and, in `mul()`, the call into `umul()` and its tuple.
+       A momentarily stale value while another thread retunes can only cost speed: the basecase
+       takes any size.
+     - The kernel choice is a plain atomic function pointer set on the first call, instead of
+       the function-local static.
+   - **Result.** gmp/reuse (§ 1 table): 4 limbs 0.68 → 0.73 (GCC), 0.53 → 0.75 (MSVC); 8 limbs
+     0.95 → 1.01, 0.82 → 0.95. In `assign_mul` numetron now matches `mpz_mul` from 6 limbs (GCC)
+     and from 7 (MSVC); before that, from 12.
+   - **Then `assign_mul`.** After the above it still cost 2.6 / 4.5 ns more than `mul()` at
+     n = 4: two `decompose()` calls, the reuse allocator, `init()`, `fixup_allocated_size()` and
+     `free_old_if_replaced()`. Now it has two direct paths in front of the general one:
+     - **A heap result big enough** (the reused result of a loop). The basecase goes straight
+       into it, then its size and sign are written.
+       - Heap operands are read through their headers; that was ~1 ns cheaper than
+         `decompose()`.
+       - Single-limb operands in place are taken by value with their mask.
+       - 1 × 1 uses `umul1`, un = 2 uses `umul_basecase_2x`.
+       - It is one body reached from both operand cases: with a lambda called from three
+         places, MSVC lost ~1 ns.
+     - **A result in place with single-limb factors whose product stays in place** (small
+       integers). `umul1`, then `init_copy`.
+
+     A zero result is never negative (`init()` could leave one so).
+   - **Result** (`assign_mul`, ns, GCC / MSVC; `mpz_mul` in brackets):
+
+     | n | 1 | 2 | 3 | 4 | 5 | 6 |
+     |---|---|---|---|---|---|---|
+     | GCC | 3.8 (3.3) | 4.5 (4.3) | 7.8 (7.6) | 9.7 (9.0) | 11.8 (12.7) | 15.0 (16.5) |
+     | MSVC | 4.0 (4.0) | 5.3 (4.7) | 9.5 (8.9) | 11.0 (10.1) | 12.9 (13.7) | 15.5 (16.9) |
+
+     gmp/reuse (§ 1 table): 1–8 limbs 0.97–1.14 on both compilers (it was 0.53–0.95 when this
+     started). Single-limb values in place ("1*"): 0.8 → 1.9–2.4 (GCC), 1.5–1.6 (MSVC).
+     `assign_mul_test` covers both paths: random sizes 1–12, signs, values in place and on the
+     heap, zero.
+   - **Fixed-size kernels** (`detail::umul_basecase_small` in `umul_basecase.hpp`, GCC / Clang).
+     Fully unrolled schoolbook products through `unsigned __int128`, called from `umul_basecase`
+     for un ∈ {3, 4}, vn ≤ 3 behind a switch.
+     - Scratch `small_kernels.cpp` (ns; kernel inlined with constant sizes / behind the switch /
+       asm / GMP's `mpn_mul`), GCC:
+
+       | shape | 2×2 | 3×2 | 3×3 | 4×3 | 4×4 |
+       |---|---|---|---|---|---|
+       | fixed | 1.37 | 2.05 | 3.16 | 4.28 | 5.70 |
+       | switch | 2.35 | 3.12 | 4.42 | 4.99 | 6.55 |
+       | asm | 3.37 | 3.75 | 4.63 | 5.17 | 6.47 |
+       | `mpn_mul` | 3.68 | 4.06 | 5.36 | 5.93 | 6.70 |
+
+     - Why these shapes: 4 × 4 gains nothing behind the switch, and un ≤ 2 already has `umul1`
+       and `umul_basecase_2x`.
+     - Not on MSVC: the same kernels with `_umul128` / `_addcarry_u64` were faster only up to
+       2 × 2 / 3 × 1 and up to 2.3x slower than the asm from 3 × 2 on (15.6 vs 6.9 ns at 4 × 4).
+     - Result: `assign_mul` at 3 limbs 7.8 → 6.7 ns on GCC (`mpz_mul` 7.6). `mul_shapes` now
+       also takes vn = 1, 3, 4.
+   - **Left:**
+     - 4 limbs are ~0.9 ns behind `mpz_mul` on GCC (9.8 vs 9.0), 2–4 limbs 0.5–1 ns on MSVC.
+       The kernel is on a par with GMP's there, so this is `assign_mul`'s own ~3 ns against
+       mpz_mul's ~2.
+     - `operator*` on MSVC pays ~22 ns for the heap allocation of every result (GCC ~6 ns).
+       That is `basic_integer`'s memory, not the multiplication.
 3. **Unbalanced products**: done in steps 1–9 below (slicing, Toom-3/2, Toom-4/2, Toom-6/3,
    the Toom-6.5 and Toom-8.5 halves, FFT pieces, Toom-5/4, Toom-5/3; the generic
    `toom_engine<3,3>` is no longer dispatched to) and 10 (Toom-4/3). Left: the small rows

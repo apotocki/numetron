@@ -251,6 +251,11 @@ inline LimbT* umul_dispatch(
         std::swap(un, vn);
     }
 
+    // Below every algorithm's threshold: the basecase, without asking each of them.
+    if (vn < basecase_limit()) {
+        return vn ? umul_basecase<LimbT>(u, un, v, vn, rb) : rb;
+    }
+
     if constexpr (sizeof(LimbT) == 8) {
         if (is_fft_applicable<LimbT>(un, vn)) {
             // a long u in pieces that fill a transform length (umul_fft.hpp)
@@ -365,6 +370,14 @@ inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::sp
 {
     if (v.empty()) [[unlikely]] {
         return { nullptr, 0, 0 };
+    }
+
+    // Below every algorithm's threshold: the basecase, without asking each of them.
+    if (v.size() < basecase_limit()) {
+        const size_t rsz = u.size() + v.size();
+        LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
+        LimbT* re = umul_basecase(u.data(), u.size(), v.data(), v.size(), r);
+        return { r, static_cast<size_t>(re - r), rsz };
     }
 
     // u in pieces (detail::umul_sliced), the result from alloc, the scratch from the stack

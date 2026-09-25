@@ -122,6 +122,65 @@ void assign_mul_test()
         CHECK_EQUAL(to_string(x, 16, false), expect);
     }
 
+    // Small products into a destination whose heap buffer is already big enough (assign_mul()'s
+    // direct basecase path): random sizes and signs, the result's size and sign rewritten in place.
+    {
+        integer_t dst;
+        {
+            integer_t u{ random_hex_operand(rng, 40), 16 }, v{ random_hex_operand(rng, 40), 16 };
+            dst.assign_mul(u, v); // a heap buffer of 80 limbs
+        }
+        // single-limb operands either full (on the heap) or small enough to stay in place
+        auto operand = [&](size_t limbs) {
+            if (limbs == 1 && (rng() & 1)) {
+                static constexpr char digits[] = "0123456789abcdef";
+                std::string s(1 + rng() % 14, '0');
+                for (auto& c : s) c = digits[1 + rng() % 15];
+                return s;
+            }
+            return random_hex_operand(rng, limbs);
+        };
+        for (int i = 0; i < 400; ++i) {
+            const size_t un = 1 + rng() % 12, vn = 1 + rng() % 12;
+            std::string a = operand(un), b = operand(vn);
+            integer_t u{ a, 16 }, v{ b, 16 };
+            const bool nu = rng() & 1, nv = rng() & 1;
+            if (nu) u.negate();
+            if (nv) v.negate();
+            dst.assign_mul(u, v);
+            CHECK_EQUAL(to_string(dst, 16, false), (nu != nv ? "-" : "") + gmp_hex_mul(a, b));
+        }
+        // a zero operand: zero, never negative
+        integer_t u{ random_hex_operand(rng, 3), 16 }, zero{ 0 };
+        u.negate();
+        dst.assign_mul(u, zero);
+        CHECK_EQUAL(to_string(dst, 16, false), "0");
+    }
+
+    // Single-limb products into a destination in place (assign_mul()'s in-place path): products
+    // that fit in place and ones that don't, random signs, zero.
+    {
+        integer_t dst;
+        for (int i = 0; i < 400; ++i) {
+            const uint64_t a = rng() >> (rng() % 64), b = rng() >> (rng() % 64);
+            integer_t u{ a }, v{ b };
+            const bool nu = rng() & 1, nv = rng() & 1;
+            if (nu) u.negate();
+            if (nv) v.negate();
+            integer_t fresh; // in place when assign_mul() starts
+            fresh.assign_mul(u, v);
+            mpz_t x, y, r;
+            mpz_init_set_ui(x, 0); mpz_init_set_ui(y, 0); mpz_init(r);
+            mpz_import(x, 1, -1, sizeof(a), 0, 0, &a);
+            mpz_import(y, 1, -1, sizeof(b), 0, 0, &b);
+            mpz_mul(r, x, y);
+            if (nu != nv) mpz_neg(r, r);
+            std::unique_ptr<char, void(*)(void*)> s(mpz_get_str(nullptr, 16, r), [](void* p) { std::free(p); });
+            CHECK_EQUAL(to_string(fresh, 16, false), std::string{ s.get() });
+            mpz_clears(x, y, r, nullptr);
+        }
+    }
+
     // A zero operand after the destination is already heap-backed must still free that buffer
     // (init_zero() alone doesn't -- see free_if_replaced()).
     {

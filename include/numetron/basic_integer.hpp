@@ -1065,6 +1065,87 @@ public:
             return *this;
         }
 
+        // Small operands and a heap buffer here already big enough (the reused result of a
+        // loop): the basecase straight into it, then its size and sign -- without mul()'s tuple,
+        // the reuse allocator, init() and its fixups (2.6 / 4.5 ns of a 4 x 4 product on GCC /
+        // MSVC). Anything else takes the general path below.
+        if constexpr (sizeof(LimbT) == 8) {
+            if (!alloc_holder::is_inplaced(aholder_.ctl_limb())) {
+                constexpr LimbT no_mask = (std::numeric_limits<LimbT>::max)();
+                using lholder_t = std::remove_cvref_t<decltype(l.aholder_)>;
+                using rholder_t = std::remove_cvref_t<decltype(r.aholder_)>;
+                LimbT const* u;
+                LimbT const* v;
+                size_t un, vn;
+                LimbT umask = no_mask, vmask = no_mask;
+                bool negative;
+                bool eligible = true;
+                if (!lholder_t::is_inplaced(l.aholder_.ctl_limb()) && !rholder_t::is_inplaced(r.aholder_.ctl_limb())) {
+                    // both on the heap: their headers directly (cheaper than decompose())
+                    auto [ldata, ul] = l.aholder_.allocated_data_and_limbs();
+                    auto [rdata, vl] = r.aholder_.allocated_data_and_limbs();
+                    u = ul; un = ldata->size;
+                    v = vl; vn = rdata->size;
+                    negative = ldata->sign != rdata->sign;
+                } else {
+                    // a masked top limb (a value in place) only on a single-limb operand
+                    auto [us, lm, ls] = l.decompose();
+                    auto [vs, rm, rs] = r.decompose();
+                    u = us.data(); un = us.size(); umask = lm;
+                    v = vs.data(); vn = vs.size(); vmask = rm;
+                    negative = ls != rs;
+                    eligible = (umask == no_mask || un == 1) && (vmask == no_mask || vn == 1);
+                }
+                if (un < vn) {
+                    std::swap(u, v);
+                    std::swap(un, vn);
+                    std::swap(umask, vmask);
+                }
+                if (eligible && vn < limb_arithmetic::basecase_limit()) {
+                    auto [data, limbs] = aholder_.allocated_data_and_limbs();
+                    if (data->allocated_size >= un + vn) {
+                        LimbT* re;
+                        if (un == 1) { // and vn == 1
+                            auto [h, lo] = arithmetic::umul1(u[0] & umask, v[0] & vmask);
+                            limbs[0] = lo;
+                            limbs[1] = h;
+                            re = limbs + 2;
+                        } else if (un == 2) {
+                            re = limb_arithmetic::umul_basecase_2x<LimbT>(u[0], u[1], v[0] & vmask, vn == 2 ? v[1] : LimbT{ 0 }, limbs);
+                        } else if (vmask != no_mask) { // vn == 1
+                            LimbT v0 = v[0] & vmask;
+                            re = limb_arithmetic::umul_basecase(u, un, &v0, 1, limbs);
+                        } else {
+                            re = limb_arithmetic::umul_basecase(u, un, v, vn, limbs);
+                        }
+                        while (re != limbs && !*(re - 1)) --re;
+                        size_t sz = static_cast<size_t>(re - limbs);
+                        if (!sz) { // the zero representation init() makes, never negative
+                            *limbs = 0;
+                            sz = 1;
+                            negative = false;
+                        }
+                        data->size = static_cast<uint32_t>(sz);
+                        data->sign = negative ? 1u : 0u;
+                        return *this;
+                    }
+                }
+            } else {
+                // The result in place: single-limb factors whose product stays in place too (small
+                // integers, the commonest case of all).
+                auto [us, lm, ls] = l.decompose();
+                auto [vs, rm, rs] = r.decompose();
+                if (us.size() == 1 && vs.size() == 1) {
+                    auto [h, lo] = arithmetic::umul1(us[0] & lm, vs[0] & rm);
+                    if (!h && (actualN > 1 || !(lo & ~alloc_holder::last_significand_limb_mask))) {
+                        if (lo) aholder_.template init_copy<true>(&lo, 1, ls != rs ? -1 : 1);
+                        else aholder_.init_zero();
+                        return *this;
+                    }
+                }
+            }
+        }
+
         auto alloc = aholder_.reuse_allocator();
         aholder_.init(limb_arithmetic::mul(l.decompose(), r.decompose(), alloc));
         alloc.fixup_allocated_size();

@@ -483,6 +483,32 @@ inline std::atomic<size_t> toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_T
 inline std::atomic<size_t> toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold) };
 inline std::atomic<size_t> fft_threshold_value{ (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold) };
 
+// The smallest vn any algorithm but the basecase starts at (the minimum of all the thresholds
+// above): below it umul() / umul_dispatch() go straight to the basecase instead of asking every
+// algorithm in turn (on MSVC that chain of checks costs ~15 ns, more than a 4 x 4 product).
+// Recomputed by every setter; momentarily stale while another thread retunes, which can only cost
+// speed, never correctness: the basecase takes any size.
+inline std::atomic<size_t> basecase_limit_value{ (std::min)({
+    (std::max)(size_t{ NUMETRON_KARATSUBA_THRESHOLD }, min_karatsuba_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM3_THRESHOLD }, min_toom3_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM32_THRESHOLD }, min_toom32_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM42_THRESHOLD }, min_toom42_threshold),
+    (std::max)(size_t{ NUMETRON_SLICING_THRESHOLD }, min_slicing_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM76_THRESHOLD }, min_toom76_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM63_THRESHOLD }, min_toom63_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM98_THRESHOLD }, min_toom98_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM107_THRESHOLD }, min_toom107_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM116_THRESHOLD }, min_toom116_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM54_THRESHOLD }, min_toom54_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM53_THRESHOLD }, min_toom53_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM43_THRESHOLD }, min_toom43_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold),
+    (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold),
+    (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold) }) };
+
+inline void update_basecase_limit() noexcept;
+
 }
 
 inline size_t karatsuba_threshold() noexcept
@@ -498,11 +524,13 @@ inline size_t toom3_threshold() noexcept
 inline void set_karatsuba_threshold(size_t limbs) noexcept
 {
     detail::karatsuba_threshold_value.store((std::max)(limbs, min_karatsuba_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline void set_toom3_threshold(size_t limbs) noexcept
 {
     detail::toom3_threshold_value.store((std::max)(limbs, min_toom3_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom32_threshold() noexcept
@@ -513,6 +541,7 @@ inline size_t toom32_threshold() noexcept
 inline void set_toom32_threshold(size_t limbs) noexcept
 {
     detail::toom32_threshold_value.store((std::max)(limbs, min_toom32_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom63_threshold() noexcept
@@ -523,6 +552,7 @@ inline size_t toom63_threshold() noexcept
 inline void set_toom63_threshold(size_t limbs) noexcept
 {
     detail::toom63_threshold_value.store((std::max)(limbs, min_toom63_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom76_threshold() noexcept
@@ -533,6 +563,7 @@ inline size_t toom76_threshold() noexcept
 inline void set_toom76_threshold(size_t limbs) noexcept
 {
     detail::toom76_threshold_value.store((std::max)(limbs, min_toom76_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom98_threshold() noexcept
@@ -543,6 +574,7 @@ inline size_t toom98_threshold() noexcept
 inline void set_toom98_threshold(size_t limbs) noexcept
 {
     detail::toom98_threshold_value.store((std::max)(limbs, min_toom98_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom107_threshold() noexcept
@@ -553,6 +585,7 @@ inline size_t toom107_threshold() noexcept
 inline void set_toom107_threshold(size_t limbs) noexcept
 {
     detail::toom107_threshold_value.store((std::max)(limbs, min_toom107_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom116_threshold() noexcept
@@ -563,6 +596,7 @@ inline size_t toom116_threshold() noexcept
 inline void set_toom116_threshold(size_t limbs) noexcept
 {
     detail::toom116_threshold_value.store((std::max)(limbs, min_toom116_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom54_threshold() noexcept
@@ -573,6 +607,7 @@ inline size_t toom54_threshold() noexcept
 inline void set_toom54_threshold(size_t limbs) noexcept
 {
     detail::toom54_threshold_value.store((std::max)(limbs, min_toom54_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom53_threshold() noexcept
@@ -583,6 +618,7 @@ inline size_t toom53_threshold() noexcept
 inline void set_toom53_threshold(size_t limbs) noexcept
 {
     detail::toom53_threshold_value.store((std::max)(limbs, min_toom53_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom43_threshold() noexcept
@@ -593,6 +629,7 @@ inline size_t toom43_threshold() noexcept
 inline void set_toom43_threshold(size_t limbs) noexcept
 {
     detail::toom43_threshold_value.store((std::max)(limbs, min_toom43_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t slicing_threshold() noexcept
@@ -603,6 +640,7 @@ inline size_t slicing_threshold() noexcept
 inline void set_slicing_threshold(size_t limbs) noexcept
 {
     detail::slicing_threshold_value.store((std::max)(limbs, min_slicing_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom42_threshold() noexcept
@@ -613,6 +651,7 @@ inline size_t toom42_threshold() noexcept
 inline void set_toom42_threshold(size_t limbs) noexcept
 {
     detail::toom42_threshold_value.store((std::max)(limbs, min_toom42_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom4_threshold() noexcept
@@ -623,6 +662,7 @@ inline size_t toom4_threshold() noexcept
 inline void set_toom4_threshold(size_t limbs) noexcept
 {
     detail::toom4_threshold_value.store((std::max)(limbs, min_toom4_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom6h_threshold() noexcept
@@ -633,6 +673,7 @@ inline size_t toom6h_threshold() noexcept
 inline void set_toom6h_threshold(size_t limbs) noexcept
 {
     detail::toom6h_threshold_value.store((std::max)(limbs, min_toom6h_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t toom8h_threshold() noexcept
@@ -643,6 +684,7 @@ inline size_t toom8h_threshold() noexcept
 inline void set_toom8h_threshold(size_t limbs) noexcept
 {
     detail::toom8h_threshold_value.store((std::max)(limbs, min_toom8h_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
 }
 
 inline size_t fft_threshold() noexcept
@@ -653,6 +695,18 @@ inline size_t fft_threshold() noexcept
 inline void set_fft_threshold(size_t limbs) noexcept
 {
     detail::fft_threshold_value.store((std::max)(limbs, min_fft_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
+}
+
+// Below this vn every product is a basecase one (see detail::basecase_limit_value).
+inline size_t basecase_limit() noexcept
+{
+    return detail::basecase_limit_value.load(std::memory_order_relaxed);
+}
+
+inline void detail::update_basecase_limit() noexcept
+{
+    basecase_limit_value.store((std::min)({ karatsuba_threshold(), toom3_threshold(), toom32_threshold(), toom42_threshold(), slicing_threshold(), toom76_threshold(), toom63_threshold(), toom98_threshold(), toom107_threshold(), toom116_threshold(), toom54_threshold(), toom53_threshold(), toom43_threshold(), toom4_threshold(), toom6h_threshold(), toom8h_threshold(), fft_threshold() }), std::memory_order_relaxed);
 }
 
 }

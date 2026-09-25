@@ -81,7 +81,7 @@ void mul_shapes_test()
         add_around(la::toom3_threshold());
         add_around(la::toom4_threshold());
         add_around(la::toom6h_threshold());
-        for (size_t n : { 2, 5, 8, 17, 64, 100, 257 }) v_sizes.push_back(n);
+        for (size_t n : { 1, 2, 3, 4, 5, 8, 17, 64, 100, 257 }) v_sizes.push_back(n);
         std::sort(v_sizes.begin(), v_sizes.end());
         v_sizes.erase(std::unique(v_sizes.begin(), v_sizes.end()), v_sizes.end());
 

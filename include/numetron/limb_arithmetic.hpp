@@ -581,6 +581,18 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
 
     std::tuple<LimbT*, size_t, size_t> rese;
     if (umask == (std::numeric_limits<LimbT>::max)() && vmask == (std::numeric_limits<LimbT>::max)()) {
+        if (vlimbs.size() < basecase_limit()) {
+            // a basecase product (see umul()), without umul()'s call and tuple on the way: on
+            // MSVC those were ~6 ns of a 4 x 4 multiplication
+            const size_t rsz = ulimbs.size() + vlimbs.size();
+            LimbT* r = alloc_traits_t::allocate(alloc, rsz);
+            LimbT* re = umul_basecase(ulimbs.data(), ulimbs.size(), vlimbs.data(), vlimbs.size(), r);
+            while (re != r && !*(re - 1)) --re;
+            get<0>(result) = r;
+            get<1>(result) = static_cast<size_t>(re - r);
+            get<2>(result) = rsz;
+            return result;
+        }
         rese = umul<LimbT>(ulimbs, vlimbs, std::move(alloc));
     } else {
         LimbT hu = ulimbs.back() & umask;

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <tuple>
+#include <atomic>
 
 #include "platform.hpp"
 #include "umul1.hpp"
@@ -289,19 +290,79 @@ inline void mul_basecase_cxx(uint64_t* rp, const uint64_t* up, size_t un, const 
     for (uint64_t* e = umul_basecase_cxx<uint64_t>(up, un, vp, vn, rp), *re = rp + un + vn; e != re; ++e) *e = 0;
 }
 
-// The mul_basecase for this CPU, chosen on the first call: with NUMETRON_ASM_LICENSE_GMP_LGPL the
-// GMP-derived routine for the CPU family; otherwise (or for a CPU that has none) our own
-// numetron_mul_basecase_adx when the CPU has BMI2 + ADX; the C++ basecase as the last resort.
+// The mul_basecase for this CPU: with NUMETRON_ASM_LICENSE_GMP_LGPL the GMP-derived routine for
+// the CPU family; otherwise (or for a CPU that has none) our own numetron_mul_basecase_adx when
+// the CPU has BMI2 + ADX; the C++ basecase as the last resort.
+inline detect_mul_basecase_type select_mul_basecase() noexcept
+{
+#   if NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
+    if (auto gmp = detect_mul_basecase(numetron_detect_platform())) return gmp;
+#   endif
+    if (cpu_has_bmi2_adx()) return &numetron_mul_basecase_adx;
+    return &mul_basecase_cxx;
+}
+
+// select_mul_basecase()'s choice, made on the first call. A plain atomic rather than a
+// function-local static: the latter's thread-safe initialization guard is checked on every call,
+// through TLS on MSVC (~1 ns of every basecase product). Threads racing through the first call all
+// store the same pointer.
+inline std::atomic<detect_mul_basecase_type> mul_basecase_fn{ nullptr };
+
 inline detect_mul_basecase_type detected_mul_basecase() noexcept
 {
-    static const detect_mul_basecase_type fn = []() noexcept -> detect_mul_basecase_type {
-#   if NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
-        if (auto gmp = detect_mul_basecase(numetron_detect_platform())) return gmp;
-#   endif
-        if (cpu_has_bmi2_adx()) return &numetron_mul_basecase_adx;
-        return &mul_basecase_cxx;
-    }();
+    detect_mul_basecase_type fn = mul_basecase_fn.load(std::memory_order_relaxed);
+    if (!fn) [[unlikely]] {
+        fn = select_mul_basecase();
+        mul_basecase_fn.store(fn, std::memory_order_relaxed);
+    }
     return fn;
+}
+
+}
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__SIZEOF_INT128__)
+#   define NUMETRON_SMALL_BASECASE_FIXED 1
+namespace detail {
+
+// Fixed-size schoolbook products for un in {3, 4}, vn <= 3, fully unrolled, through the compiler's
+// 128-bit arithmetic (mul / adc). Behind a run-time switch they are 0.2-0.6 ns faster than the
+// asm basecase there (its setup is most of such a product), on a par at 4 x 4 (not taken); un <= 2
+// has its own paths already (umul1, umul_basecase_2x). GCC / Clang only: MSVC's _addcarry_u64
+// chains made the same kernels up to 2x slower than the asm from 3 x 2 on (docs/multiplication.md).
+__extension__ typedef unsigned __int128 umul_small_u128;
+
+template <size_t UN, size_t VN>
+NUMETRON_FORCEINLINE void umul_basecase_fixed(uint64_t const* u, uint64_t const* v, uint64_t* r) noexcept
+{
+    uint64_t c = 0;
+    [&]<size_t... I>(std::index_sequence<I...>) {
+        ((void)[&] { umul_small_u128 t = (umul_small_u128)u[I] * v[0] + c; r[I] = (uint64_t)t; c = (uint64_t)(t >> 64); }(), ...);
+    }(std::make_index_sequence<UN>{});
+    r[UN] = c;
+    [&]<size_t... J>(std::index_sequence<J...>) {
+        ((void)[&] {
+            constexpr size_t j = J + 1;
+            uint64_t cc = 0;
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ((void)[&] { umul_small_u128 t = (umul_small_u128)u[I] * v[j] + r[I + j] + cc; r[I + j] = (uint64_t)t; cc = (uint64_t)(t >> 64); }(), ...);
+            }(std::make_index_sequence<UN>{});
+            r[UN + j] = cc;
+        }(), ...);
+    }(std::make_index_sequence<VN - 1>{});
+}
+
+// rb[0..un+vn) = u * v for un in {3, 4}, 1 <= vn <= 3
+inline void umul_basecase_small(uint64_t const* u, size_t un, uint64_t const* v, size_t vn, uint64_t* r) noexcept
+{
+    switch (un * 4 + vn) {
+    case 13: umul_basecase_fixed<3, 1>(u, v, r); break;
+    case 14: umul_basecase_fixed<3, 2>(u, v, r); break;
+    case 15: umul_basecase_fixed<3, 3>(u, v, r); break;
+    case 17: umul_basecase_fixed<4, 1>(u, v, r); break;
+    case 18: umul_basecase_fixed<4, 2>(u, v, r); break;
+    default: umul_basecase_fixed<4, 3>(u, v, r); break;
+    }
 }
 
 }
@@ -311,6 +372,12 @@ template <std::unsigned_integral LimbT>
 requires (sizeof(LimbT) == 8)
 inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
 {
+#if defined(NUMETRON_SMALL_BASECASE_FIXED)
+    if (un - 3 < 2 && vn - 1 < 3) { // un in {3, 4}, vn in {1, 2, 3}
+        detail::umul_basecase_small(reinterpret_cast<uint64_t const*>(ub), un, reinterpret_cast<uint64_t const*>(vb), vn, reinterpret_cast<uint64_t*>(rb));
+        return rb + un + vn;
+    }
+#endif
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
     detail::detected_mul_basecase()(rb, ub, un, vb, vn);
