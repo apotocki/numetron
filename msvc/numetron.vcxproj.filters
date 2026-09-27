@@ -54,7 +54,7 @@
     <MASM Include="..\src\arch\x86_64\add_sub_n.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
-    <MASM Include="..\src\arch\x86_64\mul_1_adx.asm">
+    <MASM Include="..\src\arch\x86_64\sqr_basecase_adx.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
     <MASM Include="..\src\arch\x86_64\karatsuba_interp.asm">
@@ -89,7 +89,7 @@
     <None Include="..\src\arch\x86_64\add_sub_n.s">
       <Filter>asm\x86_64</Filter>
     </None>
-    <None Include="..\src\arch\x86_64\mul_1_adx.s">
+    <None Include="..\src\arch\x86_64\sqr_basecase_adx.s">
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\karatsuba_interp.s">

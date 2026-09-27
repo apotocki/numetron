@@ -65,11 +65,10 @@ extern "C" void numetron_karatsuba_mul(uint64_t* rp, const uint64_t* up, size_t 
 // NUMETRON_PLATFORM_ADX.
 extern "C" void numetron_mul_basecase_adx(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn);
 
-// src/arch/x86_64/mul_1_adx.{asm,s}: one row of a product with mulx + adcx/adox (BMI2 + ADX), the
-// rows of the squaring basecase (usqr_basecase): rp[0..n) = up * v (returns the high limb) /
-// rp[0..n) += up * v (returns the carry out).
-extern "C" uint64_t numetron_mul_1_adx(uint64_t* rp, const uint64_t* up, size_t n, uint64_t v) noexcept;
-extern "C" uint64_t numetron_addmul_1_adx(uint64_t* rp, const uint64_t* up, size_t n, uint64_t v) noexcept;
+// src/arch/x86_64/sqr_basecase_adx.{asm,s}: the squaring basecase with mulx + adcx/adox (BMI2 +
+// ADX), rp[0..2n) = up[0..n)^2 for n >= 2: the rows above the diagonal in one call, then the
+// doubling and the diagonal.
+extern "C" void numetron_sqr_basecase_adx(uint64_t* rp, const uint64_t* up, size_t n) noexcept;
 
 namespace numetron::limb_arithmetic::detail {
 // Below this length the inline C++ loop wins: the call itself costs about as much as the few

@@ -142,13 +142,15 @@
 
 // Squares (usqr_basecase, umul_basecase.hpp): from this size the basecase squares with its own
 // kernel (the products above the diagonal once through mulx + adcx/adox rows, then doubled and the
-// diagonal added); below it, as a general product (the rows' fixed cost wins there). Measured
-// against umul_basecase(u, u), 2026-09-25 (scratch sqr_lib.cpp): 0.55-0.6 of it from 48 limbs up.
-#if !defined(NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD) && !defined(NUMETRON_USE_ASM) && NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
-#   define NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD 10 // header-only, GCC: parity with c++ adx at ~8, 0.82 at 10
+// diagonal added); below it, as a general product. With NUMETRON_USE_ASM the kernel is
+// numetron_sqr_basecase_adx, from 2 limbs (straight-line code up to 16: 0.6-0.75 of mpn_sqr's
+// time there, 2026-09-27, scratch sqr_asm.cpp). Header-only, the inline-assembly rows, whose
+// fixed cost wins below ~10 limbs (measured against umul_basecase(u, u), 2026-09-25).
+#if !defined(NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD) && defined(NUMETRON_USE_ASM)
+#   define NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD 2
 #endif
 #ifndef NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD
-#   define NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD 14 // asm rows, both compilers: parity at 12-14, 0.87 at 16
+#   define NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD 10 // header-only, GCC: parity with c++ adx at ~8, 0.82 at 10
 #endif
 #ifndef NUMETRON_SQR_BASECASE_THRESHOLD
 #   define NUMETRON_SQR_BASECASE_THRESHOLD NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD
@@ -198,38 +200,40 @@
 #           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1091
 #           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
 #       endif
+// With NUMETRON_USE_ASM over numetron_sqr_basecase_adx (the squaring basecase ~0.6-0.9 of
+// mpn_sqr's time), retuned 2026-09-27: Karatsuba squaring from ~30 instead of ~60, Toom-3 later.
 #   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 60
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 109
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 471
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2864
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2864
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2389
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 32
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 371
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2117
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2117
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3043
 #       else
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 60
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 115
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 500
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 808
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 173
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091
 #           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1766
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2864
 #       endif
 #   else
 // the C++ Karatsuba implementations over the asm basecase
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 60
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 115
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 371
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2696
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2696
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2538
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 32
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 145
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 394
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2117
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2117
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3435
 #       else
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 57
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 122
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 500
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1027
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1474
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 471
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2389
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2864
 #       endif
 #   endif
 #endif

@@ -36,7 +36,7 @@ else()
             ${LIBRARY_HOME}/src/arch/x86_64/karatsuba_interp.s
             ${LIBRARY_HOME}/src/arch/x86_64/karatsuba_mul.s
             ${LIBRARY_HOME}/src/arch/x86_64/mul_basecase_adx.s
-            ${LIBRARY_HOME}/src/arch/x86_64/mul_1_adx.s
+            ${LIBRARY_HOME}/src/arch/x86_64/sqr_basecase_adx.s
         )
         if (NUMETRON_GMP_LGPL)
             list (APPEND NUMETRON_LIB_SOURCES

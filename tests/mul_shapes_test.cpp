@@ -184,6 +184,25 @@ void mul_shapes_test()
 
     run_pass("default thresholds");
 
+    // Every square size through the squaring basecase and just above it: the asm kernel's
+    // straight-line cases (2..16), its row loop with the straight-line tail (17 and up), and each
+    // entry step of both; all-ones limbs for the longest carry chains, a small top limb.
+    for (size_t n = 1; n <= 80; ++n) {
+        for (int kind = 0; kind < 3; ++kind) {
+            std::vector<limb> u(n);
+            for (auto& x : u) x = kind == 1 ? ~limb{ 0 } : rng();
+            if (kind == 2) u[n - 1] = 1;
+            std::vector<limb> expected(2 * n), r(2 * n + 1, 0xABABABABABABABABULL);
+            mpn_sqr(reinterpret_cast<mp_limb_t*>(expected.data()), reinterpret_cast<const mp_limb_t*>(u.data()), static_cast<mp_size_t>(n));
+            limb* e = la::umul_dispatch(u.data(), n, u.data(), n, r.data(), numetron::detail::stack_allocator<limb>{});
+            std::fill(e, r.data() + 2 * n, limb{ 0 });
+            ++checked;
+            if (!std::equal(expected.begin(), expected.end(), r.begin()) || r[2 * n] != 0xABABABABABABABABULL) {
+                if (++failed <= 10) std::cout << "small squares: MISMATCH " << n << " kind " << kind << "\n";
+            }
+        }
+    }
+
     // Squares from the smallest sizes: the squaring basecase from 2 limbs, Karatsuba squaring
     // from 4 (the recursion down to a few limbs).
     {

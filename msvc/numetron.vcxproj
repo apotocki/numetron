@@ -51,7 +51,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
     </MASM>
-    <MASM Include="..\src\arch\x86_64\mul_1_adx.asm">
+    <MASM Include="..\src\arch\x86_64\sqr_basecase_adx.asm">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
@@ -105,7 +105,7 @@
     <None Include="..\src\arch\x86_64\karatsuba_interp.s" />
     <None Include="..\src\arch\x86_64\karatsuba_mul.s" />
     <None Include="..\src\arch\x86_64\mul_basecase_adx.s" />
-    <None Include="..\src\arch\x86_64\mul_1_adx.s" />
+    <None Include="..\src\arch\x86_64\sqr_basecase_adx.s" />
     <None Include="..\THIRD_PARTY_LICENSES.md" />
   </ItemGroup>
   <ItemGroup>

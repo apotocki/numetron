@@ -309,13 +309,19 @@ inline detect_mul_basecase_type select_mul_basecase() noexcept
 // store the same pointer.
 inline std::atomic<detect_mul_basecase_type> mul_basecase_fn{ nullptr };
 
-inline detect_mul_basecase_type detected_mul_basecase() noexcept
+// The first call's choice, out of line so that the check below inlines into every caller (GCC
+// kept the whole function out of line in some of them: one more call per small product).
+NUMETRON_NOINLINE inline detect_mul_basecase_type init_mul_basecase() noexcept
+{
+    detect_mul_basecase_type fn = select_mul_basecase();
+    mul_basecase_fn.store(fn, std::memory_order_relaxed);
+    return fn;
+}
+
+NUMETRON_FORCEINLINE detect_mul_basecase_type detected_mul_basecase() noexcept
 {
     detect_mul_basecase_type fn = mul_basecase_fn.load(std::memory_order_relaxed);
-    if (!fn) [[unlikely]] {
-        fn = select_mul_basecase();
-        mul_basecase_fn.store(fn, std::memory_order_relaxed);
-    }
+    if (!fn) [[unlikely]] fn = init_mul_basecase();
     return fn;
 }
 
@@ -429,9 +435,12 @@ inline void usqr_basecase_small(uint64_t const* u, size_t n, uint64_t* r) noexce
 }
 #endif
 
+// Inlined into its callers: with NUMETRON_USE_ASM it is a call through the detected routine's
+// pointer, and as a function of its own it was one more call level (its prologue and epilogue
+// ~5% of a 4 x 4 product on MSVC, VTune).
 template <std::unsigned_integral LimbT>
 requires (sizeof(LimbT) == 8)
-inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
+NUMETRON_FORCEINLINE LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
 {
 #if defined(NUMETRON_SMALL_BASECASE_FIXED)
     if (un - 3 < 2 && vn - 1 < 3) { // un in {3, 4}, vn in {1, 2, 3}
@@ -482,16 +491,16 @@ inline void usqr_basecase_rows(uint64_t* r, uint64_t const* u, size_t n) noexcep
 }
 
 #if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
-// Whether the asm rows (mul_1_adx.{asm,s}, BMI2 + ADX) may run here: checked once.
-inline std::atomic<int> sqr_rows_state{ 0 }; // 0 not checked yet, 1 yes, 2 no
+// Whether numetron_sqr_basecase_adx (BMI2 + ADX) may run here: checked once.
+inline std::atomic<int> sqr_kernel_state{ 0 }; // 0 not checked yet, 1 yes, 2 no
 
-inline bool sqr_rows_available() noexcept
+inline bool sqr_kernel_available() noexcept
 {
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
-    int s = sqr_rows_state.load(std::memory_order_relaxed);
+    int s = sqr_kernel_state.load(std::memory_order_relaxed);
     if (!s) [[unlikely]] {
         s = cpu_has_bmi2_adx() ? 1 : 2;
-        sqr_rows_state.store(s, std::memory_order_relaxed);
+        sqr_kernel_state.store(s, std::memory_order_relaxed);
     }
     return s == 1;
 #   elif defined(NUMETRON_PLATFORM_ADX)
@@ -500,37 +509,44 @@ inline bool sqr_rows_available() noexcept
     return false;
 #   endif
 }
+#elif defined(NUMETRON_BASECASE_ADX_ASM)
+// r[0..2n) = u^2 by the inline-assembly rows. Out of line: usqr_basecase() itself is inlined into
+// its callers, and below the threshold it is just a call of the product basecase.
+NUMETRON_NOINLINE inline void usqr_basecase_by_rows(uint64_t* r, uint64_t const* u, size_t n) noexcept
+{
+    usqr_basecase_rows<&addmul_1_adx<false>, &addmul_1_adx<true>>(r, u, n);
+}
 #endif
 
 }
 
-// rb[0..2n) = u^2, returns rb + 2n. From sqr_basecase_threshold() up with the squaring kernel
-// (detail::usqr_basecase_rows) where rows with mulx + adcx/adox are available: the asm ones with
-// NUMETRON_USE_ASM on x86-64 (on CPUs with BMI2 + ADX), the inline-assembly ones of the header-only
-// GCC / Clang build targeting ADX. Otherwise, and below the threshold, as a general product.
+// rb[0..2n) = u^2, returns rb + 2n, from sqr_basecase_threshold() up with a squaring kernel:
+// numetron_sqr_basecase_adx with NUMETRON_USE_ASM on x86-64 (on CPUs with BMI2 + ADX; faster than
+// mpn_sqr up to its Karatsuba range), the inline-assembly rows of the header-only GCC / Clang
+// build targeting ADX, the fixed-size GCC / Clang kernels for 3..8 limbs. Otherwise, and below
+// the threshold, as a general product.
 template <std::unsigned_integral LimbT>
 requires (sizeof(LimbT) == 8)
-inline LimbT* usqr_basecase(LimbT const* ub, size_t n, LimbT* rb) noexcept
+NUMETRON_FORCEINLINE LimbT* usqr_basecase(LimbT const* ub, size_t n, LimbT* rb) noexcept
 {
+#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
+    if (n >= 2 && n >= sqr_basecase_threshold() && detail::sqr_kernel_available()) {
+        numetron_sqr_basecase_adx(reinterpret_cast<uint64_t*>(rb), reinterpret_cast<uint64_t const*>(ub), n);
+        return rb + 2 * n;
+    }
+#endif
 #if defined(NUMETRON_SMALL_SQR_FIXED)
     if (n - 3 < 6) { // 3 <= n <= 8
         detail::usqr_basecase_small(reinterpret_cast<uint64_t const*>(ub), n, reinterpret_cast<uint64_t*>(rb));
         return rb + 2 * n;
     }
 #endif
+#if !(defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))) && defined(NUMETRON_BASECASE_ADX_ASM)
     if (n >= sqr_basecase_threshold()) {
-        auto* r = reinterpret_cast<uint64_t*>(rb);
-        auto const* u = reinterpret_cast<uint64_t const*>(ub);
-#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
-        if (detail::sqr_rows_available()) {
-            detail::usqr_basecase_rows<&numetron_mul_1_adx, &numetron_addmul_1_adx>(r, u, n);
-            return rb + 2 * n;
-        }
-#elif defined(NUMETRON_BASECASE_ADX_ASM)
-        detail::usqr_basecase_rows<&detail::addmul_1_adx<false>, &detail::addmul_1_adx<true>>(r, u, n);
+        detail::usqr_basecase_by_rows(reinterpret_cast<uint64_t*>(rb), reinterpret_cast<uint64_t const*>(ub), n);
         return rb + 2 * n;
-#endif
     }
+#endif
     return umul_basecase(ub, n, ub, n, rb);
 }
 

@@ -1061,8 +1061,7 @@ public:
     {
         if (static_cast<void const*>(this) == static_cast<void const*>(&l) ||
             static_cast<void const*>(this) == static_cast<void const*>(&r)) {
-            *this = l * r;
-            return *this;
+            return assign_mul_general(l, r);
         }
 
         // Small operands and a heap buffer here already big enough (the reused result of a
@@ -1147,6 +1146,21 @@ public:
                 }
             }
         }
+        return assign_mul_general(l, r);
+    }
+
+private:
+    // assign_mul() for everything its fast paths above don't take (and for aliased operands).
+    // Out of line: inlined, its stack buffers gave assign_mul() a large frame with MSVC's /GS
+    // cookie check, which every small product paid for (VTune, 2026-09-27).
+    template <size_t LN2, typename AllocatorLT2, size_t RN2, typename AllocatorRT2>
+    NUMETRON_NOINLINE basic_integer& assign_mul_general(basic_integer<LimbT, LN2, AllocatorLT2> const& l, basic_integer<LimbT, RN2, AllocatorRT2> const& r)
+    {
+        if (static_cast<void const*>(this) == static_cast<void const*>(&l) ||
+            static_cast<void const*>(this) == static_cast<void const*>(&r)) {
+            *this = l * r;
+            return *this;
+        }
 
         auto alloc = aholder_.reuse_allocator();
         aholder_.init(limb_arithmetic::mul(l.decompose(), r.decompose(), alloc));
@@ -1155,6 +1169,8 @@ public:
 
         return *this;
     }
+
+public:
 
     template <std::integral DividerT>
     inline basic_integer& operator/= (DividerT r) { *this = *this / r; return *this; }

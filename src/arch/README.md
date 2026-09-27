@@ -14,8 +14,8 @@ Some assembly files in subdirectories are taken from the GMP (GNU Multiple Preci
 ### Project Files
 All other source files in this directory are part of the Numetron project, e.g.
 `x86_64/detect_platform.*`, `x86_64/detect_mul_basecase.*`, `x86_64/add_sub_n.*`,
-`x86_64/karatsuba_interp.*`, `x86_64/karatsuba_mul.*` and `x86_64/mul_basecase_adx.*`
-(written for Numetron, not derived from GMP).
+`x86_64/karatsuba_interp.*`, `x86_64/karatsuba_mul.*`, `x86_64/mul_basecase_adx.*` and
+`x86_64/sqr_basecase_adx.*` (written for Numetron, not derived from GMP).
 
 **License**: **MIT License**
 
@@ -50,6 +50,7 @@ src/arch/
 |   |-- karatsuba_interp.*       # MIT: fused Karatsuba interpolation pass
 |   |-- karatsuba_mul.*          # MIT: the whole Karatsuba recursion
 |   |-- mul_basecase_adx.*       # MIT: schoolbook mul_basecase, BMI2 + ADX (the default)
+|   |-- sqr_basecase_adx.*       # MIT: schoolbook squaring, BMI2 + ADX
 |   |-- detect_platform.*        # MIT: CPU family from CPUID     (NUMETRON_GMP_LGPL only)
 |   |-- detect_mul_basecase.*    # MIT: picks one of the below    (NUMETRON_GMP_LGPL only)
 |   |-- alderlake/mul_basecase.* # LGPL, GMP-derived              (NUMETRON_GMP_LGPL only)
