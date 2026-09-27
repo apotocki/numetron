@@ -436,17 +436,24 @@ private:
 // Whether a square of n limbs (n >= sqr_fft_threshold()) takes the FFT. Its time is a staircase
 // in the transform length (2^k or 3 * 2^(k-2), up to a third more than the coefficients need),
 // the Toom chain's a smooth curve, so the FFT wins in the upper part of each length's range and
-// loses just above each step. Measured (squares of 1920..6400 limbs, 2026-09-28; the lowest
-// winning fill of the length, coefficients / L): 4096 0.81 GCC / 0.87 MSVC, 6144 0.74 / 0.78,
-// 3072 0.96 / never, 8192 from the start of its range (fill 0.76) on both. Hence: a fill of 0.78
-// or more, and any fill from length 8192 up. Measured with NUMETRON_USE_ASM only; the header-only
-// builds, whose FFT starts far lower (293..1766 limbs), keep the single threshold.
+// loses just above each step. Measured (squares of 1920..6400 limbs, 2026-09-28, with the
+// squaring basecase's straight-line code up to 32 limbs; the lowest winning fill of the length,
+// coefficients / L, GCC / MSVC): 3072 1.00 / 1.00 (by 3% / 1%), 4096 0.86 / 0.89, 6144 0.77 /
+// 0.84, 8192 from the start of its range (fill 0.76) on both. Hence a fill of 0.78 (GCC) / 0.84
+// (MSVC) or more, and any fill from length 8192 up; sqr_fft_threshold() cuts off below the
+// 4096 range. Measured with NUMETRON_USE_ASM only; the header-only builds, whose FFT starts far
+// lower (293..1766 limbs), keep the single threshold.
 inline bool fft_square_fills([[maybe_unused]] size_t n) noexcept
 {
 #if defined(NUMETRON_USE_ASM)
+#   if defined(_MSC_VER) && !defined(__clang__)
+    constexpr size_t min_fill_percent = 84;
+#   else
+    constexpr size_t min_fill_percent = 78;
+#   endif
     const size_t c = (n + 1) / 2 * 2 - 1; // the coefficients of a square
     const size_t L = ntt::choose_length(c).L;
-    return L >= 8192 || 50 * c >= 39 * L;
+    return L >= 8192 || 100 * c >= min_fill_percent * L;
 #else
     return true;
 #endif

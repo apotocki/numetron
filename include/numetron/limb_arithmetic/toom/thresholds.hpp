@@ -215,38 +215,80 @@
 // Toom chain against the FFT over 1920..6400 limbs: the first size where the FFT wins, GCC 2944
 // (at length 3072), MSVC ~3520 (at 4096); a single threshold, as --tune-squares picks, loses up
 // to 10% on either side of a length step (MSVC's 4939 lost 4096 by 1.43 -> 1.26 against GMP).
+#   elif NUMETRON_SQR_STRAIGHT_MAX < 32
+// The squaring basecase's straight-line code shortened (NUMETRON_SQR_STRAIGHT_MAX, config/
+// implementation.hpp): the thresholds tuned when it ended at 16 limbs (2026-09-28). For another
+// length, --tune-squares.
+#       if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#           if defined(_MSC_VER) && !defined(__clang__)
+#               define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 24
+#               define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 154
+#               define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 418
+#               define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2117
+#               define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
+#               define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500  // with detail::fft_square_fills; see above
+#           else
+#               define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 26
+#               define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 154
+#               define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636
+#               define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091   // 761 / 1091
+#               define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
+#               define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2900
+#           endif
+#       else
+// the C++ Karatsuba implementations over the asm basecase
+#           if defined(_MSC_VER) && !defined(__clang__)
+#               define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 30
+#               define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183
+#               define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 418    // 394 / 418
+#               define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2538   // 2249 / 2538
+#               define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
+#               define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500
+#           else
+#               define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28 // 27 / 28
+#               define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183    // 183 / 173
+#               define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636    // 444 / 636
+#               define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091
+#               define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2389   // 1766 / 2389
+#               define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2900
+#           endif
+#       endif
+// Straight-line squaring code up to 32 limbs (the default), 2026-09-28, two runs each: Karatsuba
+// squaring from 32..34 -- its leaves, below that, all straight-line -- and Toom-3 from 231..245.
+// The FFT: GCC 3500, MSVC 3600 -- the start of the 4096 range where it wins (see
+// detail::fft_square_fills), from the sweep; below that the Toom chain wins at any fill.
 #   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 24
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 154
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 418
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2117
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500  // with detail::fft_square_fills; see below
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 32
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 245
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 564    // 564 / 444
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 3233
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 3233
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3600
 #       else
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 26
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 154
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 32
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 245
 #           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091   // 761 / 1091
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2900
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1307   // 1091 / 1307
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1993
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500
 #       endif
 #   else
 // the C++ Karatsuba implementations over the asm basecase
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 30
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 418    // 394 / 418
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2538   // 2249 / 2538
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 34
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 231
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 371
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 5574
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 5574
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3600
 #       else
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28 // 27 / 28
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183    // 183 / 173
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636    // 444 / 636
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2389   // 1766 / 2389
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2900
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 34
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 231
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1388   // 1388 / 1091
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2117
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500
 #       endif
 #   endif
 #endif

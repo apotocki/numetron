@@ -11,6 +11,12 @@ option(NUMETRON_GMP_LGPL "Use the GMP-derived (LGPL) mul_basecase assembly" OFF)
 # (header-only) library.
 option(NUMETRON_USE_ASM "Build the src/arch assembly and export NUMETRON_USE_ASM" ON)
 
+# The largest n the squaring basecase (src/arch/x86_64/sqr_basecase_adx.s) has straight-line code
+# for, 2..32: a smaller one trades speed at 17..32 limbs for code size (n = 17..32 are ~174 KB,
+# which in a larger program compete for the instruction caches). Exported, so that the headers'
+# default squaring thresholds match it.
+set(NUMETRON_SQR_STRAIGHT_MAX 32 CACHE STRING "Largest n with straight-line squaring code (2..32)")
+
 # CMake cross-compile toolchains for Apple platforms (iOS/simulator via Xcode generator) don't
 # populate CMAKE_SYSTEM_PROCESSOR - the target arch(es) only show up in CMAKE_OSX_ARCHITECTURES,
 # which is a list (a universal/fat build can request more than one arch at once). Fall back to it
@@ -49,6 +55,8 @@ else()
                 ${LIBRARY_HOME}/src/arch/x86_64/detect_mul_basecase.s
             )
         endif()
+        set_source_files_properties(${LIBRARY_HOME}/src/arch/x86_64/sqr_basecase_adx.s
+            PROPERTIES COMPILE_OPTIONS "-Wa,--defsym,NUMETRON_SQR_STRAIGHT_MAX=${NUMETRON_SQR_STRAIGHT_MAX}")
         set (_numetron_x64_asm ON)
     elseif (_numetron_proc MATCHES "^(arm|arm64|aarch64)$")
         #message(STATUS "Numetron: ARM assembly not available yet; building without ASM sources.")
@@ -79,7 +87,7 @@ endif()
 # Without NUMETRON_USE_ASM the headers are pure C++ (header-only); linking the x86-64 assembly
 # is what turns it on, for everything that links this target.
 if (_numetron_x64_asm)
-    target_compile_definitions(${LIBRARY_NAME} INTERFACE NUMETRON_USE_ASM)
+    target_compile_definitions(${LIBRARY_NAME} INTERFACE NUMETRON_USE_ASM NUMETRON_SQR_STRAIGHT_MAX=${NUMETRON_SQR_STRAIGHT_MAX})
     if (NUMETRON_GMP_LGPL)
         target_compile_definitions(${LIBRARY_NAME} INTERFACE NUMETRON_USE_GMP_LGPL)
     endif()

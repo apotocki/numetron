@@ -5,16 +5,17 @@
 ; sqr_basecase_adx.asm -- schoolbook squaring with mulx + adcx/adox (BMI2 + ADX), Microsoft x64
 ; version of sqr_basecase_adx.s (see there for the algorithm: the rows above the diagonal with
 ; two carry chains, then one pass doubling them and adding the diagonal; straight-line code for
-; n <= 16 and for the last 15 rows above that, a 16-limb body entered per row from a jump table
-; for the longer rows).
+; n <= NUMETRON_SQR_STRAIGHT_MAX (32 by default) and for the last 15 rows above that, a 16-limb
+; body entered per row from a jump table for the longer rows).
 ;
 ;   void numetron_sqr_basecase_adx(uint64_t* rp, const uint64_t* up, size_t n);
 ;
 ; rp[0..2n) = u[0..n)^2, n >= 2, rp not overlapping u.
 ;
-; Microsoft x64: rcx rp, rdx up, r8 n. n <= 16: a leaf procedure in volatile registers only
-; (r11 up, rcx rp), no unwind info needed. Above: sqr_basecase_adx_general, which saves the
-; non-volatile registers (with unwind info) and then uses the same registers as the GAS version:
+; Microsoft x64: rcx rp, rdx up, r8 n. n <= NUMETRON_SQR_STRAIGHT_MAX: a leaf procedure in
+; volatile registers only (r11 up, rcx rp), no unwind info needed. Above:
+; sqr_basecase_adx_general, which saves the non-volatile registers (with unwind info) and then
+; uses the same registers as the GAS version:
 ;   rdx  u[i] (mulx's implicit operand)      rsi  up cursor         rdi  rp cursor
 ;   rax  low half / sum                      r8, r9  high halves (even / odd steps)
 ;   rcx  pass counter (jrcxz)                r10  8 * k             r11  entry
@@ -22,6 +23,15 @@
 ;   r14  n                                   r15  rp                rbp  up
 
 OPTION CASEMAP:NONE
+
+; The largest n with straight-line code (2..32, default 32): ml64 /D NUMETRON_SQR_STRAIGHT_MAX=24
+; (see sqr_basecase_adx.s) trades speed at 17..32 limbs for code size.
+IFNDEF NUMETRON_SQR_STRAIGHT_MAX
+NUMETRON_SQR_STRAIGHT_MAX EQU 32
+ENDIF
+IF NUMETRON_SQR_STRAIGHT_MAX LT 2 OR NUMETRON_SQR_STRAIGHT_MAX GT 32
+.ERR <NUMETRON_SQR_STRAIGHT_MAX must be in 2..32>
+ENDIF
 
 PUBLIC numetron_sqr_basecase_adx
 
@@ -152,6 +162,18 @@ SDIAG MACRO n, up, rp
     ENDM
 ENDM
 
+; one straight-line case and its jump table entry, for n <= NUMETRON_SQR_STRAIGHT_MAX
+SCASE MACRO n
+IF n LE NUMETRON_SQR_STRAIGHT_MAX
+ALIGN 16
+s&n: SQRN n
+ENDIF
+ENDM
+
+SENTRY MACRO n
+    DQ s&n
+ENDM
+
 SQRN MACRO n
     mov     QWORD PTR [rcx], 0          ; rp[0]
     mov     QWORD PTR [rcx + 8*(2*n - 1)], 0 ; rp[2n-1]
@@ -169,44 +191,50 @@ ENDM
 
 ALIGN 16
 numetron_sqr_basecase_adx PROC
-    cmp     r8, 16
+    cmp     r8, NUMETRON_SQR_STRAIGHT_MAX
     ja      sqr_basecase_adx_general
     mov     r11, rdx                    ; up (rdx is mulx's operand)
     lea     rax, stab
     jmp     QWORD PTR [rax + r8*8 - 16] ; entry n - 2
-ALIGN 16
-s2: SQRN 2
-ALIGN 16
-s3: SQRN 3
-ALIGN 16
-s4: SQRN 4
-ALIGN 16
-s5: SQRN 5
-ALIGN 16
-s6: SQRN 6
-ALIGN 16
-s7: SQRN 7
-ALIGN 16
-s8: SQRN 8
-ALIGN 16
-s9: SQRN 9
-ALIGN 16
-s10: SQRN 10
-ALIGN 16
-s11: SQRN 11
-ALIGN 16
-s12: SQRN 12
-ALIGN 16
-s13: SQRN 13
-ALIGN 16
-s14: SQRN 14
-ALIGN 16
-s15: SQRN 15
-ALIGN 16
-s16: SQRN 16
+    SCASE 2
+    SCASE 3
+    SCASE 4
+    SCASE 5
+    SCASE 6
+    SCASE 7
+    SCASE 8
+    SCASE 9
+    SCASE 10
+    SCASE 11
+    SCASE 12
+    SCASE 13
+    SCASE 14
+    SCASE 15
+    SCASE 16
+    SCASE 17
+    SCASE 18
+    SCASE 19
+    SCASE 20
+    SCASE 21
+    SCASE 22
+    SCASE 23
+    SCASE 24
+    SCASE 25
+    SCASE 26
+    SCASE 27
+    SCASE 28
+    SCASE 29
+    SCASE 30
+    SCASE 31
+    SCASE 32
 
 ALIGN 8
-stab    DQ s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16
+stab LABEL QWORD
+    sq_k = 2
+    REPT NUMETRON_SQR_STRAIGHT_MAX - 1
+    SENTRY %sq_k
+    sq_k = sq_k + 1
+    ENDM
 numetron_sqr_basecase_adx ENDP
 
 ALIGN 16

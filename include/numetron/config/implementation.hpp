@@ -67,6 +67,15 @@
 #   endif
 #endif
 
+// The largest n the asm squaring basecase (src/arch/x86_64/sqr_basecase_adx.*) has straight-line
+// code for, 2..32 (default 32). It is set where the assembly is built -- the CMake option of the
+// same name, or the MASM definition -- and must be the same here, as it picks the default squaring
+// thresholds (limb_arithmetic/toom/thresholds.hpp); the CMake target exports it. A smaller one
+// trades speed at 17..32 limbs for code size (n = 17..32 are ~174 KB of code).
+#ifndef NUMETRON_SQR_STRAIGHT_MAX
+#   define NUMETRON_SQR_STRAIGHT_MAX 32
+#endif
+
 // ---- Karatsuba --------------------------------------------------------------------------------
 // NUMETRON_KARATSUBA_IMPL, one of:
 #define NUMETRON_KARATSUBA_IMPL_CXX    1 // umul_karatsuba_impl (umul_karatsuba.hpp)
