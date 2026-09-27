@@ -21,7 +21,10 @@
 #  - every product writes exactly un+vn limbs, so no zero padding, and no leading-zero stripping;
 #  - |a0-a1| only subtracts up to the highest differing limb and zero-fills the rest;
 #  - vm1 is folded into the middle-column pass as two more carry chains (one per column), so the
-#    interpolation is one pass over n limbs instead of four passes.
+#    interpolation is one pass over n limbs instead of four passes;
+#  - a square (vp == up, equal halves) takes |a0-a1| once as both operands of vm1, so the whole
+#    recursion stays squares for a ctx->mul_basecase that squares when its operands coincide
+#    (detail::usqr_karatsuba_asm_impl).
 #
 # Internal routines use their own conventions (documented at each); r15 holds ctx for the whole
 # recursion and is never changed below the entry point (the basecase preserves it, being a
@@ -99,6 +102,26 @@ numetron_karatsuba_mul:
     mov     0(%rsp), %r8
     call    .Labsdiff
     mov     %rax, 24(%rsp)
+    # A square (vp == up, s == t): vm1 = (a0 - a1)^2, a square again -- both of its operands the
+    # one |a0 - a1| -- subtracted unless zero; the whole recursion then stays squares.
+    cmp     %r13, %r14
+    jne     .Lnode_bdiff
+    mov     0(%rsp), %r8
+    cmp     8(%rsp), %r8
+    jne     .Lnode_bdiff
+    imul    %rax, %rax
+    mov     %rax, 24(%rsp)              # sign: +1 subtract vm1, 0 no vm1
+    test    %rax, %rax
+    jz      .Lnode_vinf
+    mov     %rbp, %rdi
+    mov     %rbx, %rsi
+    mov     %r12, %rdx
+    mov     %rbx, %rcx
+    mov     %r12, %r8
+    mov     40(%rsp), %r9
+    call    .Lmul
+    jmp     .Lnode_vinf
+.Lnode_bdiff:
     # |b0 - b1| -> rp[n..2n)
     lea     (%rbx,%r12,8), %rdi
     mov     %r14, %rsi

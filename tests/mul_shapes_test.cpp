@@ -184,6 +184,27 @@ void mul_shapes_test()
 
     run_pass("default thresholds");
 
+    // Every product shape through the basecase's straight-line rows (un <= 16) and just above
+    // them, all-ones limbs for the longest carry chains.
+    for (size_t un = 1; un <= 20; ++un) {
+        for (size_t vn = 1; vn <= un; ++vn) {
+            for (int kind = 0; kind < 2; ++kind) {
+                std::vector<limb> u(un), v(vn);
+                for (auto& x : u) x = kind ? ~limb{ 0 } : rng();
+                for (auto& x : v) x = kind ? ~limb{ 0 } : rng();
+                std::vector<limb> expected(un + vn), r(un + vn + 1, 0xABABABABABABABABULL);
+                mpn_mul(reinterpret_cast<mp_limb_t*>(expected.data()), reinterpret_cast<const mp_limb_t*>(u.data()), static_cast<mp_size_t>(un),
+                    reinterpret_cast<const mp_limb_t*>(v.data()), static_cast<mp_size_t>(vn));
+                limb* e = la::umul_dispatch(u.data(), un, v.data(), vn, r.data(), numetron::detail::stack_allocator<limb>{});
+                std::fill(e, r.data() + un + vn, limb{ 0 });
+                ++checked;
+                if (!std::equal(expected.begin(), expected.end(), r.begin()) || r[un + vn] != 0xABABABABABABABABULL) {
+                    if (++failed <= 10) std::cout << "small products: MISMATCH " << un << " x " << vn << " kind " << kind << "\n";
+                }
+            }
+        }
+    }
+
     // Every square size through the squaring basecase and just above it: the asm kernel's
     // straight-line cases (2..16), its row loop with the straight-line tail (17 and up), and each
     // entry step of both; all-ones limbs for the longest carry chains, a small top limb.

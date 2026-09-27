@@ -158,6 +158,26 @@ Lnode PROC FRAME
     mov     r8, QWORD PTR [rsp + KN_S]
     call    Labsdiff
     mov     QWORD PTR [rsp + KN_SGN], rax
+    ; A square (vp == up, s == t): vm1 = (a0 - a1)^2, a square again -- both of its operands the
+    ; one |a0 - a1| -- subtracted unless zero; the whole recursion then stays squares.
+    cmp     r14, r13
+    jne     node_bdiff
+    mov     r8, QWORD PTR [rsp + KN_S]
+    cmp     r8, QWORD PTR [rsp + KN_T]
+    jne     node_bdiff
+    imul    rax, rax
+    mov     QWORD PTR [rsp + KN_SGN], rax ; +1 subtract vm1, 0 no vm1
+    test    rax, rax
+    jz      node_vinf
+    mov     rdi, rbp
+    mov     rsi, rbx
+    mov     rdx, r12
+    mov     rcx, rbx
+    mov     r8, r12
+    mov     r9, QWORD PTR [rsp + KN_WS2]
+    call    Lmul
+    jmp     node_vinf
+node_bdiff:
     ; |b0 - b1| -> rp[n..2n)
     lea     rdi, [rbx + r12*8]
     mov     rsi, r14

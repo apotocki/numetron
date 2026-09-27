@@ -79,6 +79,41 @@ LimbT* umul_karatsuba_asm_impl(std::span<const LimbT> u, std::span<const LimbT> 
     return rb + un + vn;
 }
 
+// The basecase the assembly calls for a square's recursion: the squaring basecase for a square
+// (the same limbs on both sides, which is what the recursion of a square passes down), the product
+// basecase otherwise. Writes exactly un + vn limbs, as the assembly needs.
+inline void karatsuba_asm_sqr_basecase(uint64_t* rp, const uint64_t* up, size_t un, const uint64_t* vp, size_t vn)
+{
+    if (up == vp && un == vn) usqr_basecase<uint64_t>(up, un, rp);
+    else umul_basecase<uint64_t>(up, un, vp, vn, rp);
+}
+
+// Karatsuba squaring in assembly: rb[0 .. 2n) = u^2, n >= sqr_karatsuba_threshold(). The same
+// recursion as umul_karatsuba_asm_impl on (u, u): its nodes recognize a square (vp == up, equal
+// halves) and square |a0 - a1| as the middle term, so every product below is a square again,
+// down to karatsuba_asm_sqr_basecase. Replaced the C++ usqr_karatsuba_impl in the asm build: its
+// per-level dispatch, scratch allocation, zero padding and separate add passes were ~18% of a
+// Toom-8.5 square node at 1024 limbs (MSVC, VTune 2026-09-27).
+template <std::unsigned_integral LimbT, typename AllocatorT>
+requires(sizeof(LimbT) == 8)
+LimbT* usqr_karatsuba_asm_impl(LimbT const* u, size_t n, LimbT* rb, AllocatorT alloc)
+{
+    const size_t threshold = sqr_karatsuba_threshold();
+    assert(n >= threshold && threshold >= 4);
+
+    const size_t scratch_sz = karatsuba_asm_scratch(n);
+    LimbT* scratch = std::allocator_traits<AllocatorT>::allocate(alloc, scratch_sz);
+    NUMETRON_SCOPE_EXIT([&] {
+        std::allocator_traits<AllocatorT>::deallocate(alloc, scratch, scratch_sz);
+    });
+
+    const numetron_karatsuba_ctx ctx{ &karatsuba_asm_sqr_basecase, threshold, reinterpret_cast<uint64_t*>(scratch) };
+    numetron_karatsuba_mul(reinterpret_cast<uint64_t*>(rb),
+        reinterpret_cast<const uint64_t*>(u), n,
+        reinterpret_cast<const uint64_t*>(u), n, &ctx);
+    return rb + 2 * n;
+}
+
 } // namespace detail
 
 // umul_karatsuba() running umul_karatsuba_asm_impl. Same contract.

@@ -433,6 +433,25 @@ private:
 // transforms, v's third once. That picks the measured best piece length or one within a few
 // percent of it (GCC, vn = 2688..16384, un/vn = 2..32; docs/fft.md); the pieces have to be
 // clearly (3%) cheaper than the whole.
+// Whether a square of n limbs (n >= sqr_fft_threshold()) takes the FFT. Its time is a staircase
+// in the transform length (2^k or 3 * 2^(k-2), up to a third more than the coefficients need),
+// the Toom chain's a smooth curve, so the FFT wins in the upper part of each length's range and
+// loses just above each step. Measured (squares of 1920..6400 limbs, 2026-09-28; the lowest
+// winning fill of the length, coefficients / L): 4096 0.81 GCC / 0.87 MSVC, 6144 0.74 / 0.78,
+// 3072 0.96 / never, 8192 from the start of its range (fill 0.76) on both. Hence: a fill of 0.78
+// or more, and any fill from length 8192 up. Measured with NUMETRON_USE_ASM only; the header-only
+// builds, whose FFT starts far lower (293..1766 limbs), keep the single threshold.
+inline bool fft_square_fills([[maybe_unused]] size_t n) noexcept
+{
+#if defined(NUMETRON_USE_ASM)
+    const size_t c = (n + 1) / 2 * 2 - 1; // the coefficients of a square
+    const size_t L = ntt::choose_length(c).L;
+    return L >= 8192 || 50 * c >= 39 * L;
+#else
+    return true;
+#endif
+}
+
 inline size_t fft_slice_length(size_t un, size_t vn) noexcept
 {
     NUMETRON_ASSERT(un >= vn && vn >= 1);

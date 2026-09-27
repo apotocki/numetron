@@ -26,7 +26,13 @@
 # per limb plus jrcxz + jmp per pass: 16 limbs per pass keep the branches at ~6% of that port
 # pressure, 8 limbs measured ~12% slower than GMP at 64x64.)
 #
-# SysV x64: rdi rp, rsi up, rdx un, rcx vp, r8 vn. Registers:
+# un <= 16 takes straight-line code instead (the UMUL macros below): each un has its row with
+# every offset fixed, in caller-saved registers only, and the rows loop over v with only the
+# pointers moving -- no entry table, counters or saved registers. At 4 x 4 that is 4.7 ns against
+# 6.4 for the looped rows (mpn_mul 6.9); 1.43-2.27x mpn_mul's speed for the shapes up to 16
+# (2026-09-27, scratch mul_asm.cpp).
+#
+# SysV x64: rdi rp, rsi up, rdx un, rcx vp, r8 vn. Registers (un > 16):
 #   rdx  v[j] (mulx's implicit operand)      rsi  up cursor         rdi  rp cursor
 #   rax  low half / sum                      r8, r9  high halves (even / odd steps)
 #   rcx  pass counter (jrcxz)                rbp  passes per row    r10  8 * k
@@ -59,11 +65,89 @@
     mov     %rax, 8*\s(%rdi)
 .endm
 
+# ---- un <= 16: straight-line rows for a fixed un (rsi up, rdi rp, rcx vp, r8 rows left) ----
+# The row set-up above (the entry, the counters, the saved registers) costs about as much as a
+# short row's products, as in sqr_basecase_adx.s: here each un has its row as straight-line code
+# (every offset fixed, caller-saved registers only), and the rows loop over v with just the
+# pointers moving. The high halves alternate r9 / r10.
+
+# one row: rp[0..un) (+)= u * rdx, rp[un] = the limb above; ADD: add into rp (OF chain)
+.macro UROW un, add
+    xor     %r10d, %r10d                # previous high half = 0, CF = OF = 0
+    .set    t, 0
+    .rept   \un
+    .set    d, 8 * t
+    .if t % 2
+    mulx    d(%rsi), %rax, %r10
+    adcx    %r9, %rax
+    .else
+    mulx    d(%rsi), %rax, %r9
+    adcx    %r10, %rax
+    .endif
+    .if \add
+    adox    d(%rdi), %rax
+    .endif
+    mov     %rax, d(%rdi)
+    .set    t, t + 1
+    .endr
+    mov     $0, %eax                    # mov keeps the flags
+    .set    d, 8 * \un
+    .if (\un - 1) % 2                   # the last step's high half
+    adcx    %rax, %r10
+    .if \add
+    adox    %rax, %r10
+    .endif
+    mov     %r10, d(%rdi)
+    .else
+    adcx    %rax, %r9
+    .if \add
+    adox    %rax, %r9
+    .endif
+    mov     %r9, d(%rdi)
+    .endif
+.endm
+
+.macro UMUL un
+.Lu\un:
+    mov     (%rcx), %rdx
+    UROW    \un, 0
+    dec     %r8
+    jz      .Lu\un\()_done
+.Lu\un\()_row:
+    lea     8(%rcx), %rcx
+    lea     8(%rdi), %rdi
+    mov     (%rcx), %rdx
+    UROW    \un, 1
+    dec     %r8
+    jnz     .Lu\un\()_row
+.Lu\un\()_done:
+    ret
+.endm
+
     .align  16, 0x90
     .globl  numetron_mul_basecase_adx
     .hidden numetron_mul_basecase_adx
     .type   numetron_mul_basecase_adx, @function
 numetron_mul_basecase_adx:
+    cmp     $16, %rdx
+    ja      .Lgeneral
+    lea     .Lutab(%rip), %rax
+    movslq  -4(%rax,%rdx,4), %r9        # entry un - 1
+    add     %rax, %r9
+    jmp     *%r9
+    .irp    un, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+    .p2align 4
+    UMUL    \un
+    .endr
+
+    .p2align 2
+.Lutab:
+    .irp    un, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+    .long   .Lu\un - .Lutab
+    .endr
+
+    .p2align 4
+.Lgeneral:
     push    %rbx
     push    %rbp
     push    %r12

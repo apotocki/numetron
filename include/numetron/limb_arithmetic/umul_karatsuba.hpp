@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <cstring>
+#include <utility>
 
 #include "numetron/detail/scope_exit.hpp"
 #include "numetron/detail/stack_allocator.hpp"
@@ -22,6 +23,10 @@ template <std::unsigned_integral LimbT, typename AllocatorT>
 LimbT* usqr_dispatch(const LimbT* u, size_t n, LimbT* rb, AllocatorT alloc);
 
 namespace detail {
+
+// umul_karatsuba_fused.hpp: the fused middle-column pass of the Karatsuba interpolation
+template <std::unsigned_integral LimbT>
+inline std::pair<unsigned, unsigned> karatsuba_interp(LimbT* rp, size_t n, size_t h) noexcept;
 
 template <std::unsigned_integral LimbT>
 int uabs_diff(LimbT const* u, size_t un, LimbT const* v, size_t vn, LimbT* r, LimbT* re)
@@ -271,24 +276,12 @@ LimbT* usqr_karatsuba_impl(LimbT const* u, size_t un, LimbT* rb, AllocatorT allo
         std::memset(e, 0, (rb + 2 * n - e) * sizeof(LimbT));
     }
 
-    // as in umul_karatsuba_impl: cy2 lands at limb 2n, cy at limb 3n
-    int cy, cy2;
-    {
-        LimbT const* src = rb + n;
-        LimbT* dst = rb + 2 * n;
-        cy = uadd_partial_unchecked(src, rb + 2 * n, rb + 3 * n, dst);         // X = H0 + Li
-    }
-    {
-        LimbT const* src = rb + 2 * n;
-        LimbT* dst = rb + n;
-        cy2 = cy + uadd_partial_unchecked(src, rb, rb + n, dst);               // X + L0
-    }
-    const size_t h = 2 * s - n;                                                // |Hi|
-    if (h) {
-        LimbT c = uadd_inplace(rb + 2 * n, rb + 3 * n, rb + 3 * n + h);       // X + Hi
-        if (c && h < n) c = uadd_limb(rb + 2 * n + h, rb + 3 * n, c);
-        cy += static_cast<int>(c);
-    }
+    // The middle columns rb[n..2n) = L0 + H0 + Li, rb[2n..3n) = H0 + Li + Hi in one pass (as
+    // umul_karatsuba_fused_impl; three add passes before, ~10% of a Toom-8.5 square node at 1024
+    // limbs on MSVC, VTune 2026-09-27). cy2 lands at limb 2n, cy at limb 3n.
+    auto [c2n, c3n] = karatsuba_interp(rb, n, 2 * s - n);                     // |Hi| = 2s - n
+    const int cy2 = static_cast<int>(c2n);
+    int cy = static_cast<int>(c3n);
     if (sign) cy -= static_cast<int>(usub_inplace(rb + n, vm1, vm1 + 2 * n));
 
     uadd_limb(rb + 2 * n, re, static_cast<LimbT>(cy2));

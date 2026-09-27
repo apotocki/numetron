@@ -52,34 +52,35 @@
 #   endif
 #elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
 // asm basecase + asm Karatsuba (the default with NUMETRON_USE_ASM), MSVC with the AVX2 shift
-// kernels; tuned 2026-09-24.
+// kernels; retuned 2026-09-27 over the basecase's straight-line rows for un <= 16 (two runs each;
+// where they differed, the larger).
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 29
-#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
-#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 444
-#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717 // --tune said 2249 / 2249, but the node curves are
-#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967 // those of GCC (docs/multiplication.md, Toom-6.5)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 24
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 137
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 206
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 761  // --tune said 2117 / 3043 (above the FFT), but the
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 1159 // node curves are GCC's (docs/multiplication.md, Toom-6.5)
 #   else // GCC (and Clang, untuned)
-#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 29
-#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
-#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 444
-#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 675
-#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 18
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 129
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 394      // 394 / 371
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 761
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 1159
 #   endif
 #else
-// The C++ Karatsuba implementations over the asm basecase (tuned before the asm Karatsuba).
+// The C++ Karatsuba implementations over the asm basecase; retuned 2026-09-27 as above.
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
-#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
-#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 330
-#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
-#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 26
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 66
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 311
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 808  // --tune said 1566 / 1566; GCC's, as above
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 1159
 #   else // GCC (and Clang, untuned)
-#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 38
-#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 57
-#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 500
-#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 717
-#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 24
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 70
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 293
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 808
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 1159
 #   endif
 #endif
 
@@ -98,9 +99,12 @@
 #           define NUMETRON_DEFAULT_TOOM32_THRESHOLD 26       // reference basecase, GCC 30 / 26
 #       endif
 #   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
-#       define NUMETRON_DEFAULT_TOOM32_THRESHOLD 44           // GCC 44 / 44, MSVC 44 / 42
+#       define NUMETRON_DEFAULT_TOOM32_THRESHOLD 44           // GCC 44 / 44, MSVC 44 / 44 (2026-09-27)
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
+#   elif defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_TOOM32_THRESHOLD 38           // 30 / 38
 #   else
-#       define NUMETRON_DEFAULT_TOOM32_THRESHOLD 32           // C++ Karatsuba over the asm basecase (tuned with _CXX): GCC 32, MSVC 32
+#       define NUMETRON_DEFAULT_TOOM32_THRESHOLD 44
 #   endif
 #endif
 
@@ -121,13 +125,16 @@
 #       else
 #           define NUMETRON_DEFAULT_TOOM42_THRESHOLD 66       // reference basecase, GCC
 #       endif
+// asm Karatsuba, 2026-09-27
+#   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM && defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 145          // 92 / 145
 #   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
-#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 70           // GCC 70, MSVC 70
-// C++ Karatsuba over the asm basecase (tuned with _CXX)
+#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 70           // 70 / 70
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
 #   elif defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 38           // (60: +0.7%)
+#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 78           // 78 / 74
 #   else
-#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 78           // a plateau: 36..78 within 0.3%
+#       define NUMETRON_DEFAULT_TOOM42_THRESHOLD 97           // 97 / 87
 #   endif
 #endif
 
@@ -201,39 +208,45 @@
 #           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
 #       endif
 // With NUMETRON_USE_ASM over numetron_sqr_basecase_adx (the squaring basecase ~0.6-0.9 of
-// mpn_sqr's time), retuned 2026-09-27: Karatsuba squaring from ~30 instead of ~60, Toom-3 later.
+// mpn_sqr's time), the product basecase's straight-line rows and (asm Karatsuba) the asm
+// Karatsuba recursion for squares, retuned 2026-09-28 (--tune-squares, two runs each; where they
+// differed, the larger): Karatsuba squaring from ~25 instead of ~60 with the rows kernel. The FFT
+// thresholds are the lower bound of detail::fft_square_fills (umul_fft.hpp), from a sweep of the
+// Toom chain against the FFT over 1920..6400 limbs: the first size where the FFT wins, GCC 2944
+// (at length 3072), MSVC ~3520 (at 4096); a single threshold, as --tune-squares picks, loses up
+// to 10% on either side of a length step (MSVC's 4939 lost 4096 by 1.43 -> 1.26 against GMP).
 #   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 32
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 371
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 24
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 154
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 418
 #           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2117
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2117
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3043
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500  // with detail::fft_square_fills; see below
 #       else
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 173
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 26
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 154
 #           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1766
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2864
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091   // 761 / 1091
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2900
 #       endif
 #   else
 // the C++ Karatsuba implementations over the asm basecase
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 32
-#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 145
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 394
-#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2117
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2117
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3435
-#       else
-#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 30
 #           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183
-#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 471
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 418    // 394 / 418
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2538   // 2249 / 2538
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2538
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 3500
+#       else
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 28 // 27 / 28
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 183    // 183 / 173
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 636    // 444 / 636
 #           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1091
-#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2389
-#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2864
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2389   // 1766 / 2389
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2900
 #       endif
 #   endif
 #endif
@@ -295,17 +308,17 @@
 #       else
 #           define NUMETRON_DEFAULT_TOOM76_THRESHOLD 154      // reference basecase, GCC 154 / 154 / 145 / 145
 #       endif
-#   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM   // 2026-09-27
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_TOOM76_THRESHOLD 636
+#           define NUMETRON_DEFAULT_TOOM76_THRESHOLD 808
 #       else
-#           define NUMETRON_DEFAULT_TOOM76_THRESHOLD 371
+#           define NUMETRON_DEFAULT_TOOM76_THRESHOLD 444
 #       endif
-// C++ Karatsuba over the asm basecase (tuned with _CXX)
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
 #   elif defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_TOOM76_THRESHOLD 531          // 500 / 531 (0.99 at 500)
+#       define NUMETRON_DEFAULT_TOOM76_THRESHOLD 675
 #   else
-#       define NUMETRON_DEFAULT_TOOM76_THRESHOLD 371
+#       define NUMETRON_DEFAULT_TOOM76_THRESHOLD 311
 #   endif
 #endif
 
@@ -325,17 +338,17 @@
 #       else
 #           define NUMETRON_DEFAULT_TOOM63_THRESHOLD 137      // reference basecase, GCC 129 / 137
 #       endif
-#   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM   // 2026-09-27
 #       if defined(_MSC_VER) && !defined(__clang__)
-#           define NUMETRON_DEFAULT_TOOM63_THRESHOLD 394
+#           define NUMETRON_DEFAULT_TOOM63_THRESHOLD 418
 #       else
-#           define NUMETRON_DEFAULT_TOOM63_THRESHOLD 218
+#           define NUMETRON_DEFAULT_TOOM63_THRESHOLD 311
 #       endif
-// C++ Karatsuba over the asm basecase (tuned with _CXX)
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
 #   elif defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_TOOM63_THRESHOLD 371
+#       define NUMETRON_DEFAULT_TOOM63_THRESHOLD 394
 #   else
-#       define NUMETRON_DEFAULT_TOOM63_THRESHOLD 350
+#       define NUMETRON_DEFAULT_TOOM63_THRESHOLD 394
 #   endif
 #endif
 
@@ -364,25 +377,25 @@
 #       define NUMETRON_TOOM116_TUNED_ 231
 #   endif
 #elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
-// asm Karatsuba: toom107 0.93-0.96 from the threshold, toom116 0.95-0.98 up to ~900, 0.90-0.93 above
+// asm Karatsuba, retuned 2026-09-27 (two runs each, the same value unless noted)
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_TOOM98_TUNED_  717
-#       define NUMETRON_TOOM107_TUNED_ 599
-#       define NUMETRON_TOOM116_TUNED_ 531      // 500 / 531
+#       define NUMETRON_TOOM98_TUNED_  1159
+#       define NUMETRON_TOOM107_TUNED_ 636
+#       define NUMETRON_TOOM116_TUNED_ 599
 #   else
-#       define NUMETRON_TOOM98_TUNED_  675
-#       define NUMETRON_TOOM107_TUNED_ 564      // 500 / 564
-#       define NUMETRON_TOOM116_TUNED_ 500
+#       define NUMETRON_TOOM98_TUNED_  761
+#       define NUMETRON_TOOM107_TUNED_ 675      // 675 / 636
+#       define NUMETRON_TOOM116_TUNED_ 599
 #   endif
-// C++ Karatsuba over the asm basecase (tuned with _CXX)
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
 #elif defined(_MSC_VER) && !defined(__clang__)
-#   define NUMETRON_TOOM98_TUNED_  717
-#   define NUMETRON_TOOM107_TUNED_ 599
-#   define NUMETRON_TOOM116_TUNED_ 531
+#   define NUMETRON_TOOM98_TUNED_  1307
+#   define NUMETRON_TOOM107_TUNED_ 761
+#   define NUMETRON_TOOM116_TUNED_ 599
 #else
-#   define NUMETRON_TOOM98_TUNED_  717
-#   define NUMETRON_TOOM107_TUNED_ 500          // 0.98 already at 500, where the search starts
-#   define NUMETRON_TOOM116_TUNED_ 675          // 675 / 500 (~1.0 at 564-636)
+#   define NUMETRON_TOOM98_TUNED_  808
+#   define NUMETRON_TOOM107_TUNED_ 564
+#   define NUMETRON_TOOM116_TUNED_ 599
 #endif
 #ifndef NUMETRON_DEFAULT_TOOM98_THRESHOLD
 #   define NUMETRON_DEFAULT_TOOM98_THRESHOLD NUMETRON_TOOM98_TUNED_
@@ -413,21 +426,21 @@
 #       define NUMETRON_TOOM54_TUNED_ 97       // 97 / 87
 #       define NUMETRON_TOOM53_TUNED_ 74
 #   endif
-#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM   // 2026-09-27
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_TOOM54_TUNED_ 218
+#       define NUMETRON_TOOM54_TUNED_ 194
 #       define NUMETRON_TOOM53_TUNED_ 129
 #   else
-#       define NUMETRON_TOOM54_TUNED_ 218
-#       define NUMETRON_TOOM53_TUNED_ 173      // 163 / 173
+#       define NUMETRON_TOOM54_TUNED_ 194      // 194 / 154
+#       define NUMETRON_TOOM53_TUNED_ 218      // 115 / 218
 #   endif
-// C++ Karatsuba over the asm basecase (tuned with _CXX)
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
 #elif defined(_MSC_VER) && !defined(__clang__)
-#   define NUMETRON_TOOM54_TUNED_ 173          // 163 / 218 (both runs below 1 from 173)
-#   define NUMETRON_TOOM53_TUNED_ 122          // 115 / 122
+#   define NUMETRON_TOOM54_TUNED_ 231
+#   define NUMETRON_TOOM53_TUNED_ 115
 #else
-#   define NUMETRON_TOOM54_TUNED_ 173
-#   define NUMETRON_TOOM53_TUNED_ 129
+#   define NUMETRON_TOOM54_TUNED_ 218
+#   define NUMETRON_TOOM53_TUNED_ 154
 #endif
 #ifndef NUMETRON_DEFAULT_TOOM54_THRESHOLD
 #   define NUMETRON_DEFAULT_TOOM54_THRESHOLD NUMETRON_TOOM54_TUNED_
@@ -449,17 +462,17 @@
 #   else                                        // reference basecase, GCC
 #       define NUMETRON_TOOM43_TUNED_ 78       // 70 / 78
 #   endif
-#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM   // 2026-09-27
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_TOOM43_TUNED_ 122      // 115 / 122
+#       define NUMETRON_TOOM43_TUNED_ 137
 #   else
-#       define NUMETRON_TOOM43_TUNED_ 115
+#       define NUMETRON_TOOM43_TUNED_ 137
 #   endif
-// C++ Karatsuba over the asm basecase (tuned with _CXX)
+// C++ Karatsuba over the asm basecase (tuned with _CXX), 2026-09-27
 #elif defined(_MSC_VER) && !defined(__clang__)
 #   define NUMETRON_TOOM43_TUNED_ 129
 #else
-#   define NUMETRON_TOOM43_TUNED_ 122
+#   define NUMETRON_TOOM43_TUNED_ 145
 #endif
 #ifndef NUMETRON_DEFAULT_TOOM43_THRESHOLD
 #   define NUMETRON_DEFAULT_TOOM43_THRESHOLD NUMETRON_TOOM43_TUNED_
@@ -553,11 +566,12 @@
 #       endif
 #   endif
 #elif NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
-// with the asm (two runs each, the same result both times)
+// with the asm (two runs each, the same result both times; 2026-09-27, over the basecase's
+// straight-line rows: the asm Karatsuba's; 2696 with the C++ one)
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2696
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2864
 #   else
-#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2538
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2864
 #   endif
 #else // the scalar kernel
 #   if defined(_MSC_VER) && !defined(__clang__)

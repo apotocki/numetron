@@ -1073,6 +1073,35 @@ public:
                 constexpr LimbT no_mask = (std::numeric_limits<LimbT>::max)();
                 using lholder_t = std::remove_cvref_t<decltype(l.aholder_)>;
                 using rholder_t = std::remove_cvref_t<decltype(r.aholder_)>;
+                // A square of a value on the heap (the same object on both sides): one header to
+                // read, no operand order, sizes or sign to settle -- ~1 ns of a 4-limb square.
+                if (static_cast<void const*>(&l) == static_cast<void const*>(&r) && !lholder_t::is_inplaced(l.aholder_.ctl_limb())) {
+                    auto [ldata, u] = l.aholder_.allocated_data_and_limbs();
+                    const size_t n = ldata->size;
+                    auto [data, limbs] = aholder_.allocated_data_and_limbs();
+                    if (n < limb_arithmetic::basecase_limit() && data->allocated_size >= 2 * n) {
+                        LimbT* re;
+                        if (n == 1) {
+                            auto [h, lo] = arithmetic::umul1(u[0], u[0]);
+                            limbs[0] = lo;
+                            limbs[1] = h;
+                            re = limbs + 2;
+                        } else if (n == 2) { // inline, as the product: cheaper than the kernel's call
+                            re = limb_arithmetic::umul_basecase_2x<LimbT>(u[0], u[1], u[0], u[1], limbs);
+                        } else {
+                            re = limb_arithmetic::usqr_basecase(u, n, limbs);
+                        }
+                        while (re != limbs && !*(re - 1)) --re;
+                        size_t sz = static_cast<size_t>(re - limbs);
+                        if (!sz) { // the zero representation init() makes
+                            *limbs = 0;
+                            sz = 1;
+                        }
+                        data->size = static_cast<uint32_t>(sz);
+                        if (data->sign) data->sign = 0u; // see below
+                        return *this;
+                    }
+                }
                 LimbT const* u;
                 LimbT const* v;
                 size_t un, vn;
@@ -1112,8 +1141,18 @@ public:
                         } else if (un == 2) {
                             re = limb_arithmetic::umul_basecase_2x<LimbT>(u[0], u[1], v[0] & vmask, vn == 2 ? v[1] : LimbT{ 0 }, limbs);
                         } else if (vmask != no_mask) { // vn == 1
-                            LimbT v0 = v[0] & vmask;
-                            re = limb_arithmetic::umul_basecase(u, un, &v0, 1, limbs);
+                            // a row of its own rather than the basecase on &v0: a local whose
+                            // address goes to a call gave this function GCC's stack protector
+                            // (-fstack-protector-strong), which every small product paid for
+                            const LimbT v0 = v[0] & vmask;
+                            LimbT c = 0;
+                            for (size_t i = 0; i < un; ++i) {
+                                auto [h, lo] = arithmetic::umul1(u[i], v0);
+                                limbs[i] = arithmetic::uadd1ca(lo, c, h);
+                                c = h;
+                            }
+                            limbs[un] = c;
+                            re = limbs + un + 1;
                         } else if (u == v && un == vn) { // a square (l and r the same value)
                             re = limb_arithmetic::usqr_basecase(u, un, limbs);
                         } else {
@@ -1127,7 +1166,9 @@ public:
                             negative = false;
                         }
                         data->size = static_cast<uint32_t>(sz);
-                        data->sign = negative ? 1u : 0u;
+                        // Only when it changes: the sign shares a word with allocated_size, which
+                        // the next call reads first, and a byte stored into it stalls that load.
+                        if (data->sign != static_cast<uint32_t>(negative)) data->sign = negative ? 1u : 0u;
                         return *this;
                     }
                 }

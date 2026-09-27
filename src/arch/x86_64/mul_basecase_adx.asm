@@ -4,13 +4,17 @@
 
 ; mul_basecase_adx.asm -- schoolbook multiplication with mulx + adcx/adox (BMI2 + ADX), Microsoft
 ; x64 version of mul_basecase_adx.s (see there for the algorithm: rows with two carry chains, an
-; 16-limb unrolled body entered at step -un & 15 from a jump table).
+; 16-limb unrolled body entered at step -un & 15 from a jump table; straight-line rows for
+; un <= 16).
 ;
 ;   void numetron_mul_basecase_adx(uint64_t* rp, const uint64_t* up, size_t un,
 ;                                  const uint64_t* vp, size_t vn);
 ;
-; Microsoft x64: rcx rp, rdx up, r8 un, r9 vp, [rsp+40] vn. After saving the non-volatile
-; registers (with unwind info) the body uses the same registers as the GAS version:
+; Microsoft x64: rcx rp, rdx up, r8 un, r9 vp, [rsp+40] vn. un <= 16: a leaf procedure in
+; volatile registers only (r11 up, rcx rp, r9 vp; the rows left counted down in the vn slot,
+; which belongs to the callee), no unwind info needed. Above: mul_basecase_adx_general, which
+; saves the non-volatile registers (with unwind info) and then uses the same registers as the
+; GAS version:
 ;   rdx  v[j] (mulx's implicit operand)      rsi  up cursor         rdi  rp cursor
 ;   rax  low half / sum                      r8, r9  high halves (even / odd steps)
 ;   rcx  pass counter (jrcxz)                rbp  passes per row    r10  8 * k
@@ -45,10 +49,109 @@ ENDIF
     mov     QWORD PTR [rdi + 8*s], rax
 ENDM
 
+; ---- un <= 16: straight-line rows for a fixed un (r11 up, rcx rp, r9 vp, [rsp+40] rows left) ----
+; A leaf in volatile registers only (see mul_basecase_adx.s); the high halves alternate r8 / r10.
+
+; one row: rp[0..un) (+)= u * rdx, rp[un] = the limb above; add: add into rp (OF chain)
+UROW MACRO un, add
+    xor     r10d, r10d                  ; previous high half = 0, CF = OF = 0
+    mb_t = 0
+    REPT un
+    mb_d = 8 * mb_t
+IF (mb_t AND 1)
+    mulx    r10, rax, QWORD PTR [r11 + mb_d]
+    adcx    rax, r8
+ELSE
+    mulx    r8, rax, QWORD PTR [r11 + mb_d]
+    adcx    rax, r10
+ENDIF
+IF add
+    adox    rax, QWORD PTR [rcx + mb_d]
+ENDIF
+    mov     QWORD PTR [rcx + mb_d], rax
+    mb_t = mb_t + 1
+    ENDM
+    mov     eax, 0                      ; mov keeps the flags
+IF ((un - 1) AND 1)                     ; the last step's high half
+    adcx    r10, rax
+IF add
+    adox    r10, rax
+ENDIF
+    mov     QWORD PTR [rcx + 8*un], r10
+ELSE
+    adcx    r8, rax
+IF add
+    adox    r8, rax
+ENDIF
+    mov     QWORD PTR [rcx + 8*un], r8
+ENDIF
+ENDM
+
+UMUL MACRO un
+    LOCAL urow, udone
+    mov     rdx, QWORD PTR [r9]
+    UROW    un, 0
+    dec     QWORD PTR [rsp + 40]
+    jz      udone
+urow:
+    lea     r9, [r9 + 8]
+    lea     rcx, [rcx + 8]
+    mov     rdx, QWORD PTR [r9]
+    UROW    un, 1
+    dec     QWORD PTR [rsp + 40]
+    jnz     urow
+udone:
+    ret
+ENDM
+
 .code
 
 ALIGN 16
-numetron_mul_basecase_adx PROC FRAME
+numetron_mul_basecase_adx PROC
+    cmp     r8, 16
+    ja      mul_basecase_adx_general
+    mov     r11, rdx                    ; up (rdx is mulx's operand)
+    lea     rax, utab
+    jmp     QWORD PTR [rax + r8*8 - 8]  ; entry un - 1
+ALIGN 16
+u1: UMUL 1
+ALIGN 16
+u2: UMUL 2
+ALIGN 16
+u3: UMUL 3
+ALIGN 16
+u4: UMUL 4
+ALIGN 16
+u5: UMUL 5
+ALIGN 16
+u6: UMUL 6
+ALIGN 16
+u7: UMUL 7
+ALIGN 16
+u8: UMUL 8
+ALIGN 16
+u9: UMUL 9
+ALIGN 16
+u10: UMUL 10
+ALIGN 16
+u11: UMUL 11
+ALIGN 16
+u12: UMUL 12
+ALIGN 16
+u13: UMUL 13
+ALIGN 16
+u14: UMUL 14
+ALIGN 16
+u15: UMUL 15
+ALIGN 16
+u16: UMUL 16
+
+ALIGN 8
+utab    DQ u1, u2, u3, u4, u5, u6, u7, u8, u9, u10, u11, u12, u13, u14, u15, u16
+numetron_mul_basecase_adx ENDP
+
+ALIGN 16
+mul_basecase_adx_general PROC FRAME
     push    rbx
     .pushreg rbx
     push    rbp
@@ -176,6 +279,6 @@ all_done:
 ALIGN 8
 mtab    DQ m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15
 atab    DQ a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15
-numetron_mul_basecase_adx ENDP
+mul_basecase_adx_general ENDP
 
 END

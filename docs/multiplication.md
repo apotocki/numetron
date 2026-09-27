@@ -14,47 +14,54 @@ CMake). They are good for comparing variants, not as absolute numbers.
 
 `numetron_bench_mul` with the default configuration (`NUMETRON_USE_ASM`: asm basecase and asm
 Karatsuba; AVX2 FFT; the default thresholds below), n x n limbs, `gmp/reuse` = GMP time /
-numetron time with a reused result; > 1 means numetron is faster (2026-09-24; the 1–8 limb
-columns 2026-09-25, after the small-size fast paths of § 9 item 2):
+numetron time with a reused result; > 1 means numetron is faster (2026-09-27, with the
+basecase's straight-line rows for un <= 16 and the thresholds retuned over them, § 9 item 2):
 
 | limbs | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 3072 | 4096 | 8192 | 12288 | 16384 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| GCC  | 1.05 | 1.00 | 0.97 | 1.07 | 1.16 | 1.15 | 1.18 | 1.26 | 1.20 | 1.17 | 1.16 | 1.15 | 1.39 | 1.59 | 1.98 | 1.57 | 1.61 |
-| MSVC | 1.08 | 1.04 | 0.98 | 1.14 | 1.12 | 1.16 | 1.18 | 1.26 | 1.19 | 1.16 | 1.15 | 1.16 | 1.33 | 1.51 | 1.79 | 1.58 | 1.54 |
+| GCC  | 1.02 | 0.96 | 1.13 | 1.20 | 1.36 | 1.32 | 1.35 | 1.44 | 1.30 | 1.25 | 1.25 | 1.19 | 1.41 | 1.65 | 1.96 | 1.61 | 1.65 |
+| MSVC | 0.97 | 0.97 | 1.15 | 1.23 | 1.36 | 1.23 | 1.35 | 1.45 | 1.27 | 1.23 | 1.16 | 1.12 | 1.32 | 1.50 | 1.83 | 1.69 | 1.45 |
+
+The 1–2 limb columns are ~4 ns products timed at 1 ns resolution; the layer-by-layer
+measurement (scratch `small_layers.cpp`, MSVC) has `assign_mul` at 1.14 and 1.00 of `mpz_mul`
+there. Before the straight-line rows (2026-09-25): 4 limbs 0.97 / 0.98, 16–2048 limbs
+1.12–1.26.
 
 At the start of this work numetron was at 0.65 at 4096 limbs; before the FFT, 0.75–0.86 at
 12288–16384.
 
-- **16 limbs and up: faster than GMP** with both compilers — 1.15–1.26 in the Karatsuba / Toom
-  range, 1.33–1.98 from the FFT threshold (~2.5–2.7k limbs) up; `docs/fft.md` has the FFT up to
+- **4 limbs and up: faster than GMP** with both compilers — 1.13–1.23 at 4–8 limbs, 1.12–1.45
+  in the Karatsuba / Toom range, 1.32–1.96 from the FFT threshold (~2.9k limbs) up; `docs/fft.md` has the FFT up to
   524288 limbs (0.45–0.86 of GMP's time there).
 - **Unbalanced (un > vn)**, `numetron_bench_mul --unbalanced` (vn 16–2048 × un/vn 1.25–32) and
-  `--large` (vn 4096–16384), 2026-09-25: ahead of GMP in every cell on both compilers.
-  - vn ≥ 128: at least 1.06.
-  - The FFT range: 1.2–2.2.
-  - The smallest rows (vn = 32, 64): 1.02–1.23, overhead-bound as the balanced small sizes.
+  `--large` (vn 4096–16384): ahead of GMP in every cell on both compilers. With the defaults of
+  2026-09-27 (`--unbalanced`, no tuning):
+  - GCC: at least 1.13 in every row, up to 1.67;
+  - MSVC: at least 1.12 from vn = 128 up; the smallest rows 1.04–1.21 (vn = 32, 64);
+  - the FFT range (`--large`, 2026-09-25): 1.2–2.2.
 
   The plans and the measurements are in § 2 (items 0–0c) and § 9 item 3, steps 1–10.
 - **Squaring** (§ 9 item 10) has its own chain: squaring basecase (numetron's own asm kernel
   with `NUMETRON_USE_ASM`), Karatsuba, Toom plans and FFT, each from its own threshold. With
   the default thresholds of the asm build it is ahead of GMP at every size from 4 limbs on:
-  - 8–64 limbs: 1.24–1.45;
-  - the Karatsuba / Toom range: 1.08–1.29;
-  - the FFT range: 1.23–1.62;
-  - 1–4 limbs: 0.99–1.13.
-- **1 .. 8 limbs: on a par** (0.97–1.14; single-limb values in place, the bench's "1*" row:
-  1.5–2.4). The work there is a handful of `mul` instructions, so it comes down to the overhead
-  around them; § 9 item 2 has it layer by layer and what was cut.
+  - 8–64 limbs: 1.28–1.59;
+  - the Karatsuba / Toom range: 1.15–1.45 (1024–2048 limbs, the smallest margin: 1.15–1.21);
+  - the FFT range: 1.21–1.58;
+  - 1–4 limbs: 1.06–1.30 (`assign_mul(u, u)` has a path of its own for the square of one
+    object, § 9 item 2).
+- **1 .. 2 limbs: on a par** (single-limb values in place, the bench's "1*" row: 1.5–2.4).
+  The work there is a handful of `mul` instructions, so it comes down to the overhead around
+  them; § 9 item 2 has it layer by layer and what was cut.
 
 Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implementation — § 6):
 
 | | karatsuba | toom3 | toom4 | toom6h | toom8h | fft |
 |---|---|---|---|---|---|---|
-| asm Karatsuba (default with `NUMETRON_USE_ASM`), MSVC | 29 | 115 | 444 | 717* | 967* | |
-| asm Karatsuba, GCC (and Clang, untuned) | 29 | 115 | 444 | 675 | 967 | |
-| C++ Karatsuba, MSVC | 38 | 115 | 330 | 717 | 967 | |
-| C++ Karatsuba, GCC (and Clang, untuned) | 38 | 57 | 500 | 717 | 967 | |
-| FFT, AVX2 kernel (default with AVX2), MSVC / GCC | | | | | | 2696 / 2538 |
+| asm Karatsuba (default with `NUMETRON_USE_ASM`), MSVC | 24 | 137 | 206 | 761* | 1159* | |
+| asm Karatsuba, GCC (and Clang, untuned) | 18 | 129 | 394 | 761 | 1159 | |
+| C++ Karatsuba, MSVC | 26 | 66 | 311 | 808* | 1159* | |
+| C++ Karatsuba, GCC (and Clang, untuned) | 24 | 70 | 293 | 808 | 1159 | |
+| FFT, AVX2 kernel (default with AVX2), MSVC / GCC | | | | | | 2864 / 2864 |
 | FFT, scalar kernel, MSVC / GCC | | | | | | 11530 / 13828 |
 | header-only (no `NUMETRON_USE_ASM`), GCC/Clang with ADX: `c++ adx` basecase | 36 | 212 | 330 | 471 | 761 | AVX2 1388 / scalar 10852 |
 | header-only, MSVC x64: `c++ blocked` basecase | 24 | 57 | 194 | 564 | 636 | AVX2 1231 / scalar 5247 |
@@ -62,16 +69,18 @@ Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implem
 | header-only, reference basecase, GCC (and Clang, untuned) | 20 | 137 | 218 | 311 | 500 | AVX2 599 / scalar 2696 |
 
 Squares (`sqr_*`, § 9 item 10; `--tune-squares`, two runs each; the builds with
-`NUMETRON_USE_ASM` 2026-09-27 over the asm squaring kernel, the header-only ones 2026-09-25; the
-FFT with the AVX2 kernel, with the scalar one the product's). A Toom-6.5 / 8.5 threshold at or
-above the FFT's is never reached:
+`NUMETRON_USE_ASM` 2026-09-28 over the asm squaring kernel and the asm Karatsuba recursion, the
+header-only ones 2026-09-25; the FFT with the AVX2 kernel, with the scalar one the product's).
+With `NUMETRON_USE_ASM` the FFT column is a lower bound: above it the FFT also needs a
+well-filled transform length (§ 9 item 10). A Toom-6.5 / 8.5 threshold at or above the FFT's is
+never reached:
 
 | | karatsuba | toom3 | toom4 | toom6h | toom8h | fft |
 |---|---|---|---|---|---|---|
-| asm Karatsuba, MSVC | 32 | 183 | 371 | 2117 | 2117 | 3043 |
-| asm Karatsuba, GCC | 28 | 173 | 636 | 1091 | 1766 | 2864 |
-| C++ Karatsuba, MSVC | 32 | 145 | 394 | 2117 | 2117 | 3435 |
-| C++ Karatsuba, GCC | 28 | 183 | 471 | 1091 | 2389 | 2864 |
+| asm Karatsuba, MSVC | 24 | 154 | 418 | 2117 | 2538 | 3500 |
+| asm Karatsuba, GCC | 26 | 154 | 636 | 1091 | 2538 | 2900 |
+| C++ Karatsuba, MSVC | 30 | 183 | 418 | 2538 | 2538 | 3500 |
+| C++ Karatsuba, GCC | 28 | 183 | 636 | 1091 | 2389 | 2900 |
 | header-only, `c++ adx` (GCC / Clang) | 63 | 109 | 500 | 564 | 1566 | 1766 |
 | header-only, `c++ blocked` (MSVC) | 23 | 74 | 122 | 675 | 808 | 675 |
 | header-only, reference, MSVC | 14 | 70 | 115 | 531 | 808 | 293 |
@@ -81,9 +90,12 @@ The squaring basecase (its own kernel instead of a general product) starts at 2 
 `NUMETRON_USE_ASM`, at 10 header-only with ADX. MSVC header-only has no squaring kernel, which
 is why its squaring Karatsuba starts as early as the product's.
 
-\* `--tune` gave 2249 / 2249 on MSVC once (and 1231 / 1766, 761 / 1766 in other runs), but the
-measured node curves are the same as GCC's (§ 4, Toom-6.5), so the thresholds are set by the
-curves, not by single runs. The FFT thresholds were the same in two runs each.
+\* MSVC's `--tune` puts Toom-6.5 / 8.5 far up or off: 2249 / 2249 once before (and 1231 / 1766,
+761 / 1766 in other runs); 2117 / 3043 (asm) and 1566 / 1566 (C++ Karatsuba) in both runs of
+2026-09-27. The measured node curves are the same as GCC's (§ 4, Toom-6.5), so these take
+GCC's values. The 2026-09-27 check: 768–2048 limbs at 1.11 / 1.16 / 1.12 / 1.12 with GCC's
+values, 1.14 / 1.16 / 1.12 / 1.11 with the tuned ones — the same. The FFT thresholds were the
+same in two runs each.
 
 ---
 
@@ -732,6 +744,27 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
        2 × 2 / 3 × 1 and up to 2.3x slower than the asm from 3 × 2 on (15.6 vs 6.9 ns at 4 × 4).
      - Result: `assign_mul` at 3 limbs 7.8 → 6.7 ns on GCC (`mpz_mul` 7.6). `mul_shapes` now
        also takes vn = 1, 3, 4.
+     - Since 2026-09-27 only in the header-only build: the asm basecase's straight-line rows
+       (next point) are faster than these.
+   - **Straight-line rows in the asm basecase** (`mul_basecase_adx.{s,asm}`, 2026-09-27).
+     For un ≤ 16 each un has its row as straight-line code, generated by assembler macros with
+     every offset fixed, in volatile registers only. The rows loop over v with only the
+     pointers moving. The looped rows paid an entry table, counters and saved registers per
+     row, about as much as a short row's products. The same idea made the squaring kernel
+     (item 10).
+     - Kernel alone (scratch `mul_asm.cpp`, ns, GCC / MSVC; `mpn_mul` in brackets):
+
+       | shape | 2×2 | 3×3 | 4×4 | 8×8 | 16×16 | 32×32 (loop) |
+       |---|---|---|---|---|---|---|
+       | GCC | 1.84 (3.70) | 3.12 (5.41) | 4.72 (6.85) | 15.0 (22.3) | 57.1 (82.9) | 247 (272) |
+       | MSVC | 2.39 (4.45) | 3.72 (6.12) | 5.61 (7.50) | 16.2 (23.9) | 58.7 (85.4) | 248 (277) |
+
+       The shapes up to 16 are 1.34–2.39x `mpn_mul`'s speed; before, 4 × 4 was 6.4 ns (GCC).
+     - It speeds up everything above it, since Karatsuba and Toom recurse down to it. The
+       thresholds moved (Karatsuba 29 → 18 / 24) and were retuned for the four builds with
+       `NUMETRON_USE_ASM`, two full runs each. § 1 has the result: 4 limbs 0.97 → 1.13 (GCC),
+       16–2048 limbs from 1.12–1.26 to 1.12–1.45.
+     - `mul_shapes` takes every shape up to 20 × 20 (random and all-ones limbs).
    - **Call levels around the kernel** (VTune, MSVC, `assign_mul` at 4 and 10 limbs,
      2026-09-27). Besides the asm, the time went to three functions MSVC kept out of line:
      `usqr_basecase` (~7%, a call only passing on to the product basecase), `umul_basecase`
@@ -751,12 +784,32 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
      - Tried and dropped: writing the result header in one store (the sign bit shares a word
        with `allocated_size`, which the next call reads first). GCC still wrote the sign byte
        on its own; no gain.
+   - **GCC, the 4-limb square** (scratch `sqr_small.cpp`: kernel alone / `assign_mul(u, u)` /
+     `mpz_mul`, 2026-09-27). From the disassembly of `assign_mul`:
+     - `sqr_kernel_available()` was a real call on every square. Now its test is inlined and
+       the first call's CPU check is out of line (`init_sqr_kernel_state`), as for
+       `detected_mul_basecase()`.
+     - A stack-protector canary (Ubuntu's GCC defaults to `-fstack-protector-strong`) guarded
+       every call. The cause was `&v0`, a local passed to the basecase in the vn = 1 masked
+       case. That case is now a row of its own (`umul1` in a loop).
+     - The sign was written on every call: a byte store into the word holding
+       `allocated_size`, which the next call reads first, so the load stalled on it. Now it is
+       written only when it changes. This also sped up the reused products: at 4 limbs
+       10.2 → 9.6 ns, at 8 limbs 22.5 → 21.1.
+     - `assign_mul(u, u)` with one object on both sides has its own path in front of the
+       others: one header to read, no operand order or sign to settle. 1 and 2 limbs use
+       inline `umul1` / `umul_basecase_2x`; the asm kernel's call cost more there.
+
+     Result, the square at 4 limbs: 7.19 → 6.49 ns (`mpz_mul` 7.35); `--sqr`: 0.99 → 1.05.
+     2 limbs: 0.91 → 1.21–1.33.
    - **Left:**
-     - `assign_mul`'s own overhead is still ~3 ns against `mpz_mul`'s ~2 at small sizes, on
-       both compilers.
-     - GCC, 9–16 limbs: the product through `assign_mul` costs 4–7 ns more than the kernel
-       alone, MSVC's 3–4. It is not operand or result alignment, not the size of the result
-       buffer, and not inlining; the cause was not found.
+     - `assign_mul`'s own overhead is still ~2.6–3 ns against `mpz_mul`'s ~2.2 at small sizes,
+       on both compilers. The kernels make up for it from 3 limbs; at 2 limbs the product is
+       on a par with `mpz_mul`.
+     - GCC, 9–16 limbs: the product through `assign_mul` cost 4–7 ns more than the kernel
+       alone (with the looped rows), MSVC's 3–4. It was not operand or result alignment, not
+       the size of the result buffer, and not inlining; the cause was not found, and it was
+       not measured again after the straight-line rows.
      - `operator*` on MSVC pays ~22 ns for the heap allocation of every result (GCC ~6 ns).
        That is `basic_integer`'s memory, not the multiplication.
 3. **Unbalanced products**: done in steps 1–9 below (slicing, Toom-3/2, Toom-4/2, Toom-6/3,
@@ -1300,36 +1353,75 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
         (`usqr_basecase_fixed<N>`).
       - MSVC header-only: no squaring kernel. Its `_addcarry_u64` chains were slow for the
         product kernels too, so a small square there is a general product.
-    - **Karatsuba** (`detail::usqr_karatsuba_impl`, `umul_karatsuba.hpp`): three squares, the
-      middle one of |u0 − u1|, always subtracted. From `sqr_karatsuba_threshold()`.
+    - **Karatsuba**: three squares, the middle one of |u0 − u1|, always subtracted. From
+      `sqr_karatsuba_threshold()`.
+      - With the asm Karatsuba (the default with `NUMETRON_USE_ASM`):
+        `detail::usqr_karatsuba_asm_impl` (`umul_karatsuba_asm.hpp`) runs the product's asm
+        recursion (`karatsuba_mul.{s,asm}`) on (u, u). A node that sees a square (vp == up,
+        equal halves) computes |a0 − a1| once and passes it as both operands of the middle
+        product, with the sign +. So every product below is a square again, down to the leaf
+        callback `karatsuba_asm_sqr_basecase`, which calls `usqr_basecase` when the pointers
+        match.
+      - Otherwise `detail::usqr_karatsuba_impl` (`umul_karatsuba.hpp`) in C++, its middle
+        columns in one `karatsuba_interp` pass.
+      - Why (VTune, MSVC, a Toom-8.5 square node at 1024 limbs, 2026-09-27): with the C++
+        Karatsuba under it — per-level dispatch, scratch allocation, zero padding, separate
+        add passes — its levels took ~18% of the node, nearly 60% of the basecase time below
+        them. The products' asm Karatsuba had no such cost. With the asm recursion, the node
+        went 35.5 → 32.3 µs on MSVC, and the Karatsuba range of the squares gained the most:
+        128 limbs 1.27 → 1.45 against GMP.
     - **Toom** (`toom/square.hpp`): squaring plans derived at compile time from the balanced
       Toom-3 / 4 / 6.5 / 8.5 plans, not written by hand. Every instruction before the first
       product that reads v, or a slot B's evaluation wrote, is B's evaluation and is dropped.
       It is paired op for op with A's (a mismatch is a compile error). B's slots map to A's,
       so every product becomes `umul_fixed(W, EA, EA)`: a square, sent back to the squaring
       chain, with a + sign. Interpolation and composition are unchanged.
-    - **FFT**: one forward transform per prime instead of two (as before), from its own
-      threshold, `sqr_fft_threshold()`.
+    - **FFT**: one forward transform per prime instead of two (as before), from
+      `sqr_fft_threshold()` on, and with `NUMETRON_USE_ASM` only where the transform length is
+      well filled (`detail::fft_square_fills`, `umul_fft.hpp`). The FFT's time is a staircase
+      in the length (2^k or 3·2^(k−2)), the Toom chain's a smooth curve. So the FFT wins in the
+      upper part of each length's range and loses just above each step. A sweep of the Toom
+      chain against the FFT over 1920–6400 limbs (2026-09-28) gave the lowest winning fill
+      (coefficients / L) for each length:
+
+      | length | 2048 | 3072 | 4096 | 6144 | 8192 |
+      |---|---|---|---|---|---|
+      | GCC | never (1.03) | 0.96 | 0.81 | 0.74 | from the start (0.76) |
+      | MSVC | never (1.09) | never (1.04) | 0.87 | 0.78 | from the start |
+
+      Hence the FFT is taken at a fill of 0.78 or more, and at any fill from length 8192 up;
+      `sqr_fft_threshold()` is the lower bound (GCC 2900, MSVC 3500). Over the sweep the
+      choice is within 3% of the better of the two on MSVC; on GCC it is within 4%, except
+      4608–4736 limbs (fill 0.75–0.77, 4–6% behind the FFT). A single threshold, as
+      `--tune-squares` picks, lost up to 10% on either side of a step: MSVC's tuned 4939 took
+      4096 limbs from 1.43 to 1.26 against GMP. The header-only builds keep the single
+      threshold (their FFT starts at 293–1766 limbs; not measured).
     - **Thresholds**: `sqr_karatsuba`, `sqr_toom3/4/6h/8h`, `sqr_fft` (§ 6). The tuner has
       stages for them (`numetron_bench_mul --tune-squares`), run on u · u with the other
       thresholds unchanged. With the rows kernel Karatsuba squaring started at 57–63; over the
-      straight-line asm kernel it starts at 28–32, and Toom-3 squaring later, at 145–183.
+      straight-line asm kernel and the asm Karatsuba recursion it starts at 24–30, and Toom-3
+      squaring later, at 154–183.
     - **Result** (`numetron_bench_mul --sqr`, asm build, after `--tune`; gmp/sqr, > 1: faster):
 
       Before, with no squaring path, squares were 0.76–0.92 of GMP below the FFT. With the
       basecase (the rows kernel), Karatsuba and Toom squares, 0.77–0.94 at 4–16 limbs and
-      0.95–1.09 above. Now, with the asm kernel (default thresholds, `--sqr` without tuning,
-      2026-09-27):
+      0.95–1.09 above. Now, with the asm kernel, the asm Karatsuba recursion and the FFT's
+      fill rule (default thresholds, `--sqr` without tuning, 2026-09-28):
 
       | limbs | 1–2 | 4 | 8 | 16 | 32–64 | 96–512 | 768–2048 | 3072–16384 |
       |---|---|---|---|---|---|---|---|---|
-      | GCC | 1.04–1.13 | 0.99 | 1.31 | 1.40 | 1.25–1.45 | 1.18–1.29 | 1.12–1.20 | 1.30–1.62 |
-      | MSVC | 1.06–1.13 | 1.10 | 1.32 | 1.44 | 1.24–1.40 | 1.18–1.27 | 1.08–1.18 | 1.23–1.51 |
+      | GCC | 1.18–1.30 | 1.06 | 1.41 | 1.50 | 1.28–1.59 | 1.22–1.45 | 1.15–1.24 | 1.31–1.58 |
+      | MSVC | 1.08–1.20 | 1.20 | 1.37 | 1.48 | 1.39–1.58 | 1.24–1.44 | 1.15–1.25 | 1.21–1.49 |
 
-      A square is now 1.35–1.75x faster than numetron's own product of the size up to 2048
-      limbs (1.25–1.35x in the FFT range), against GMP's 1.3–1.6x.
+      (1–8 limbs after the `assign_mul` square path of item 2.)
+
+      A square is now 1.32–1.84x faster than numetron's own product of the size up to 2048
+      limbs (1.23–1.28x in the FFT range), against GMP's 1.3–1.6x.
     - **Left**:
-      - 4 limbs, GCC: 0.99. The kernel is 1.34x `mpn_sqr` there; the rest is the `assign_mul`
-        overhead (item 2).
-      - 1024–2048 limbs: 1.08–1.18, the smallest margin. The Toom squares save only A's
-        evaluation; interpolation costs as much as in a product.
+      - 4 limbs, GCC: 1.05, the smallest margin below 1024 limbs. The kernel is 1.32x
+        `mpn_sqr` there; `assign_mul` around it costs ~2.6 ns against `mpz_mul`'s ~2.2.
+      - 1024–2048 limbs: 1.15–1.21, the smallest margin. Which Toom sits on top hardly
+        matters (Toom-3 … 8.5 within 2–5% of each other); the node's own linear work does.
+        At 1024 limbs it is 14% of a Toom-4 square node, 27% of a Toom-6.5 one and 40% of a
+        Toom-8.5 one. A square saves only A's evaluation there; the interpolation costs as much
+        as in a product, and against the cheap leaves it weighs more.

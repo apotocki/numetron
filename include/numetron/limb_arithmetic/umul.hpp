@@ -370,7 +370,8 @@ inline LimbT* umul_dispatch(
 }
 
 // rb[0..2n) = u^2, the square counterpart of umul_dispatch (u's leading zero limbs dropped
-// first; returns one past the last limb written). The FFT (from sqr_fft_threshold()) squares by
+// first; returns one past the last limb written). The FFT (from sqr_fft_threshold(), where the
+// transform length is well filled: detail::fft_square_fills) squares by
 // itself; below it the squaring variants of the balanced Toom plans (toom/square.hpp: A's
 // evaluation only, the pointwise products squares -- back through umul_dispatch, which sends
 // them here), from the sqr_toom*_threshold()s; then Karatsuba squaring (three squares) from
@@ -381,7 +382,7 @@ inline LimbT* usqr_dispatch(const LimbT* u, size_t n, LimbT* rb, AllocatorT allo
     while (n > 0 && u[n - 1] == 0) --n;
     if (!n) return rb;
     if constexpr (sizeof(LimbT) == 8) {
-        if (n >= sqr_fft_threshold()) return detail::umul_fft_impl(u, n, u, n, rb, std::move(alloc));
+        if (n >= sqr_fft_threshold() && detail::fft_square_fills(n)) return detail::umul_fft_impl(u, n, u, n, rb, std::move(alloc));
     }
     if (n >= sqr_toom8h_threshold() && detail::toom8h_split_fits(n, n)) return toom8h_square_engine::umul(u, n, u, n, rb, std::move(alloc));
     if (n >= sqr_toom6h_threshold() && detail::toom6h_split_fits(n, n)) return toom6h_square_engine::umul(u, n, u, n, rb, std::move(alloc));
@@ -390,6 +391,10 @@ inline LimbT* usqr_dispatch(const LimbT* u, size_t n, LimbT* rb, AllocatorT allo
         return toom3_square_engine::umul(u, n, u, n, rb, std::move(alloc));
     }
     if (n >= sqr_karatsuba_threshold()) {
+#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+        if constexpr (sizeof(LimbT) == 8) return detail::usqr_karatsuba_asm_impl(u, n, rb, std::move(alloc));
+        else
+#endif
         return detail::usqr_karatsuba_impl(u, n, rb, std::move(alloc));
     }
     return usqr_basecase<LimbT>(u, n, rb);

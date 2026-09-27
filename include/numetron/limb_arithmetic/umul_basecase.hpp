@@ -333,8 +333,9 @@ NUMETRON_FORCEINLINE detect_mul_basecase_type detected_mul_basecase() noexcept
 namespace detail {
 
 // Fixed-size schoolbook products for un in {3, 4}, vn <= 3, fully unrolled, through the compiler's
-// 128-bit arithmetic (mul / adc). Behind a run-time switch they are 0.2-0.6 ns faster than the
-// asm basecase there (its setup is most of such a product), on a par at 4 x 4 (not taken); un <= 2
+// 128-bit arithmetic (mul / adc). Behind a run-time switch they were 0.2-0.6 ns faster than the
+// asm basecase's looped rows there, on a par at 4 x 4 (not taken); the asm's straight-line rows
+// for un <= 16 (2026-09-27) are faster than both, so they serve the header-only build now; un <= 2
 // has its own paths already (umul1, umul_basecase_2x). GCC / Clang only: MSVC's _addcarry_u64
 // chains made the same kernels up to 2x slower than the asm from 3 x 2 on (docs/multiplication.md).
 __extension__ typedef unsigned __int128 umul_small_u128;
@@ -442,7 +443,8 @@ template <std::unsigned_integral LimbT>
 requires (sizeof(LimbT) == 8)
 NUMETRON_FORCEINLINE LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t vn, LimbT* rb) noexcept
 {
-#if defined(NUMETRON_SMALL_BASECASE_FIXED)
+#if defined(NUMETRON_SMALL_BASECASE_FIXED) && !(defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64)))
+    // header-only only: the asm basecase's straight-line rows (un <= 16) are faster still
     if (un - 3 < 2 && vn - 1 < 3) { // un in {3, 4}, vn in {1, 2, 3}
         detail::umul_basecase_small(reinterpret_cast<uint64_t const*>(ub), un, reinterpret_cast<uint64_t const*>(vb), vn, reinterpret_cast<uint64_t*>(rb));
         return rb + un + vn;
@@ -494,14 +496,20 @@ inline void usqr_basecase_rows(uint64_t* r, uint64_t const* u, size_t n) noexcep
 // Whether numetron_sqr_basecase_adx (BMI2 + ADX) may run here: checked once.
 inline std::atomic<int> sqr_kernel_state{ 0 }; // 0 not checked yet, 1 yes, 2 no
 
-inline bool sqr_kernel_available() noexcept
+// The first call's check, out of line so that the test below inlines into every caller (GCC kept
+// the whole function out of line: one more call per small square).
+NUMETRON_NOINLINE inline int init_sqr_kernel_state() noexcept
+{
+    const int s = cpu_has_bmi2_adx() ? 1 : 2;
+    sqr_kernel_state.store(s, std::memory_order_relaxed);
+    return s;
+}
+
+NUMETRON_FORCEINLINE bool sqr_kernel_available() noexcept
 {
 #   if defined(NUMETRON_PLATFORM_AUTODETECT)
     int s = sqr_kernel_state.load(std::memory_order_relaxed);
-    if (!s) [[unlikely]] {
-        s = cpu_has_bmi2_adx() ? 1 : 2;
-        sqr_kernel_state.store(s, std::memory_order_relaxed);
-    }
+    if (!s) [[unlikely]] s = init_sqr_kernel_state();
     return s == 1;
 #   elif defined(NUMETRON_PLATFORM_ADX)
     return true;
