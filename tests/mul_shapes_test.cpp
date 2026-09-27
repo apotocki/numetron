@@ -150,10 +150,50 @@ void mul_shapes_test()
                     }
                 }
             }
+
+            // the square of a vn-limb u, the same pointer on both sides (usqr_dispatch's chain)
+            for (int kind = 0; kind < 4; ++kind) {
+                std::vector<limb> u(vn), unused(vn);
+                fill_operands(rng, kind == 2 ? 0 : kind, u, unused);
+                std::vector<limb> expected(2 * vn);
+                mpn_sqr(reinterpret_cast<mp_limb_t*>(expected.data()), reinterpret_cast<const mp_limb_t*>(u.data()), static_cast<mp_size_t>(vn));
+                size_t expected_size = 2 * vn;
+                while (expected_size && !expected[expected_size - 1]) --expected_size;
+                {
+                    std::allocator<limb> alloc;
+                    auto [r, rsize, rcap] = la::umul<limb>(std::span<const limb>{ u }, std::span<const limb>{ u }, alloc);
+                    while (rsize && !r[rsize - 1]) --rsize;
+                    ++checked;
+                    if (rsize != expected_size || !std::equal(r, r + rsize, expected.data())) {
+                        if (++failed <= 10) std::cout << label << ": umul square MISMATCH " << vn << " kind " << kind << "\n";
+                    }
+                    alloc.deallocate(r, rcap);
+                }
+                {
+                    std::vector<limb> r(2 * vn + 1, 0xABABABABABABABABULL); // one guard limb
+                    limb* e = la::umul_dispatch(u.data(), vn, u.data(), vn, r.data(), numetron::detail::stack_allocator<limb>{});
+                    std::fill(e, r.data() + 2 * vn, limb{ 0 });
+                    ++checked;
+                    if (!std::equal(expected.begin(), expected.end(), r.begin()) || r[2 * vn] != 0xABABABABABABABABULL) {
+                        if (++failed <= 10) std::cout << label << ": umul_dispatch square MISMATCH " << vn << " kind " << kind << "\n";
+                    }
+                }
+            }
         }
     };
 
     run_pass("default thresholds");
+
+    // Squares from the smallest sizes: the squaring basecase from 2 limbs, Karatsuba squaring
+    // from 4 (the recursion down to a few limbs).
+    {
+        const size_t saved_bc = la::sqr_basecase_threshold(), saved_k = la::sqr_karatsuba_threshold();
+        la::set_sqr_basecase_threshold(la::min_sqr_basecase_threshold);
+        la::set_sqr_karatsuba_threshold(la::min_sqr_karatsuba_threshold);
+        run_pass("squares from the minimum");
+        la::set_sqr_basecase_threshold(saved_bc);
+        la::set_sqr_karatsuba_threshold(saved_k);
+    }
 
     // The unbalanced plans from their minimum: they take every node in their windows, down to a
     // few limbs.
@@ -196,12 +236,40 @@ void mul_shapes_test()
     la::set_toom53_threshold(saved_toom53);
     la::set_toom43_threshold(saved_toom43);
 
+    // The balanced Toom plans (and their squaring variants) from their minimum: Toom-8.5 over
+    // Toom-6.5 over Toom-4 over Toom-3 down to a few limbs.
+    {
+        const size_t saved_toom3 = la::toom3_threshold(), saved_toom4 = la::toom4_threshold();
+        const size_t saved_toom6h = la::toom6h_threshold(), saved_toom8h = la::toom8h_threshold();
+        la::set_toom3_threshold(la::min_toom3_threshold);
+        la::set_toom4_threshold(la::min_toom4_threshold);
+        la::set_toom6h_threshold(la::min_toom6h_threshold);
+        la::set_toom8h_threshold(la::min_toom8h_threshold);
+        const size_t saved_sqr3 = la::sqr_toom3_threshold(), saved_sqr4 = la::sqr_toom4_threshold();
+        const size_t saved_sqr6h = la::sqr_toom6h_threshold(), saved_sqr8h = la::sqr_toom8h_threshold();
+        la::set_sqr_toom3_threshold(la::min_sqr_toom3_threshold);
+        la::set_sqr_toom4_threshold(la::min_sqr_toom4_threshold);
+        la::set_sqr_toom6h_threshold(la::min_sqr_toom6h_threshold);
+        la::set_sqr_toom8h_threshold(la::min_sqr_toom8h_threshold);
+        run_pass("balanced Toom from the minimum");
+        la::set_toom3_threshold(saved_toom3);
+        la::set_toom4_threshold(saved_toom4);
+        la::set_toom6h_threshold(saved_toom6h);
+        la::set_toom8h_threshold(saved_toom8h);
+        la::set_sqr_toom3_threshold(saved_sqr3);
+        la::set_sqr_toom4_threshold(saved_sqr4);
+        la::set_sqr_toom6h_threshold(saved_sqr6h);
+        la::set_sqr_toom8h_threshold(saved_sqr8h);
+    }
+
     // The FFT from 64 limbs: the shapes above with vn >= 64 take it, and the long ones are cut
     // into pieces that fill a transform length (fft_slice_length()), with a remainder piece.
-    const size_t saved_fft = la::fft_threshold();
+    const size_t saved_fft = la::fft_threshold(), saved_sqr_fft = la::sqr_fft_threshold();
     la::set_fft_threshold(64);
+    la::set_sqr_fft_threshold(64);
     run_pass("FFT from 64 limbs");
     la::set_fft_threshold(saved_fft);
+    la::set_sqr_fft_threshold(saved_sqr_fft);
 
     std::cout << "mul shapes: checked " << checked << ", failed " << failed << "\n";
     CHECK_EQUAL(failed, 0u);

@@ -17,6 +17,10 @@
 
 namespace numetron::limb_arithmetic {
 
+// umul.hpp
+template <std::unsigned_integral LimbT, typename AllocatorT>
+LimbT* usqr_dispatch(const LimbT* u, size_t n, LimbT* rb, AllocatorT alloc);
+
 namespace detail {
 
 template <std::unsigned_integral LimbT>
@@ -220,6 +224,79 @@ LimbT* umul_karatsuba_impl(std::span<const LimbT> u, std::span<const LimbT> v,
         usub_limb(rb + 3 * n, re, LimbT{ 1 });
     }
 
+    return re;
+}
+
+// Karatsuba squaring: rb[0 .. 2un) = u^2, un >= 2 (GMP's mpn_toom2_sqr). u = a0 + a1*B^n,
+// s = floor(un/2) = |a1|, n = un - s = |a0|; three squares, each through usqr_dispatch:
+//   v0 = a0^2 = L0 + H0*B^n,  vinf = a1^2 = Li + Hi*B^n,  vm1 = (a0 - a1)^2 >= 0,
+//   u^2 = L0 + (L0 + H0 + Li)*B^n + (H0 + Li + Hi)*B^2n + Hi*B^3n - vm1*B^n
+// -- umul_karatsuba_impl's combination with the middle term always subtracted. Allocates 2n
+// limbs of scratch (for vm1, unless a0 == a1) via alloc. Returns rb + 2un.
+template <std::unsigned_integral LimbT, typename AllocatorT>
+LimbT* usqr_karatsuba_impl(LimbT const* u, size_t un, LimbT* rb, AllocatorT alloc)
+{
+    assert(un >= 2);
+
+    const size_t s = un / 2;
+    const size_t n = un - s;
+    LimbT const* a0 = u;
+    LimbT const* a1 = u + n;
+    LimbT* const re = rb + 2 * un;
+
+    LimbT* scratch = nullptr;
+    NUMETRON_SCOPE_EXIT([&] {
+        if (scratch) std::allocator_traits<AllocatorT>::deallocate(alloc, scratch, 2 * n);
+    });
+
+    // |a0 - a1| into rb[0..n), free until v0 is computed last
+    LimbT* const asm1 = rb;
+    const int sign = uabs_diff(a0, n, a1, s, asm1, asm1 + n);
+
+    LimbT* vm1 = nullptr;
+    if (sign) {
+        scratch = std::allocator_traits<AllocatorT>::allocate(alloc, 2 * n);
+        vm1 = scratch;
+        LimbT* e = usqr_dispatch(asm1, n, vm1, alloc);
+        std::memset(e, 0, (vm1 + 2 * n - e) * sizeof(LimbT));
+    }
+    // vinf -> rb[2n .. re)
+    {
+        LimbT* e = usqr_dispatch(a1, s, rb + 2 * n, alloc);
+        std::memset(e, 0, (re - e) * sizeof(LimbT));
+    }
+    // v0 -> rb[0 .. 2n), overwriting asm1
+    {
+        LimbT* e = usqr_dispatch(a0, n, rb, alloc);
+        std::memset(e, 0, (rb + 2 * n - e) * sizeof(LimbT));
+    }
+
+    // as in umul_karatsuba_impl: cy2 lands at limb 2n, cy at limb 3n
+    int cy, cy2;
+    {
+        LimbT const* src = rb + n;
+        LimbT* dst = rb + 2 * n;
+        cy = uadd_partial_unchecked(src, rb + 2 * n, rb + 3 * n, dst);         // X = H0 + Li
+    }
+    {
+        LimbT const* src = rb + 2 * n;
+        LimbT* dst = rb + n;
+        cy2 = cy + uadd_partial_unchecked(src, rb, rb + n, dst);               // X + L0
+    }
+    const size_t h = 2 * s - n;                                                // |Hi|
+    if (h) {
+        LimbT c = uadd_inplace(rb + 2 * n, rb + 3 * n, rb + 3 * n + h);       // X + Hi
+        if (c && h < n) c = uadd_limb(rb + 2 * n + h, rb + 3 * n, c);
+        cy += static_cast<int>(c);
+    }
+    if (sign) cy -= static_cast<int>(usub_inplace(rb + n, vm1, vm1 + 2 * n));
+
+    uadd_limb(rb + 2 * n, re, static_cast<LimbT>(cy2));
+    if (cy > 0) {
+        uadd_limb(rb + 3 * n, re, static_cast<LimbT>(cy));
+    } else if (cy < 0) {
+        usub_limb(rb + 3 * n, re, LimbT{ 1 });
+    }
     return re;
 }
 

@@ -54,6 +54,9 @@
     <MASM Include="..\src\arch\x86_64\add_sub_n.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
+    <MASM Include="..\src\arch\x86_64\mul_1_adx.asm">
+      <Filter>asm\x86_64</Filter>
+    </MASM>
     <MASM Include="..\src\arch\x86_64\karatsuba_interp.asm">
       <Filter>asm\x86_64</Filter>
     </MASM>
@@ -84,6 +87,9 @@
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\add_sub_n.s">
+      <Filter>asm\x86_64</Filter>
+    </None>
+    <None Include="..\src\arch\x86_64\mul_1_adx.s">
       <Filter>asm\x86_64</Filter>
     </None>
     <None Include="..\src\arch\x86_64\karatsuba_interp.s">
@@ -259,6 +265,9 @@
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_8h_half.hpp">
+      <Filter>numetron\limb_arithmetic\toom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\toom\square.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\toom_5x3.hpp">

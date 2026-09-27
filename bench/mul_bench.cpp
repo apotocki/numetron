@@ -15,6 +15,7 @@
 //
 // Modes: --balanced (un == vn), --unbalanced (un > vn, several vn x un/vn); neither: both.
 // --large: the unbalanced shapes with vn = 4096 .. 16384 (the FFT range) instead.
+// --sqr: squares u * u (the same object on both sides) against GMP, and against u * v.
 // --tune[=N] [--trace] retunes the thresholds first; --add benchmarks limb add/sub instead.
 
 #ifdef _WIN32
@@ -264,6 +265,89 @@ void run_tier(std::string const& limbs_label, std::string const& bits_label, std
                << "\n";
 }
 
+// --sqr: u * u with the same object on both sides (GMP takes its squaring path only then, on
+// mpz_mul(r, u, u); the same for numetron), against GMP and against the general product of two
+// different operands of the size -- gmp mul/sqr is what squaring buys GMP, i.e. what there is to
+// gain.
+double time_numetron_sqr_reuse(std::vector<operand_pair> const& operands, int repeats)
+{
+    using integer = numetron::integer;
+    std::vector<integer> ops;
+    ops.reserve(operands.size());
+    for (auto const& o : operands) ops.emplace_back(o.u_hex, 16);
+
+    integer result;
+    auto start = clock_type::now();
+    for (int r = 0; r < repeats; ++r) {
+        for (auto const& op : ops) {
+            result.assign_mul(op, op);
+            auto [high, low_limbs] = result.limbs();
+            g_sink ^= low_limbs.empty() ? high : low_limbs.front();
+        }
+    }
+    auto finish = clock_type::now();
+    return std::chrono::duration<double, std::nano>(finish - start).count() / (double(repeats) * double(ops.size()));
+}
+
+double time_gmp_sqr(std::vector<operand_pair> const& operands, int repeats)
+{
+    std::vector<mpz_t> ops(operands.size());
+    for (size_t i = 0; i < operands.size(); ++i) mpz_init_set_str(ops[i], operands[i].u_hex.c_str(), 16);
+    mpz_t r;
+    mpz_init(r);
+    auto start = clock_type::now();
+    for (int rep = 0; rep < repeats; ++rep) {
+        for (auto& op : ops) {
+            mpz_mul(r, op, op);
+            g_sink ^= mpz_getlimbn(r, 0);
+        }
+    }
+    auto finish = clock_type::now();
+    mpz_clear(r);
+    for (auto& op : ops) mpz_clear(op);
+    return std::chrono::duration<double, std::nano>(finish - start).count() / (double(repeats) * double(ops.size()));
+}
+
+void run_sqr_tier(size_t limbs, std::vector<operand_pair> const& operands, int repeats)
+{
+    // the squares against GMP (the u * v products are checked by run_tier's verification)
+    {
+        using integer = numetron::integer;
+        mpz_t g, r;
+        mpz_inits(g, r, nullptr);
+        for (auto const& o : operands) {
+            integer u{ o.u_hex, 16 };
+            integer p;
+            p.assign_mul(u, u);
+            mpz_set_str(g, o.u_hex.c_str(), 16);
+            mpz_mul(r, g, g);
+            std::unique_ptr<char, void(*)(void*)> gmp_hex(mpz_get_str(nullptr, 16, r), [](void* q) { std::free(q); });
+            if (to_string(p, 16, false) != gmp_hex.get()) {
+                std::cerr << "MISMATCH for the square of a " << limbs << "-limb operand\n";
+                std::exit(1);
+            }
+        }
+        mpz_clears(g, r, nullptr);
+    }
+
+    double sqr = std::numeric_limits<double>::infinity(), gsqr = sqr, mul = sqr, gmul = sqr;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        sqr = std::min(sqr, time_numetron_sqr_reuse(operands, repeats));
+        gsqr = std::min(gsqr, time_gmp_sqr(operands, repeats));
+        mul = std::min(mul, time_numetron_mul_reuse(operands, repeats));
+        gmul = std::min(gmul, time_gmp_mul(operands, repeats));
+    }
+    std::cout << std::setw(10) << limbs << std::fixed
+              << std::setw(14) << std::setprecision(3) << ns_to_us(sqr)
+              << std::setw(14) << ns_to_us(gsqr)
+              << std::setw(12) << std::setprecision(2) << (gsqr / sqr)
+              << std::setw(14) << std::setprecision(3) << ns_to_us(mul)
+              << std::setw(14) << ns_to_us(gmul)
+              << std::setw(12) << std::setprecision(2) << (gmul / gsqr)
+              << std::setw(12) << (mul / sqr)
+              << "\n";
+}
+
 template <typename OpT>
 double best_ns_per_limb(size_t n, OpT&& op)
 {
@@ -342,6 +426,15 @@ void print_configuration()
               << ", fft ";
     if (la::fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
     else std::cout << la::fft_threshold() << "\n";
+    std::cout << "squares: basecase " << la::sqr_basecase_threshold()
+              << ", karatsuba " << la::sqr_karatsuba_threshold()
+              << ", toom3 " << la::sqr_toom3_threshold()
+              << ", toom4 " << la::sqr_toom4_threshold()
+              << ", toom6h " << la::sqr_toom6h_threshold()
+              << ", toom8h " << la::sqr_toom8h_threshold()
+              << ", fft ";
+    if (la::sqr_fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
+    else std::cout << la::sqr_fft_threshold() << "\n";
 }
 
 } // namespace
@@ -368,6 +461,7 @@ int main(int argc, char** argv)
     // taking the best of N samples per probe (default: mul_tuning_options' default).
     // --tune-unbalanced[=N]: the same for the unbalanced thresholds alone (Toom-3/2 .. Toom-8.5
     // 11 x 6; the balanced ones stay the defaults).
+    // --tune-squares[=N]: the same for the squaring thresholds alone.
     // --trace (with --tune): print every probe: size, lower / higher algorithm time, ratio.
     bool trace = false;
     for (int i = 1; i < argc; ++i) {
@@ -379,6 +473,8 @@ int main(int argc, char** argv)
         numetron::limb_arithmetic::mul_tuning_options opts;
         // --tune-unbalanced[=N]: only the unbalanced thresholds, against the balanced defaults
         if (arg.rfind("--tune-unbalanced", 0) == 0) opts.tune_balanced = false;
+        // --tune-squares[=N]: only the squaring thresholds
+        if (arg.rfind("--tune-squares", 0) == 0) opts.squares_only = true;
         if (auto eq = arg.find('='); eq != std::string::npos) {
             opts.samples = static_cast<unsigned>(std::stoul(arg.substr(eq + 1)));
         }
@@ -420,6 +516,12 @@ int main(int argc, char** argv)
         auto before_t54 = numetron::limb_arithmetic::toom54_threshold();
         auto before_t53 = numetron::limb_arithmetic::toom53_threshold();
         auto before_t43 = numetron::limb_arithmetic::toom43_threshold();
+        auto before_sk = numetron::limb_arithmetic::sqr_karatsuba_threshold();
+        auto before_s3 = numetron::limb_arithmetic::sqr_toom3_threshold();
+        auto before_s4 = numetron::limb_arithmetic::sqr_toom4_threshold();
+        auto before_s6 = numetron::limb_arithmetic::sqr_toom6h_threshold();
+        auto before_s8 = numetron::limb_arithmetic::sqr_toom8h_threshold();
+        auto before_sf = numetron::limb_arithmetic::sqr_fft_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
         auto show = [](size_t t) { return t == ~size_t{ 0 } ? std::string{ "off" } : std::to_string(t); };
         std::cout << "tuned thresholds (limbs):\n"
@@ -453,6 +555,18 @@ int main(int argc, char** argv)
                   << (tuned.toom53_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  toom43:    " << before_t43 << " -> " << tuned.toom43_threshold
                   << (tuned.toom43_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  sqr kara:   " << before_sk << " -> " << tuned.sqr_karatsuba_threshold
+                  << (tuned.sqr_karatsuba_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  sqr toom3:  " << before_s3 << " -> " << tuned.sqr_toom3_threshold
+                  << (tuned.sqr_toom3_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  sqr toom4:  " << before_s4 << " -> " << tuned.sqr_toom4_threshold
+                  << (tuned.sqr_toom4_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  sqr toom6h: " << before_s6 << " -> " << tuned.sqr_toom6h_threshold
+                  << (tuned.sqr_toom6h_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  sqr toom8h: " << before_s8 << " -> " << tuned.sqr_toom8h_threshold
+                  << (tuned.sqr_toom8h_found ? "" : " (no crossover found, kept)") << "\n"
+                  << "  sqr fft:    " << show(before_sf) << " -> " << show(tuned.sqr_fft_threshold)
+                  << (tuned.sqr_fft_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  fft:       " << show(before_fft) << " -> " << show(tuned.fft_threshold)
                   << (tuned.fft_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
@@ -460,14 +574,16 @@ int main(int argc, char** argv)
     // --balanced: un == vn over limb_counts; --unbalanced: un > vn over unbalanced_v_limbs x
     // unbalanced_ratios. Neither given: both, balanced first. --large: the unbalanced shapes over
     // unbalanced_large_v_limbs (the FFT range) instead.
-    bool balanced = false, unbalanced = false, large = false;
+    // --sqr: squares u * u over limb_counts (alone unless --balanced / --unbalanced are given too).
+    bool balanced = false, unbalanced = false, large = false, sqr = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--balanced") balanced = true;
         else if (arg == "--unbalanced") unbalanced = true;
         else if (arg == "--large") large = true;
+        else if (arg == "--sqr") sqr = true;
     }
-    if (!balanced && !unbalanced) balanced = unbalanced = true;
+    if (!balanced && !unbalanced && !sqr) balanced = unbalanced = true;
 
     std::mt19937_64 rng{ 0x5EED1234ULL };
 
@@ -528,7 +644,27 @@ int main(int argc, char** argv)
         }
     }
 
+    if (sqr) {
+        std::mt19937_64 srng{ 0x5A0A5EEDULL }; // own seed: the same operands whatever else runs
+        std::cout << "\nsquares (u * u, the same object on both sides; reuse vs GMP's mpz_mul(r, u, u))\n\n"
+                  << std::right
+                  << std::setw(10) << "limbs"
+                  << std::setw(14) << "sqr(us)"
+                  << std::setw(14) << "gmp sqr(us)"
+                  << std::setw(12) << "gmp/sqr"
+                  << std::setw(14) << "mul(us)"
+                  << std::setw(14) << "gmp mul(us)"
+                  << std::setw(12) << "gmp mul/sqr"
+                  << std::setw(12) << "mul/sqr"
+                  << "\n";
+        for (size_t limb_count : limb_counts) {
+            run_sqr_tier(limb_count, make_operands(srng, limb_count, limb_count, samples_per_tier), repeats_for(limb_count));
+        }
+    }
+
     std::cout << "\n";
+    if (sqr) std::cout << "sqr / mul: assign_mul(u, u) / assign_mul(u, v) into a reused result; gmp: mpz_mul(r, u, u) / mpz_mul(r, u, v)\n"
+                       << "gmp mul/sqr: what squaring buys GMP; mul/sqr: what it buys numetron (1.00: nothing)\n";
     if (balanced) std::cout << "* both factors <= 31 bits: product guaranteed to fit in 1 limb, no result allocation\n";
     if (balanced) std::cout << "numetron(us): plain operator* (builds a fresh result every call, like u * v)\n";
     std::cout << "reuse(us):    assign_mul() into one result reused across the whole run, like GMP's mpz_mul(r, u, v)\n";

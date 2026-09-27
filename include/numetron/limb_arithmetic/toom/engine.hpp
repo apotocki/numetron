@@ -30,6 +30,7 @@
 #include "toom_6x6.hpp"
 #include "toom_8x8.hpp"
 #include "toom_8h_half.hpp"
+#include "square.hpp"
 
 #include "numetron/limb_arithmetic/toom/slot.hpp"
 
@@ -710,5 +711,12 @@ template <size_t N>
 using toom8h_half_u_engine = toom_engine_t<toom_runtime_detail::toom8h_half_traits<N, true>>;
 template <size_t N>
 using toom8h_half_v_engine = toom_engine_t<toom_runtime_detail::toom8h_half_traits<N, false>>;
+
+// Squaring variants of the balanced plans (square.hpp): u == v, B's evaluation dropped, the
+// pointwise products squares.
+using toom3_square_engine = toom_engine_t<toom_runtime_detail::toom_square_traits<toom_runtime_detail::toom3_balanced_traits>>;
+using toom4_square_engine = toom_engine_t<toom_runtime_detail::toom_square_traits<toom_runtime_detail::toom4_balanced_traits>>;
+using toom6h_square_engine = toom_engine_t<toom_runtime_detail::toom_square_traits<toom_runtime_detail::toom6h_balanced_traits>>;
+using toom8h_square_engine = toom_engine_t<toom_runtime_detail::toom_square_traits<toom_runtime_detail::toom8h_balanced_traits>>;
 
 } // namespace numetron::limb_arithmetic

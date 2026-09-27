@@ -10,6 +10,7 @@
 #include "platform.hpp"
 #include "umul1.hpp"
 #include "umul_basecase_variants.hpp" // the C++ basecase alternatives (NUMETRON_CXX_BASECASE)
+#include "toom/thresholds.hpp"          // sqr_basecase_threshold()
 
 namespace numetron::limb_arithmetic {
 
@@ -365,6 +366,66 @@ inline void umul_basecase_small(uint64_t const* u, size_t un, uint64_t const* v,
     }
 }
 
+// Fixed-size squares, r[0..2N) = u^2, the way usqr_basecase_rows() does it (the products above
+// the diagonal once, then doubled and the diagonal added), unrolled through the compiler's 128-bit
+// arithmetic: N (N - 1) / 2 + N products instead of N^2, without the rows' per-call cost.
+#define NUMETRON_SMALL_SQR_FIXED 1
+template <size_t N>
+NUMETRON_FORCEINLINE void usqr_basecase_fixed(uint64_t const* u, uint64_t* r) noexcept
+{
+    static_assert(N >= 2);
+    r[0] = 0;
+    {
+        uint64_t c = 0;
+#pragma GCC unroll 16
+        for (size_t i = 1; i < N; ++i) {
+            umul_small_u128 t = (umul_small_u128)u[i] * u[0] + c;
+            r[i] = (uint64_t)t;
+            c = (uint64_t)(t >> 64);
+        }
+        r[N] = c;
+    }
+#pragma GCC unroll 16
+    for (size_t j = 1; j + 1 < N; ++j) {
+        uint64_t c = 0;
+#pragma GCC unroll 16
+        for (size_t i = j + 1; i < N; ++i) {
+            umul_small_u128 t = (umul_small_u128)u[i] * u[j] + r[i + j] + c;
+            r[i + j] = (uint64_t)t;
+            c = (uint64_t)(t >> 64);
+        }
+        r[N + j] = c;
+    }
+    r[2 * N - 1] = 0;
+
+    uint64_t shift = 0; // the bit shifted out of the previous limb
+    uint64_t c = 0;
+#pragma GCC unroll 16
+    for (size_t i = 0; i < N; ++i) {
+        const umul_small_u128 d = (umul_small_u128)u[i] * u[i];
+        const uint64_t lo = r[2 * i], hi = r[2 * i + 1];
+        umul_small_u128 s = (umul_small_u128)((lo << 1) | shift) + (uint64_t)d + c;
+        r[2 * i] = (uint64_t)s;
+        s = (umul_small_u128)((hi << 1) | (lo >> 63)) + (uint64_t)(d >> 64) + (uint64_t)(s >> 64);
+        r[2 * i + 1] = (uint64_t)s;
+        c = (uint64_t)(s >> 64);
+        shift = hi >> 63;
+    }
+}
+
+// r[0..2n) = u^2 for 3 <= n <= 8
+inline void usqr_basecase_small(uint64_t const* u, size_t n, uint64_t* r) noexcept
+{
+    switch (n) {
+    case 3: usqr_basecase_fixed<3>(u, r); break;
+    case 4: usqr_basecase_fixed<4>(u, r); break;
+    case 5: usqr_basecase_fixed<5>(u, r); break;
+    case 6: usqr_basecase_fixed<6>(u, r); break;
+    case 7: usqr_basecase_fixed<7>(u, r); break;
+    default: usqr_basecase_fixed<8>(u, r); break;
+    }
+}
+
 }
 #endif
 
@@ -389,6 +450,88 @@ inline LimbT* umul_basecase(LimbT const* ub, size_t un, LimbT const* vb, size_t 
     // Pure C++ (header-only build, or no assembly for this target).
     return umul_basecase_cxx<LimbT>(ub, un, vb, vn, rb);
 #endif
+}
+
+namespace detail {
+
+// r[0..2n) = u^2, n >= 2, from two row kernels: Mul1(rp, up, k, v) -> rp[0..k) = up * v, returns
+// the high limb; AddMul1(rp, up, k, v) -> rp[0..k) += up * v, returns the carry out.
+//   1. The products above the diagonal, once: row i adds u[i] * u[i+1..n) at r[2i+1] (rows of
+//      n - 1, n - 2, ..., 1 limbs, each's top limb into r[i+n]).
+//   2. One pass doubling that (a shift by one bit) and adding the diagonal u[i]^2 at r[2i].
+// Half the products of u * u, which is what a square saves (GMP's sqr_basecase does the same).
+template <auto Mul1, auto AddMul1>
+inline void usqr_basecase_rows(uint64_t* r, uint64_t const* u, size_t n) noexcept
+{
+    r[0] = 0;
+    r[n] = Mul1(r + 1, u + 1, n - 1, u[0]);
+    for (size_t i = 1; i + 1 < n; ++i) r[i + n] = AddMul1(r + 2 * i + 1, u + i + 1, n - i - 1, u[i]);
+    r[2 * n - 1] = 0;
+
+    uint64_t shift = 0; // the bit shifted out of the previous limb
+    unsigned char c = 0;
+    for (size_t i = 0; i < n; ++i) {
+        auto [dh, dl] = arithmetic::umul1(u[i], u[i]);
+        const uint64_t lo = r[2 * i], hi = r[2 * i + 1];
+        const uint64_t lo2 = (lo << 1) | shift;
+        const uint64_t hi2 = (hi << 1) | (lo >> 63);
+        shift = hi >> 63;
+        r[2 * i] = arithmetic::uadd1c(lo2, dl, c);
+        r[2 * i + 1] = arithmetic::uadd1c(hi2, dh, c);
+    }
+}
+
+#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
+// Whether the asm rows (mul_1_adx.{asm,s}, BMI2 + ADX) may run here: checked once.
+inline std::atomic<int> sqr_rows_state{ 0 }; // 0 not checked yet, 1 yes, 2 no
+
+inline bool sqr_rows_available() noexcept
+{
+#   if defined(NUMETRON_PLATFORM_AUTODETECT)
+    int s = sqr_rows_state.load(std::memory_order_relaxed);
+    if (!s) [[unlikely]] {
+        s = cpu_has_bmi2_adx() ? 1 : 2;
+        sqr_rows_state.store(s, std::memory_order_relaxed);
+    }
+    return s == 1;
+#   elif defined(NUMETRON_PLATFORM_ADX)
+    return true;
+#   else
+    return false;
+#   endif
+}
+#endif
+
+}
+
+// rb[0..2n) = u^2, returns rb + 2n. From sqr_basecase_threshold() up with the squaring kernel
+// (detail::usqr_basecase_rows) where rows with mulx + adcx/adox are available: the asm ones with
+// NUMETRON_USE_ASM on x86-64 (on CPUs with BMI2 + ADX), the inline-assembly ones of the header-only
+// GCC / Clang build targeting ADX. Otherwise, and below the threshold, as a general product.
+template <std::unsigned_integral LimbT>
+requires (sizeof(LimbT) == 8)
+inline LimbT* usqr_basecase(LimbT const* ub, size_t n, LimbT* rb) noexcept
+{
+#if defined(NUMETRON_SMALL_SQR_FIXED)
+    if (n - 3 < 6) { // 3 <= n <= 8
+        detail::usqr_basecase_small(reinterpret_cast<uint64_t const*>(ub), n, reinterpret_cast<uint64_t*>(rb));
+        return rb + 2 * n;
+    }
+#endif
+    if (n >= sqr_basecase_threshold()) {
+        auto* r = reinterpret_cast<uint64_t*>(rb);
+        auto const* u = reinterpret_cast<uint64_t const*>(ub);
+#if defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64))
+        if (detail::sqr_rows_available()) {
+            detail::usqr_basecase_rows<&numetron_mul_1_adx, &numetron_addmul_1_adx>(r, u, n);
+            return rb + 2 * n;
+        }
+#elif defined(NUMETRON_BASECASE_ADX_ASM)
+        detail::usqr_basecase_rows<&detail::addmul_1_adx<false>, &detail::addmul_1_adx<true>>(r, u, n);
+        return rb + 2 * n;
+#endif
+    }
+    return umul_basecase(ub, n, ub, n, rb);
 }
 
 }

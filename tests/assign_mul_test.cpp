@@ -157,6 +157,26 @@ void assign_mul_test()
         CHECK_EQUAL(to_string(dst, 16, false), "0");
     }
 
+    // Squares, assign_mul(u, u): positive whatever u's sign, into a destination on the heap (the
+    // direct path, from the squaring basecase) and a fresh one (the general path).
+    {
+        integer_t dst;
+        {
+            integer_t u{ random_hex_operand(rng, 70), 16 }, v{ random_hex_operand(rng, 70), 16 };
+            dst.assign_mul(u, v); // a heap buffer of 140 limbs
+        }
+        for (size_t limbs = 1; limbs <= 60; ++limbs) {
+            std::string a = random_hex_operand(rng, limbs);
+            integer_t u{ a, 16 };
+            if (limbs & 1) u.negate();
+            dst.assign_mul(u, u);
+            CHECK_EQUAL(to_string(dst, 16, false), gmp_hex_mul(a, a));
+            integer_t fresh;
+            fresh.assign_mul(u, u);
+            CHECK_EQUAL(to_string(fresh, 16, false), gmp_hex_mul(a, a));
+        }
+    }
+
     // Single-limb products into a destination in place (assign_mul()'s in-place path): products
     // that fit in place and ones that don't, random signs, zero.
     {

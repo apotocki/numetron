@@ -1115,6 +1115,8 @@ public:
                         } else if (vmask != no_mask) { // vn == 1
                             LimbT v0 = v[0] & vmask;
                             re = limb_arithmetic::umul_basecase(u, un, &v0, 1, limbs);
+                        } else if (u == v && un == vn) { // a square (l and r the same value)
+                            re = limb_arithmetic::usqr_basecase(u, un, limbs);
                         } else {
                             re = limb_arithmetic::umul_basecase(u, un, v, vn, limbs);
                         }

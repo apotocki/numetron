@@ -140,6 +140,142 @@
 #   define NUMETRON_DEFAULT_SLICING_THRESHOLD 24
 #endif
 
+// Squares (usqr_basecase, umul_basecase.hpp): from this size the basecase squares with its own
+// kernel (the products above the diagonal once through mulx + adcx/adox rows, then doubled and the
+// diagonal added); below it, as a general product (the rows' fixed cost wins there). Measured
+// against umul_basecase(u, u), 2026-09-25 (scratch sqr_lib.cpp): 0.55-0.6 of it from 48 limbs up.
+#if !defined(NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD) && !defined(NUMETRON_USE_ASM) && NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+#   define NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD 10 // header-only, GCC: parity with c++ adx at ~8, 0.82 at 10
+#endif
+#ifndef NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD
+#   define NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD 14 // asm rows, both compilers: parity at 12-14, 0.87 at 16
+#endif
+#ifndef NUMETRON_SQR_BASECASE_THRESHOLD
+#   define NUMETRON_SQR_BASECASE_THRESHOLD NUMETRON_DEFAULT_SQR_BASECASE_THRESHOLD
+#endif
+
+// The squaring chain (usqr_dispatch): Karatsuba squaring (detail::usqr_karatsuba_impl: three
+// squares), the squaring variants of the balanced Toom plans (toom/square.hpp) and the FFT (one
+// forward transform) from these sizes up. tune_mul_thresholds() on u * u (--tune-squares, two
+// runs per configuration), 2026-09-25; the FFT ones with the AVX2 kernel (with the scalar one
+// the multiplication's threshold). Where two runs or near-tied candidates differed (< 1%), the
+// larger. A Toom-6.5 / 8.5 threshold at or above the FFT's means "not used". Defining any of
+// these defaults yourself replaces the whole set (the rest then follow the multiplication's).
+#if !defined(NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD) && !defined(NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD) \
+    && !defined(NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD) && !defined(NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD) \
+    && !defined(NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD) && !defined(NUMETRON_DEFAULT_SQR_FFT_THRESHOLD)
+#   if !defined(NUMETRON_USE_ASM)
+#       if NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_ADX
+// GCC / Clang, the inline-asm squaring rows
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 63
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 109
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 500
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 564
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1566
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
+#       elif NUMETRON_CXX_BASECASE == NUMETRON_CXX_BASECASE_BLOCKED
+// MSVC: no squaring rows, a small square is a general product
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 23
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 74
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 122
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 675
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 808
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 675
+#       elif defined(_MSC_VER) && !defined(__clang__)
+// the reference basecase, MSVC
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 14
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 70
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 115
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 531
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 808
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 293
+#       else
+// the reference basecase, GCC (and Clang, untuned)
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 63
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 115
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 500
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 761
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1091
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
+#       endif
+#   elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
+#       if defined(_MSC_VER) && !defined(__clang__)
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 60
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 109
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 471
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2864
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2864
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2389
+#       else
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 60
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 115
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 500
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 808
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1766
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
+#       endif
+#   else
+// the C++ Karatsuba implementations over the asm basecase
+#       if defined(_MSC_VER) && !defined(__clang__)
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 60
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 115
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 371
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 2696
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 2696
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 2538
+#       else
+#           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 57
+#           define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD 122
+#           define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD 500
+#           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 1027
+#           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 1474
+#           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 1766
+#       endif
+#   endif
+#endif
+#ifndef NUMETRON_SQR_KARATSUBA_THRESHOLD
+#   define NUMETRON_SQR_KARATSUBA_THRESHOLD NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD
+#endif
+
+#ifndef NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD
+#   define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD NUMETRON_KARATSUBA_THRESHOLD
+#endif
+#ifndef NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD
+#   define NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD NUMETRON_TOOM3_THRESHOLD
+#endif
+#ifndef NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD
+#   define NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD NUMETRON_TOOM4_THRESHOLD
+#endif
+#ifndef NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD
+#   define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD NUMETRON_TOOM6H_THRESHOLD
+#endif
+#ifndef NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD
+#   define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD NUMETRON_TOOM8H_THRESHOLD
+#endif
+#ifndef NUMETRON_SQR_TOOM3_THRESHOLD
+#   define NUMETRON_SQR_TOOM3_THRESHOLD NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD
+#endif
+#ifndef NUMETRON_SQR_TOOM4_THRESHOLD
+#   define NUMETRON_SQR_TOOM4_THRESHOLD NUMETRON_DEFAULT_SQR_TOOM4_THRESHOLD
+#endif
+#ifndef NUMETRON_SQR_TOOM6H_THRESHOLD
+#   define NUMETRON_SQR_TOOM6H_THRESHOLD NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD
+#endif
+#ifndef NUMETRON_SQR_TOOM8H_THRESHOLD
+#   define NUMETRON_SQR_TOOM8H_THRESHOLD NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD
+#endif
+
+#ifndef NUMETRON_DEFAULT_SQR_FFT_THRESHOLD
+#   if defined(NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD) && NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+#       define NUMETRON_DEFAULT_SQR_FFT_THRESHOLD NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD
+#   else
+#       define NUMETRON_DEFAULT_SQR_FFT_THRESHOLD NUMETRON_FFT_THRESHOLD
+#   endif
+#endif
+#ifndef NUMETRON_SQR_FFT_THRESHOLD
+#   define NUMETRON_SQR_FFT_THRESHOLD NUMETRON_DEFAULT_SQR_FFT_THRESHOLD
+#endif
+
 // Toom-6.5 7 x 6 (unbalanced, 1 < un/vn < 1.4; the threshold is on vn): tune_mul_thresholds() on
 // 1.3n x n (--tune-unbalanced), 2026-09-25. With the asm Karatsuba: GCC 371 (the one-level scan
 // crosses 1 at ~350, 0.88-0.93 from 1000 up), MSVC 636 (crosses at ~500-636; 500 within 0.1%).
@@ -458,6 +594,13 @@ inline constexpr size_t min_toom4_threshold = 20;
 inline constexpr size_t min_toom6h_threshold = 42;
 inline constexpr size_t min_toom8h_threshold = 72;
 inline constexpr size_t min_fft_threshold = 1; // the FFT takes any size
+inline constexpr size_t min_sqr_basecase_threshold = 2;
+inline constexpr size_t min_sqr_karatsuba_threshold = 4;
+inline constexpr size_t min_sqr_toom3_threshold = min_toom3_threshold;
+inline constexpr size_t min_sqr_toom4_threshold = min_toom4_threshold;
+inline constexpr size_t min_sqr_toom6h_threshold = min_toom6h_threshold;
+inline constexpr size_t min_sqr_toom8h_threshold = min_toom8h_threshold;
+inline constexpr size_t min_sqr_fft_threshold = 1;
 
 namespace detail {
 
@@ -483,9 +626,19 @@ inline std::atomic<size_t> toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_T
 inline std::atomic<size_t> toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold) };
 inline std::atomic<size_t> fft_threshold_value{ (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold) };
 
+inline std::atomic<size_t> sqr_basecase_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_BASECASE_THRESHOLD }, min_sqr_basecase_threshold) };
+inline std::atomic<size_t> sqr_karatsuba_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_KARATSUBA_THRESHOLD }, min_sqr_karatsuba_threshold) };
+inline std::atomic<size_t> sqr_toom3_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM3_THRESHOLD }, min_sqr_toom3_threshold) };
+inline std::atomic<size_t> sqr_toom4_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM4_THRESHOLD }, min_sqr_toom4_threshold) };
+inline std::atomic<size_t> sqr_toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM6H_THRESHOLD }, min_sqr_toom6h_threshold) };
+inline std::atomic<size_t> sqr_toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM8H_THRESHOLD }, min_sqr_toom8h_threshold) };
+inline std::atomic<size_t> sqr_fft_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_FFT_THRESHOLD }, min_sqr_fft_threshold) };
+
 // The smallest vn any algorithm but the basecase starts at (the minimum of all the thresholds
 // above): below it umul() / umul_dispatch() go straight to the basecase instead of asking every
 // algorithm in turn (on MSVC that chain of checks costs ~15 ns, more than a 4 x 4 product).
+// The squaring Karatsuba threshold too: below the limit mul() and assign_mul() take a square
+// straight to usqr_basecase.
 // Recomputed by every setter; momentarily stale while another thread retunes, which can only cost
 // speed, never correctness: the basecase takes any size.
 inline std::atomic<size_t> basecase_limit_value{ (std::min)({
@@ -505,7 +658,8 @@ inline std::atomic<size_t> basecase_limit_value{ (std::min)({
     (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold),
     (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold),
     (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold),
-    (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold) }) };
+    (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold),
+    (std::max)(size_t{ NUMETRON_SQR_KARATSUBA_THRESHOLD }, min_sqr_karatsuba_threshold) }) };
 
 inline void update_basecase_limit() noexcept;
 
@@ -698,6 +852,77 @@ inline void set_fft_threshold(size_t limbs) noexcept
     detail::update_basecase_limit();
 }
 
+inline size_t sqr_basecase_threshold() noexcept
+{
+    return detail::sqr_basecase_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_basecase_threshold(size_t limbs) noexcept
+{
+    detail::sqr_basecase_threshold_value.store((std::max)(limbs, min_sqr_basecase_threshold), std::memory_order_relaxed);
+}
+
+inline size_t sqr_karatsuba_threshold() noexcept
+{
+    return detail::sqr_karatsuba_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_karatsuba_threshold(size_t limbs) noexcept
+{
+    detail::sqr_karatsuba_threshold_value.store((std::max)(limbs, min_sqr_karatsuba_threshold), std::memory_order_relaxed);
+    detail::update_basecase_limit();
+}
+
+inline size_t sqr_toom3_threshold() noexcept
+{
+    return detail::sqr_toom3_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_toom3_threshold(size_t limbs) noexcept
+{
+    detail::sqr_toom3_threshold_value.store((std::max)(limbs, min_sqr_toom3_threshold), std::memory_order_relaxed);
+}
+
+inline size_t sqr_toom4_threshold() noexcept
+{
+    return detail::sqr_toom4_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_toom4_threshold(size_t limbs) noexcept
+{
+    detail::sqr_toom4_threshold_value.store((std::max)(limbs, min_sqr_toom4_threshold), std::memory_order_relaxed);
+}
+
+inline size_t sqr_toom6h_threshold() noexcept
+{
+    return detail::sqr_toom6h_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_toom6h_threshold(size_t limbs) noexcept
+{
+    detail::sqr_toom6h_threshold_value.store((std::max)(limbs, min_sqr_toom6h_threshold), std::memory_order_relaxed);
+}
+
+inline size_t sqr_toom8h_threshold() noexcept
+{
+    return detail::sqr_toom8h_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_toom8h_threshold(size_t limbs) noexcept
+{
+    detail::sqr_toom8h_threshold_value.store((std::max)(limbs, min_sqr_toom8h_threshold), std::memory_order_relaxed);
+}
+
+inline size_t sqr_fft_threshold() noexcept
+{
+    return detail::sqr_fft_threshold_value.load(std::memory_order_relaxed);
+}
+
+inline void set_sqr_fft_threshold(size_t limbs) noexcept
+{
+    detail::sqr_fft_threshold_value.store((std::max)(limbs, min_sqr_fft_threshold), std::memory_order_relaxed);
+}
+
 // Below this vn every product is a basecase one (see detail::basecase_limit_value).
 inline size_t basecase_limit() noexcept
 {
@@ -706,7 +931,7 @@ inline size_t basecase_limit() noexcept
 
 inline void detail::update_basecase_limit() noexcept
 {
-    basecase_limit_value.store((std::min)({ karatsuba_threshold(), toom3_threshold(), toom32_threshold(), toom42_threshold(), slicing_threshold(), toom76_threshold(), toom63_threshold(), toom98_threshold(), toom107_threshold(), toom116_threshold(), toom54_threshold(), toom53_threshold(), toom43_threshold(), toom4_threshold(), toom6h_threshold(), toom8h_threshold(), fft_threshold() }), std::memory_order_relaxed);
+    basecase_limit_value.store((std::min)({ karatsuba_threshold(), toom3_threshold(), toom32_threshold(), toom42_threshold(), slicing_threshold(), toom76_threshold(), toom63_threshold(), toom98_threshold(), toom107_threshold(), toom116_threshold(), toom54_threshold(), toom53_threshold(), toom43_threshold(), toom4_threshold(), toom6h_threshold(), toom8h_threshold(), fft_threshold(), sqr_karatsuba_threshold() }), std::memory_order_relaxed);
 }
 
 }

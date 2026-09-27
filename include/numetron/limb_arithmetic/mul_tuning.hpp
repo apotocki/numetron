@@ -75,6 +75,12 @@ struct mul_tuning_options
     size_t toom54_max = 1024;  // vn, with un = 1.3 vn (it stops at the Toom-6.5 threshold)
     size_t toom53_max = 1024;  // vn, with un = 1.7 vn (likewise)
     size_t toom43_max = 1024;  // vn, with un = 1.375 vn (likewise)
+    size_t sqr_karatsuba_max = 256; // the squaring stages (u * u)
+    size_t sqr_toom3_max = 2048;
+    size_t sqr_toom4_max = 4096;
+    size_t sqr_toom6h_max = 8192;
+    size_t sqr_toom8h_max = 16384;
+    size_t sqr_fft_max = 16384;
 
     // Install the found thresholds; when false they are only returned and the previous values
     // are restored.
@@ -84,6 +90,14 @@ struct mul_tuning_options
     // Toom-4/3), against the balanced thresholds as they are installed (e.g. the defaults); the
     // balanced ones and the FFT are returned unchanged and reported as found.
     bool tune_balanced = true;
+
+    // Tune the squaring thresholds (Karatsuba, Toom-3 .. Toom-8.5 and the FFT on u * u) too; only
+    // with tune_balanced.
+    bool tune_squares = true;
+
+    // Tune the squaring thresholds alone; the multiplication's are returned unchanged and
+    // reported as found.
+    bool squares_only = false;
 };
 
 struct mul_tuning_result
@@ -104,6 +118,12 @@ struct mul_tuning_result
     size_t toom54_threshold;
     size_t toom53_threshold;
     size_t toom43_threshold;
+    size_t sqr_karatsuba_threshold;
+    size_t sqr_toom3_threshold;
+    size_t sqr_toom4_threshold;
+    size_t sqr_toom6h_threshold;
+    size_t sqr_toom8h_threshold;
+    size_t sqr_fft_threshold;
     bool karatsuba_found;
     bool toom3_found;
     bool toom4_found;
@@ -120,6 +140,12 @@ struct mul_tuning_result
     bool toom54_found;
     bool toom53_found;
     bool toom43_found;
+    bool sqr_karatsuba_found;
+    bool sqr_toom3_found;
+    bool sqr_toom4_found;
+    bool sqr_toom6h_found;
+    bool sqr_toom8h_found;
+    bool sqr_fft_found;
 };
 
 namespace mul_tuning_detail {
@@ -141,6 +167,9 @@ public:
         for (auto& x : v_) x = rng() | 1;
     }
 
+    // true: squares, u * u with the same pointer on both sides (un == vn).
+    bool square = false;
+
     // un x vn products (un >= vn, both <= max_limbs).
     double batch_ns(size_t un, size_t vn, size_t reps)
     {
@@ -152,7 +181,7 @@ public:
         size_t k = 0;
         auto start = clock_type::now();
         for (size_t i = 0; i < reps; ++i) {
-            umul_dispatch(u_.data() + k * un, un, v_.data() + k * vn, vn, r_.data(), numetron::detail::stack_allocator<limb_type>{});
+            umul_dispatch(u_.data() + k * un, un, square ? u_.data() + k * un : v_.data() + k * vn, vn, r_.data(), numetron::detail::stack_allocator<limb_type>{});
             if (++k == pairs) k = 0;
         }
         auto finish = clock_type::now();
@@ -326,6 +355,12 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     const size_t prev_toom54 = toom54_threshold();
     const size_t prev_toom53 = toom53_threshold();
     const size_t prev_toom43 = toom43_threshold();
+    const size_t prev_sqr_karatsuba = sqr_karatsuba_threshold();
+    const size_t prev_sqr_toom3 = sqr_toom3_threshold();
+    const size_t prev_sqr_toom4 = sqr_toom4_threshold();
+    const size_t prev_sqr_toom6h = sqr_toom6h_threshold();
+    const size_t prev_sqr_toom8h = sqr_toom8h_threshold();
+    const size_t prev_sqr_fft = sqr_fft_threshold();
 
     bool committed = false;
     NUMETRON_SCOPE_EXIT([&] {
@@ -346,16 +381,83 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
             set_toom6h_threshold(prev_toom6h);
             set_toom8h_threshold(prev_toom8h);
             set_fft_threshold(prev_fft);
+            set_sqr_karatsuba_threshold(prev_sqr_karatsuba);
+            set_sqr_toom3_threshold(prev_sqr_toom3);
+            set_sqr_toom4_threshold(prev_sqr_toom4);
+            set_sqr_toom6h_threshold(prev_sqr_toom6h);
+            set_sqr_toom8h_threshold(prev_sqr_toom8h);
+            set_sqr_fft_threshold(prev_sqr_fft);
         }
     });
 
     mul_tuning_detail::workload work{ (std::max)({ opts.karatsuba_max, opts.toom3_max, opts.toom4_max, opts.toom6h_max, opts.toom8h_max, opts.fft_max,
         opts.toom32_max * 3 / 2, opts.toom42_max * 15 / 8, opts.toom76_max * 13 / 10, opts.toom63_max * 15 / 8,
         opts.toom98_max * 23 / 20, opts.toom107_max * 3 / 2, opts.toom116_max * 15 / 8,
-        opts.toom54_max * 13 / 10, opts.toom53_max * 17 / 10, opts.toom43_max * 11 / 8 }), opts.operand_pairs };
+        opts.toom54_max * 13 / 10, opts.toom53_max * 17 / 10, opts.toom43_max * 11 / 8,
+        opts.sqr_karatsuba_max, opts.sqr_toom3_max, opts.sqr_toom4_max, opts.sqr_toom6h_max, opts.sqr_toom8h_max, opts.sqr_fft_max }), opts.operand_pairs };
 
     constexpr size_t off = (std::numeric_limits<size_t>::max)();
     mul_tuning_result result{};
+
+    auto keep_squares = [&] {
+        result.sqr_karatsuba_threshold = prev_sqr_karatsuba;
+        result.sqr_toom3_threshold = prev_sqr_toom3;
+        result.sqr_toom4_threshold = prev_sqr_toom4;
+        result.sqr_toom6h_threshold = prev_sqr_toom6h;
+        result.sqr_toom8h_threshold = prev_sqr_toom8h;
+        result.sqr_fft_threshold = prev_sqr_fft;
+        result.sqr_karatsuba_found = result.sqr_toom3_found = result.sqr_toom4_found = true;
+        result.sqr_toom6h_found = result.sqr_toom8h_found = result.sqr_fft_found = true;
+    };
+
+    // The squaring chain (u * u), each stage against the ones below it like the balanced chain.
+    // It is independent of the multiplication thresholds (its Toom products are squares again)
+    // except the FFT's, which it shares and which is off here.
+    auto tune_squares = [&] {
+        work.square = true;
+        NUMETRON_SCOPE_EXIT([&] { work.square = false; });
+        set_sqr_fft_threshold(off);
+        set_sqr_toom8h_threshold(off);
+        set_sqr_toom6h_threshold(off);
+        set_sqr_toom4_threshold(off);
+        set_sqr_toom3_threshold(off);
+        auto karatsuba = mul_tuning_detail::tune_threshold(work, opts, "sqr_kara", &set_sqr_karatsuba_threshold,
+            (std::max)(min_sqr_karatsuba_threshold, sqr_basecase_threshold()), opts.sqr_karatsuba_max);
+        result.sqr_karatsuba_found = karatsuba.has_value();
+        result.sqr_karatsuba_threshold = karatsuba.value_or(prev_sqr_karatsuba);
+        set_sqr_karatsuba_threshold(karatsuba.value_or(off));
+
+        auto toom3 = mul_tuning_detail::tune_threshold(work, opts, "sqr_toom3", &set_sqr_toom3_threshold,
+            (std::max)(min_sqr_toom3_threshold, karatsuba.value_or(min_sqr_toom3_threshold)), opts.sqr_toom3_max);
+        result.sqr_toom3_found = toom3.has_value();
+        result.sqr_toom3_threshold = toom3.value_or(prev_sqr_toom3);
+        set_sqr_toom3_threshold(toom3.value_or(off));
+
+        auto toom4 = mul_tuning_detail::tune_threshold(work, opts, "sqr_toom4", &set_sqr_toom4_threshold,
+            (std::max)(min_sqr_toom4_threshold, toom3.value_or(min_sqr_toom4_threshold)), opts.sqr_toom4_max);
+        result.sqr_toom4_found = toom4.has_value();
+        result.sqr_toom4_threshold = toom4.value_or(prev_sqr_toom4);
+        set_sqr_toom4_threshold(toom4.value_or(off));
+
+        auto toom6h = mul_tuning_detail::tune_threshold(work, opts, "sqr_toom6h", &set_sqr_toom6h_threshold,
+            (std::max)(min_sqr_toom6h_threshold, toom4.value_or(toom3.value_or(min_sqr_toom6h_threshold))), opts.sqr_toom6h_max);
+        result.sqr_toom6h_found = toom6h.has_value();
+        result.sqr_toom6h_threshold = toom6h.value_or(prev_sqr_toom6h);
+        set_sqr_toom6h_threshold(toom6h.value_or(off));
+
+        auto toom8h = mul_tuning_detail::tune_threshold(work, opts, "sqr_toom8h", &set_sqr_toom8h_threshold,
+            (std::max)(min_sqr_toom8h_threshold, toom6h.value_or(toom4.value_or(toom3.value_or(min_sqr_toom8h_threshold)))), opts.sqr_toom8h_max);
+        result.sqr_toom8h_found = toom8h.has_value();
+        result.sqr_toom8h_threshold = toom8h.value_or(prev_sqr_toom8h);
+        set_sqr_toom8h_threshold(toom8h.value_or(off));
+
+        // the FFT squares by itself from its own threshold, searched like the multiplication's
+        auto fft = mul_tuning_detail::tune_threshold(work, opts, "sqr_fft", &set_sqr_fft_threshold,
+            (std::max)(min_sqr_fft_threshold, toom4.value_or(toom3.value_or(min_sqr_toom4_threshold))), opts.sqr_fft_max);
+        result.sqr_fft_found = fft.has_value();
+        result.sqr_fft_threshold = fft.value_or(prev_sqr_fft);
+        set_sqr_fft_threshold(result.sqr_fft_threshold);
+    };
 
     // The unbalanced stages, against whatever balanced thresholds are installed, the FFT off. Each
     // on shapes from the middle of its window, against what takes those shapes otherwise: the
@@ -435,6 +537,40 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         set_toom43_threshold(result.toom43_threshold);
     };
 
+    if (opts.squares_only) {
+        result.karatsuba_threshold = prev_karatsuba;
+        result.toom3_threshold = prev_toom3;
+        result.toom4_threshold = prev_toom4;
+        result.toom6h_threshold = prev_toom6h;
+        result.toom8h_threshold = prev_toom8h;
+        result.fft_threshold = prev_fft;
+        result.toom32_threshold = prev_toom32;
+        result.toom42_threshold = prev_toom42;
+        result.toom76_threshold = prev_toom76;
+        result.toom63_threshold = prev_toom63;
+        result.toom98_threshold = prev_toom98;
+        result.toom107_threshold = prev_toom107;
+        result.toom116_threshold = prev_toom116;
+        result.toom54_threshold = prev_toom54;
+        result.toom53_threshold = prev_toom53;
+        result.toom43_threshold = prev_toom43;
+        result.karatsuba_found = result.toom3_found = result.toom4_found = result.toom6h_found = true;
+        result.toom8h_found = result.fft_found = result.toom32_found = result.toom42_found = true;
+        result.toom76_found = result.toom63_found = result.toom98_found = result.toom107_found = true;
+        result.toom116_found = result.toom54_found = result.toom53_found = result.toom43_found = true;
+        tune_squares(); // the multiplication's thresholds don't take part (the squares' products are squares)
+        if (opts.apply) {
+            set_sqr_karatsuba_threshold(result.sqr_karatsuba_threshold);
+            set_sqr_toom3_threshold(result.sqr_toom3_threshold);
+            set_sqr_toom4_threshold(result.sqr_toom4_threshold);
+            set_sqr_toom6h_threshold(result.sqr_toom6h_threshold);
+            set_sqr_toom8h_threshold(result.sqr_toom8h_threshold);
+            set_sqr_fft_threshold(result.sqr_fft_threshold);
+            committed = true;
+        }
+        return result;
+    }
+
     set_toom32_threshold(off);
     set_toom42_threshold(off);
     set_toom76_threshold(off);
@@ -449,6 +585,7 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
 
     if (!opts.tune_balanced) {
         tune_unbalanced();
+        keep_squares();
         result.karatsuba_threshold = prev_karatsuba;
         result.toom3_threshold = prev_toom3;
         result.toom4_threshold = prev_toom4;
@@ -500,6 +637,8 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     set_toom8h_threshold(toom8h.value_or(off));
 
     tune_unbalanced(); // the FFT is still off
+    if (opts.tune_squares) tune_squares();
+    else keep_squares();
 
     // The FFT takes any size (and has no sub-products), so it is searched from the Toom-4
     // threshold up against everything below.
@@ -525,6 +664,12 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         set_toom54_threshold(result.toom54_threshold);
         set_toom53_threshold(result.toom53_threshold);
         set_toom43_threshold(result.toom43_threshold);
+        set_sqr_karatsuba_threshold(result.sqr_karatsuba_threshold);
+        set_sqr_toom3_threshold(result.sqr_toom3_threshold);
+        set_sqr_toom4_threshold(result.sqr_toom4_threshold);
+        set_sqr_toom6h_threshold(result.sqr_toom6h_threshold);
+        set_sqr_toom8h_threshold(result.sqr_toom8h_threshold);
+        set_sqr_fft_threshold(result.sqr_fft_threshold);
         committed = true;
     }
     return result;

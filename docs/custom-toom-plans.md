@@ -44,6 +44,10 @@ The existing plans are the best reference:
   sums of more than four terms taking several `lincomb` passes, and the rest of the plan is
   fixed. An example of building a plan imperatively into a `std::array` instead of one
   brace-list.
+- `square.hpp` — not a plan but a transform: `toom_square_traits<BalancedTraits>` derives
+  the squaring variant of a balanced plan at compile time. B's evaluation is dropped, and
+  every product becomes the square of A's value. A new balanced plan gets its square for free
+  if B's evaluation mirrors A's op for op.
 
 ---
 

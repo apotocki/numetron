@@ -586,7 +586,9 @@ requires(std::is_same_v<LimbT, typename std::allocator_traits<std::remove_cvref_
             // MSVC those were ~6 ns of a 4 x 4 multiplication
             const size_t rsz = ulimbs.size() + vlimbs.size();
             LimbT* r = alloc_traits_t::allocate(alloc, rsz);
-            LimbT* re = umul_basecase(ulimbs.data(), ulimbs.size(), vlimbs.data(), vlimbs.size(), r);
+            LimbT* re = ulimbs.data() == vlimbs.data() && ulimbs.size() == vlimbs.size()
+                ? usqr_basecase(ulimbs.data(), ulimbs.size(), r)
+                : umul_basecase(ulimbs.data(), ulimbs.size(), vlimbs.data(), vlimbs.size(), r);
             while (re != r && !*(re - 1)) --re;
             get<0>(result) = r;
             get<1>(result) = static_cast<size_t>(re - r);

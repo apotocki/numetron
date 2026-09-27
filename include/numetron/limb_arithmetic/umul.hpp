@@ -251,6 +251,11 @@ inline LimbT* umul_dispatch(
         std::swap(un, vn);
     }
 
+    // A square (the same limbs on both sides): its own chain.
+    if (u == v && un == vn) {
+        return usqr_dispatch(u, un, rb, std::move(alloc));
+    }
+
     // Below every algorithm's threshold: the basecase, without asking each of them.
     if (vn < basecase_limit()) {
         return vn ? umul_basecase<LimbT>(u, un, v, vn, rb) : rb;
@@ -364,12 +369,60 @@ inline LimbT* umul_dispatch(
     return rb;
 }
 
+// rb[0..2n) = u^2, the square counterpart of umul_dispatch (u's leading zero limbs dropped
+// first; returns one past the last limb written). The FFT (from sqr_fft_threshold()) squares by
+// itself; below it the squaring variants of the balanced Toom plans (toom/square.hpp: A's
+// evaluation only, the pointwise products squares -- back through umul_dispatch, which sends
+// them here), from the sqr_toom*_threshold()s; then Karatsuba squaring (three squares) from
+// sqr_karatsuba_threshold() and the squaring basecase.
+template <std::unsigned_integral LimbT, typename AllocatorT>
+inline LimbT* usqr_dispatch(const LimbT* u, size_t n, LimbT* rb, AllocatorT alloc)
+{
+    while (n > 0 && u[n - 1] == 0) --n;
+    if (!n) return rb;
+    if constexpr (sizeof(LimbT) == 8) {
+        if (n >= sqr_fft_threshold()) return detail::umul_fft_impl(u, n, u, n, rb, std::move(alloc));
+    }
+    if (n >= sqr_toom8h_threshold() && detail::toom8h_split_fits(n, n)) return toom8h_square_engine::umul(u, n, u, n, rb, std::move(alloc));
+    if (n >= sqr_toom6h_threshold() && detail::toom6h_split_fits(n, n)) return toom6h_square_engine::umul(u, n, u, n, rb, std::move(alloc));
+    if (n >= sqr_toom4_threshold() && detail::toom4_split_fits(n, n)) return toom4_square_engine::umul(u, n, u, n, rb, std::move(alloc));
+    if (n >= sqr_toom3_threshold() && detail::toom3_split_fits(n, n)) {
+        return toom3_square_engine::umul(u, n, u, n, rb, std::move(alloc));
+    }
+    if (n >= sqr_karatsuba_threshold()) {
+        return detail::usqr_karatsuba_impl(u, n, rb, std::move(alloc));
+    }
+    return usqr_basecase<LimbT>(u, n, rb);
+}
+
 template <std::unsigned_integral LimbT, typename AllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
 inline std::tuple<LimbT*, size_t, size_t> umul(std::span<const LimbT> u, std::span<const LimbT> v, AllocatorT alloc)
 {
     if (v.empty()) [[unlikely]] {
         return { nullptr, 0, 0 };
+    }
+
+    // A square (the same limbs on both sides): see usqr_dispatch.
+    if constexpr (sizeof(LimbT) == 8) {
+        if (u.data() == v.data() && u.size() == v.size()) {
+            const size_t rsz = 2 * u.size();
+            LimbT* r = std::allocator_traits<AllocatorT>::allocate(alloc, rsz);
+            LimbT* re;
+            if (u.size() < sqr_karatsuba_threshold()) {
+                re = usqr_basecase(u.data(), u.size(), r);
+            } else {
+                numetron::detail::stack_allocator<LimbT> scratch_alloc;
+                try {
+                    re = usqr_dispatch(u.data(), u.size(), r, scratch_alloc);
+                }
+                catch (...) {
+                    std::allocator_traits<AllocatorT>::deallocate(alloc, r, rsz);
+                    throw;
+                }
+            }
+            return { r, static_cast<size_t>(re - r), rsz };
+        }
     }
 
     // Below every algorithm's threshold: the basecase, without asking each of them.

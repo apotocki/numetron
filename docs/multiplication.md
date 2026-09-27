@@ -35,8 +35,9 @@ At the start of this work numetron was at 0.65 at 4096 limbs; before the FFT, 0.
   - The smallest rows (vn = 32, 64): 1.02–1.23, overhead-bound as the balanced small sizes.
 
   The plans and the measurements are in § 2 (items 0–0c) and § 9 item 3, steps 1–10.
-- **Squaring has no path of its own** (§ 9 item 10): a · a runs as a general product
-  everywhere except in the FFT.
+- **Squaring** (§ 9 item 10) has its own chain: squaring basecase, Karatsuba, Toom plans and
+  FFT, each from its own threshold. It is roughly on a par with GMP from 32 limbs (0.95–1.09
+  below the FFT, 1.2–1.6 in it), 0.77–0.94 at 4–16 limbs.
 - **1 .. 8 limbs: on a par** (0.97–1.14; single-limb values in place, the bench's "1*" row:
   1.5–2.4). The work there is a handful of `mul` instructions, so it comes down to the overhead
   around them; § 9 item 2 has it layer by layer and what was cut.
@@ -56,6 +57,25 @@ Default thresholds (limbs, `toom/thresholds.hpp`, chosen per compiler and implem
 | header-only, reference basecase, MSVC | 14 | 70 | 231 | 418 | 675 | AVX2 418 / scalar 2389 |
 | header-only, reference basecase, GCC (and Clang, untuned) | 20 | 137 | 218 | 311 | 500 | AVX2 599 / scalar 2696 |
 
+Squares (`sqr_*`, § 9 item 10; `--tune-squares`, two runs each, 2026-09-25; the FFT with the
+AVX2 kernel, with the scalar one the product's). A Toom-6.5 / 8.5 threshold at or above the
+FFT's is never reached:
+
+| | karatsuba | toom3 | toom4 | toom6h | toom8h | fft |
+|---|---|---|---|---|---|---|
+| asm Karatsuba, MSVC | 60 | 109 | 471 | 2864 | 2864 | 2389 |
+| asm Karatsuba, GCC | 60 | 115 | 500 | 808 | 1766 | 1766 |
+| C++ Karatsuba, MSVC | 60 | 115 | 371 | 2696 | 2696 | 2538 |
+| C++ Karatsuba, GCC | 57 | 122 | 500 | 1027 | 1474 | 1766 |
+| header-only, `c++ adx` (GCC / Clang) | 63 | 109 | 500 | 564 | 1566 | 1766 |
+| header-only, `c++ blocked` (MSVC) | 23 | 74 | 122 | 675 | 808 | 675 |
+| header-only, reference, MSVC | 14 | 70 | 115 | 531 | 808 | 293 |
+| header-only, reference, GCC | 63 | 115 | 500 | 761 | 1091 | 1766 |
+
+The squaring basecase (its own kernel instead of a general product) starts at 14 limbs (10
+header-only ADX). MSVC header-only has no squaring rows, which is why its squaring Karatsuba
+starts as early as the product's.
+
 \* `--tune` gave 2249 / 2249 on MSVC once (and 1231 / 1766, 761 / 1766 in other runs), but the
 measured node curves are the same as GCC's (§ 4, Toom-6.5), so the thresholds are set by the
 curves, not by single runs. The FFT thresholds were the same in two runs each.
@@ -66,6 +86,16 @@ curves, not by single runs. The FFT thresholds were the same in two runs each.
 
 `umul()` / `umul_dispatch()` in `limb_arithmetic/umul.hpp`, operands normalized to un >= vn:
 
+S. **Squares** — the same limbs on both sides (u == v, un == vn), checked first:
+   `usqr_dispatch`. It tries, in order:
+   - the FFT from `sqr_fft_threshold()`;
+   - the squaring variants of the balanced Toom-8.5 / 6.5 / 4 / 3 plans (`toom/square.hpp`),
+     each from its `sqr_toom*_threshold()`;
+   - Karatsuba squaring from `sqr_karatsuba_threshold()`;
+   - `usqr_basecase`.
+
+   The Toom and Karatsuba squares' sub-products are squares again, so the recursion stays in
+   this chain (§ 9 item 10).
 0. **FFT** (`umul_fft.hpp`, 64-bit limbs) — `vn >= fft_threshold()`, any shape: a multi-prime
    number-theoretic transform, 2 limbs per coefficient; `NUMETRON_FFT_IMPL` picks the AVX2 + FMA
    kernel (default when the compiler targets AVX2) or the portable scalar one. A long u is cut
@@ -528,7 +558,11 @@ level, below the Karatsuba threshold the basecase); Toom-4/2 the same way on 1.8
 1.875n x n (the middles of their windows), each from the Toom-4 threshold up to 4096; last
 Toom-5/4, Toom-5/3 and Toom-4/3 on 1.3n x n, 1.7n x n and 1.375n x n from their minimum (they
 stop at the Toom-6.5 threshold by themselves). `--tune-unbalanced[=samples]` tunes just these
-ten, against the installed (default) balanced thresholds. **Why it works the way it does**:
+ten, against the installed (default) balanced thresholds. Then come the squaring stages, the
+same way on u · u (the same pointer on both sides): Karatsuba (from the squaring basecase
+threshold), Toom-3, 4, 6.5, 8.5 and the FFT. They are independent of the product thresholds,
+since a square's sub-products are squares. `--tune-squares[=samples]` tunes just these.
+**Why it works the way it does**:
 
 - A one-level comparison (threshold n vs n+1: only the top node changes) is **not a smooth
   curve**. The higher/lower time ratio swings in bands about an octave wide as the two
@@ -1208,11 +1242,53 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
    Toom-6.5/8.5 (and Toom-3 over the asm Karatsuba) thresholds jump between runs; a median over
    several runs, or a smaller tie band there, would make `--tune` repeatable.
 9. Toom-3 `eval3` still has one `lshift1` (p2 = 2·(p1 + x2) − x0) — minor.
-10. **Squaring.** a · a takes the general product everywhere but in the FFT, which does one
-    forward transform instead of two.
-    - What GMP has: `sqr_basecase` (half the cross products, doubled, plus the diagonal: ~1.5x
-      the speed of mul_basecase), and squaring variants of Karatsuba / Toom. Those evaluate one
-      operand instead of two, and their pointwise products are squares again.
-    - Why it matters: `pow`, modular exponentiation, `sqrt` and Newton iterations are mostly
-      squarings.
-    - Not measured yet. The first step is a `--sqr` mode in `numetron_bench_mul` to see the gap.
+10. **Squaring — done (2026-09-25).** `pow`, modular exponentiation, `sqrt` and Newton
+    iterations are mostly squarings, and GMP gains 1.3–1.6x on them over a general product.
+    A square is recognized by the pointers: the same limbs on both sides
+    (`umul_dispatch`, `umul()`, `mul()`, `assign_mul(u, u)`). It then takes a chain of its own,
+    `usqr_dispatch` (§ 2, item S).
+    - **Basecase** (`usqr_basecase`, `umul_basecase.hpp`): the products above the diagonal once,
+      in rows (`mul_1` + `addmul_1`), then one pass doubling them and adding the diagonal
+      u[i]². The rows are numetron's asm (`mul_1_adx.{s,asm}`: mulx + adcx/adox, MIT) with
+      `NUMETRON_USE_ASM`, or the inline-asm ADX rows of the header-only GCC / Clang build. From
+      `sqr_basecase_threshold()` (14; 10 header-only ADX) it is 0.55–0.6 of `umul_basecase(u, u)`;
+      below that, the rows' per-call cost loses. For 3–8 limbs GCC / Clang have fixed-size
+      kernels through `__int128` (`usqr_basecase_fixed<N>`): 5.7 ns at 4 limbs (`mpn_sqr` 5.1,
+      the general product 6.6); at 8 limbs on a par with `mpn_sqr`. MSVC has none (its
+      `_addcarry_u64` chains were slow for the product kernels too); there a small square is a
+      general product.
+    - **Karatsuba** (`detail::usqr_karatsuba_impl`, `umul_karatsuba.hpp`): three squares, the
+      middle one of |u0 − u1|, always subtracted. From `sqr_karatsuba_threshold()`.
+    - **Toom** (`toom/square.hpp`): squaring plans derived at compile time from the balanced
+      Toom-3 / 4 / 6.5 / 8.5 plans, not written by hand. Every instruction before the first
+      product that reads v, or a slot B's evaluation wrote, is B's evaluation and is dropped.
+      It is paired op for op with A's (a mismatch is a compile error). B's slots map to A's,
+      so every product becomes `umul_fixed(W, EA, EA)`: a square, sent back to the squaring
+      chain, with a + sign. Interpolation and composition are unchanged.
+    - **FFT**: one forward transform per prime instead of two (as before), from its own
+      threshold, `sqr_fft_threshold()`.
+    - **Thresholds**: `sqr_karatsuba`, `sqr_toom3/4/6h/8h`, `sqr_fft` (§ 6). The tuner has
+      stages for them (`numetron_bench_mul --tune-squares`), run on u · u with the other
+      thresholds unchanged. Squares cross over later than products, since the squaring basecase
+      is cheaper: Karatsuba at 57–63 instead of 24–38.
+    - **Result** (`numetron_bench_mul --sqr`, asm build, after `--tune`; gmp/sqr, > 1: faster):
+
+      Before, with no squaring path, squares were 0.76–0.92 of GMP below the FFT. With the
+      basecase and Karatsuba squares but no Toom ones they were 0.94–1.08 at 16–96 limbs and
+      0.83–0.90 from 128.
+
+      | limbs | 4 | 8 | 16 | 32–512 | 768–1536 | 2048 | 3072–16384 |
+      |---|---|---|---|---|---|---|---|
+      | GCC, default thresholds (`--no-tune`) | 0.77 | 0.94 | 0.93 | 0.97–1.08 | 0.95–1.02 | 1.16 | 1.31–1.57 |
+      | MSVC, `--tune` (FFT 2696 then) | 0.79 | 0.83 | 0.94 | 0.99–1.09 | 0.96–1.00 | 0.98 | 1.20–1.48 |
+
+      On GCC the squaring FFT from 1766 took 2048 from 0.96 to 1.16.
+
+      A square is now 1.15–1.3x faster than numetron's own product of the size, against GMP's
+      1.3–1.6x (GMP's general product is slower, § 1).
+    - **Left**:
+      - 4–8 limbs. The kernel is near `mpn_sqr`; what is missing is the `assign_mul` overhead
+        (~4 ns against GMP's ~2 ns; the same gap as the 4-limb product, item 2).
+      - 768–1536 limbs: 0.95–1.02. The Toom squares save only A's evaluation and square
+        products; interpolation is as expensive as in a product.
+      - MSVC small squares: no fixed kernels.
