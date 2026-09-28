@@ -50,6 +50,28 @@
 #       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 311
 #       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 500
 #   endif
+#elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM && NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
+// The GMP-derived mul_basecase (picked per CPU) under the asm Karatsuba: tuned 2026-09-28 on an
+// Alder Lake class CPU (its alderlake variant; two runs each, where they differed the larger).
+// That kernel is slower there than numetron's own, so the recursion starts later: 1024 limbs
+// 1.10 -> 1.17..1.18 of GMP (GCC), 1.03 -> 1.10..1.13 (MSVC) against the MIT set. Toom-6.5 / 8.5
+// are the tuned ones (GCC 564 / 675 and 967, MSVC 1566 / 1766 in both runs): unlike over the MIT
+// kernel, where MSVC's high values were a plateau, here they count -- with the MIT 761 / 1159
+// MSVC stayed at 1.03 at 1024 limbs. The unbalanced plans keep the MIT values (not tuned under
+// this kernel).
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 30
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 311
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 1566
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 1766
+#   else // GCC (and Clang, untuned)
+#       define NUMETRON_DEFAULT_KARATSUBA_THRESHOLD 29
+#       define NUMETRON_DEFAULT_TOOM3_THRESHOLD 115
+#       define NUMETRON_DEFAULT_TOOM4_THRESHOLD 471
+#       define NUMETRON_DEFAULT_TOOM6H_THRESHOLD 675
+#       define NUMETRON_DEFAULT_TOOM8H_THRESHOLD 967
+#   endif
 #elif NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM
 // asm basecase + asm Karatsuba (the default with NUMETRON_USE_ASM), MSVC with the AVX2 shift
 // kernels; retuned 2026-09-27 over the basecase's straight-line rows for un <= 16 (two runs each;
@@ -167,7 +189,7 @@
 // squares), the squaring variants of the balanced Toom plans (toom/square.hpp) and the FFT (one
 // forward transform) from these sizes up. tune_mul_thresholds() on u * u (--tune-squares, two
 // runs per configuration), 2026-09-25; the FFT ones with the AVX2 kernel (with the scalar one
-// the multiplication's threshold). Where two runs or near-tied candidates differed (< 1%), the
+// the multiplication's threshold, unless a scalar one is given; rechecked 2026-09-28). Where two runs or near-tied candidates differed (< 1%), the
 // larger. A Toom-6.5 / 8.5 threshold at or above the FFT's means "not used". Defining any of
 // these defaults yourself replaces the whole set (the rest then follow the multiplication's).
 #if !defined(NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD) && !defined(NUMETRON_DEFAULT_SQR_TOOM3_THRESHOLD) \
@@ -190,6 +212,9 @@
 #           define NUMETRON_DEFAULT_SQR_TOOM6H_THRESHOLD 675
 #           define NUMETRON_DEFAULT_SQR_TOOM8H_THRESHOLD 808
 #           define NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD 675
+// the scalar kernel: 2538 / 2696 (--tune-squares, 2026-09-28); the product's 5247 left 3072..4096
+// limbs at 0.69..0.70 of GMP against 0.83..1.00
+#           define NUMETRON_DEFAULT_SQR_FFT_SCALAR_THRESHOLD 2696
 #       elif defined(_MSC_VER) && !defined(__clang__)
 // the reference basecase, MSVC
 #           define NUMETRON_DEFAULT_SQR_KARATSUBA_THRESHOLD 14
@@ -327,6 +352,8 @@
 #ifndef NUMETRON_DEFAULT_SQR_FFT_THRESHOLD
 #   if defined(NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD) && NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
 #       define NUMETRON_DEFAULT_SQR_FFT_THRESHOLD NUMETRON_DEFAULT_SQR_FFT_AVX2_THRESHOLD
+#   elif defined(NUMETRON_DEFAULT_SQR_FFT_SCALAR_THRESHOLD) && NUMETRON_FFT_IMPL != NUMETRON_FFT_IMPL_AVX2
+#       define NUMETRON_DEFAULT_SQR_FFT_THRESHOLD NUMETRON_DEFAULT_SQR_FFT_SCALAR_THRESHOLD
 #   else
 #       define NUMETRON_DEFAULT_SQR_FFT_THRESHOLD NUMETRON_FFT_THRESHOLD
 #   endif
@@ -608,12 +635,15 @@
 #       endif
 #   endif
 #elif NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
-// with the asm (two runs each, the same result both times; 2026-09-27, over the basecase's
-// straight-line rows: the asm Karatsuba's; 2696 with the C++ one)
+// with the asm: the lower bound of detail::fft_product_fills (umul_fft.hpp), on the product's
+// coefficients, from a sweep of the Toom chain against the FFT (vn x vn and 1.5vn x vn, vn =
+// 1920..6400, 2026-09-28): where the FFT starts to win at length 2048 -- GCC 1984 (fill 0.97),
+// MSVC 2040 (1.00; 2048 x 2048 has 2047 coefficients). (--tune on a single threshold on vn had
+// given 2864, 2026-09-27.)
 #   if defined(_MSC_VER) && !defined(__clang__)
-#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2864
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2040
 #   else
-#       define NUMETRON_DEFAULT_FFT_THRESHOLD 2864
+#       define NUMETRON_DEFAULT_FFT_THRESHOLD 1984
 #   endif
 #else // the scalar kernel
 #   if defined(_MSC_VER) && !defined(__clang__)

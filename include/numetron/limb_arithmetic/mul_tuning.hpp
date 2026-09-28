@@ -452,8 +452,12 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
         set_sqr_toom8h_threshold(toom8h.value_or(off));
 
         // the FFT squares by itself from its own threshold, searched like the multiplication's
-        auto fft = mul_tuning_detail::tune_threshold(work, opts, "sqr_fft", &set_sqr_fft_threshold,
-            (std::max)(min_sqr_fft_threshold, toom4.value_or(toom3.value_or(min_sqr_toom4_threshold))), opts.sqr_fft_max);
+        // (kept when it is the fill rule's lower bound, detail::fft_threshold_is_fill_bound)
+        std::optional<size_t> fft = prev_sqr_fft;
+        if constexpr (!detail::fft_threshold_is_fill_bound) {
+            fft = mul_tuning_detail::tune_threshold(work, opts, "sqr_fft", &set_sqr_fft_threshold,
+                (std::max)(min_sqr_fft_threshold, toom4.value_or(toom3.value_or(min_sqr_toom4_threshold))), opts.sqr_fft_max);
+        }
         result.sqr_fft_found = fft.has_value();
         result.sqr_fft_threshold = fft.value_or(prev_sqr_fft);
         set_sqr_fft_threshold(result.sqr_fft_threshold);
@@ -641,9 +645,13 @@ inline mul_tuning_result tune_mul_thresholds(mul_tuning_options const& opts = {}
     else keep_squares();
 
     // The FFT takes any size (and has no sub-products), so it is searched from the Toom-4
-    // threshold up against everything below.
-    auto fft = mul_tuning_detail::tune_threshold(work, opts, "fft", &set_fft_threshold,
-        (std::max)(min_fft_threshold, toom4.value_or(toom3.value_or(min_toom4_threshold))), opts.fft_max);
+    // threshold up against everything below; kept when it is the fill rule's lower bound
+    // (detail::fft_threshold_is_fill_bound).
+    std::optional<size_t> fft = prev_fft;
+    if constexpr (!detail::fft_threshold_is_fill_bound) {
+        fft = mul_tuning_detail::tune_threshold(work, opts, "fft", &set_fft_threshold,
+            (std::max)(min_fft_threshold, toom4.value_or(toom3.value_or(min_toom4_threshold))), opts.fft_max);
+    }
     result.fft_found = fft.has_value();
     result.fft_threshold = fft.value_or(prev_fft);
 

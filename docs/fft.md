@@ -350,6 +350,15 @@ Effect:
 
 Measurements: `multiplication.md` § 9 item 3, steps 8 and 8b.
 
+### The fill rule (2026-09-28)
+
+With `NUMETRON_USE_ASM` the FFT is no longer taken from one size up: the time is a staircase in
+the transform length, so it takes a size only when its length is filled well enough
+(`detail::fft_product_fills`, `detail::fft_square_fills`), the threshold being the lower bound
+(products GCC 1984 / MSVC 2040 coefficients, squares 3500 / 3600 limbs). Products now use the
+FFT from 2048 limbs (1.31 / 1.20 of GMP there, was 1.19 / 1.12). Measurements:
+`multiplication.md` § 9 item 3 step 11 (products) and item 10 (squares).
+
 ---
 
 ## 6. Phases

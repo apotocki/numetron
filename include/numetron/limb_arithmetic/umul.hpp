@@ -25,13 +25,18 @@
 
 namespace numetron::limb_arithmetic {
 
-// The FFT takes any shape (its length follows un + vn); only the size of the smaller operand
-// decides. 64-bit limbs only.
+// The FFT takes any shape (its length follows un + vn). A long u (un >= 2vn, cut into pieces that
+// fill a length: fft_slice_length) from vn >= fft_threshold(); below that one transform, where
+// its coefficient count reaches fft_threshold() and the length is well filled
+// (detail::fft_product_fills). 64-bit limbs only.
 template <std::unsigned_integral LimbT>
 inline bool is_fft_applicable([[maybe_unused]] size_t un, size_t vn) noexcept
 {
     assert(un >= vn);
-    if constexpr (sizeof(LimbT) == 8) return vn >= fft_threshold();
+    if constexpr (sizeof(LimbT) == 8) {
+        if (un >= 2 * vn) return vn >= fft_threshold();
+        return detail::fft_product_fills(un, vn);
+    }
     else return false;
 }
 

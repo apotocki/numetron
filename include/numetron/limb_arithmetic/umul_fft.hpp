@@ -459,6 +459,46 @@ inline bool fft_square_fills([[maybe_unused]] size_t n) noexcept
 #endif
 }
 
+// Whether an un x vn product with un < 2 vn (one transform; longer u is cut into pieces that fill
+// a length, fft_slice_length) takes the FFT: its n = ceil(un/2) + ceil(vn/2) - 1 coefficients
+// at least fft_threshold() and the transform length filled well enough, as for squares
+// (fft_square_fills). The threshold is on the coefficients, so an unbalanced shape gets there at
+// a smaller vn -- the FFT's cost follows n, not vn: with the threshold on vn, 1.5vn x vn products
+// at vn = 2240..2880 were 5-15% behind the FFT. Measured (vn x vn and 1.5vn x vn, vn =
+// 1920..6400, 2026-09-28; the lowest winning fill of the length, GCC / MSVC): 2048 0.97 / 1.00,
+// 3072 0.87-0.89 / 0.89-0.92, 4096 from the start of its range (0.75) / 0.80-0.83, 6144 0.70 /
+// 0.71-0.72, 8192 from the start on both; the two shapes agree in coefficients. Measured with
+// NUMETRON_USE_ASM only; the header-only builds keep vn >= fft_threshold().
+inline bool fft_product_fills(size_t un, size_t vn) noexcept
+{
+#if defined(NUMETRON_USE_ASM)
+    const size_t n = (un + 1) / 2 + (vn + 1) / 2 - 1;
+    if (n < fft_threshold()) return false;
+    const size_t L = ntt::choose_length(n).L;
+    if (L >= 8192) return true;
+#   if defined(_MSC_VER) && !defined(__clang__)
+    const size_t min_fill_percent = L <= 3072 ? 90 : L == 4096 ? 81 : 71;
+#   else
+    const size_t min_fill_percent = L <= 3072 ? 87 : 70;
+#   endif
+    return 100 * n >= min_fill_percent * L;
+#else
+    (void)un;
+    return vn >= fft_threshold();
+#endif
+}
+
+// Whether fft_threshold() / sqr_fft_threshold() are the lower bounds of the fill rules above
+// (set from a sweep) rather than crossovers: tune_mul_thresholds() keeps them then, since its
+// search for one size above which the FFT always wins can't express a staircase (it put the
+// product's bound at 2864, which lost the full 2048 length). With the scalar kernel the bounds
+// lie past length 8192, where the rules take any fill, so they stay tunable.
+#if defined(NUMETRON_USE_ASM) && NUMETRON_FFT_IMPL == NUMETRON_FFT_IMPL_AVX2
+inline constexpr bool fft_threshold_is_fill_bound = true;
+#else
+inline constexpr bool fft_threshold_is_fill_bound = false;
+#endif
+
 inline size_t fft_slice_length(size_t un, size_t vn) noexcept
 {
     NUMETRON_ASSERT(un >= vn && vn >= 1);

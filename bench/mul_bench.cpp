@@ -524,6 +524,7 @@ int main(int argc, char** argv)
         auto before_sf = numetron::limb_arithmetic::sqr_fft_threshold();
         auto tuned = numetron::limb_arithmetic::tune_mul_thresholds(opts);
         auto show = [](size_t t) { return t == ~size_t{ 0 } ? std::string{ "off" } : std::to_string(t); };
+        constexpr bool fill_bound = numetron::limb_arithmetic::detail::fft_threshold_is_fill_bound;
         std::cout << "tuned thresholds (limbs):\n"
                   << "  karatsuba: " << before_k << " -> " << tuned.karatsuba_threshold
                   << (tuned.karatsuba_found ? "" : " (no crossover found, kept)") << "\n"
@@ -566,9 +567,9 @@ int main(int argc, char** argv)
                   << "  sqr toom8h: " << before_s8 << " -> " << tuned.sqr_toom8h_threshold
                   << (tuned.sqr_toom8h_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  sqr fft:    " << show(before_sf) << " -> " << show(tuned.sqr_fft_threshold)
-                  << (tuned.sqr_fft_found ? "" : " (no crossover found, kept)") << "\n"
+                  << (fill_bound ? " (the fill rule's lower bound, kept)" : tuned.sqr_fft_found ? "" : " (no crossover found, kept)") << "\n"
                   << "  fft:       " << show(before_fft) << " -> " << show(tuned.fft_threshold)
-                  << (tuned.fft_found ? "" : " (no crossover found, kept)") << "\n\n";
+                  << (fill_bound ? " (the fill rule's lower bound, kept)" : tuned.fft_found ? "" : " (no crossover found, kept)") << "\n\n";
     }
 
     // --balanced: un == vn over limb_counts; --unbalanced: un > vn over unbalanced_v_limbs x
