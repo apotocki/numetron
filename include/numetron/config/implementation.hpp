@@ -25,6 +25,9 @@
 //   limb_arithmetic/umul_dispatch.hpp), src/umul_large.cpp: the entry point is
 //   detail::umul_large in limb_arithmetic/umul.hpp, for uint64_t limbs (the only ones the chain
 //   exists for).
+// - the division (the basecase and Svoboda's: limb_arithmetic/udiv.hpp), src/udiv_large.cpp:
+//   udiv() calls detail::udiv_large for uint64_t limbs, a pointer quotient iterator and
+//   std::allocator (all the library's own calls); other limb types stay inline.
 
 // ---- Assembly ---------------------------------------------------------------------------------
 // NUMETRON_USE_ASM: off by default, and numetron is then a pure header-only library. Define it to

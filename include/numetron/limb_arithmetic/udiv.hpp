@@ -294,12 +294,10 @@ inline void udiv_dv(LimbT* puhh, LimbT* puh, std::span<LimbT>& ul, std::span<Lim
     LimbT c = usub<LimbT>(r1h, ul2, { q1d0, q1d0sz });
 }
 
-// svoboda_threshold is the quotient length from which Svoboda's division is used; it defaults to
-// the NUMETRON_SVOBODA_DIV_THRESHOLD tunable and is an argument so that a caller (a test, a
-// benchmark) can pick the algorithm without rebuilding the world
+// The body of udiv() below (the basecase / Svoboda division of {uh, ul} by {dh, dl}).
 template <std::unsigned_integral LimbT, typename QOutputIteratorT, typename AllocatorT>
-LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT && alloc,
-    size_t svoboda_threshold = NUMETRON_SVOBODA_DIV_THRESHOLD)
+LimbT udiv_impl(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT && alloc,
+    size_t svoboda_threshold)
 {
     //using allocator_type = std::remove_cvref_t<AllocatorT>;
     //using alloc_traits_t = std::allocator_traits<allocator_type>;
@@ -365,6 +363,36 @@ LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, 
     }
 
     return rh;
+}
+
+#if defined(NUMETRON_COMPILED)
+namespace detail {
+
+// udiv_impl() for uint64_t limbs, a pointer quotient iterator and std::allocator (the library's own
+// calls), compiled into the numetron library (src/udiv_large.cpp; see NUMETRON_COMPILED in
+// config/implementation.hpp).
+uint64_t udiv_large(uint64_t uh, std::span<uint64_t>& ul, uint64_t dh, std::span<const uint64_t> dl, uint64_t* qit,
+    size_t svoboda_threshold);
+
+}
+#endif
+
+// {uh, ul} / {dh, dl}: the quotient from high to low through qit, the remainder into ul (its high
+// limb returned). svoboda_threshold is the quotient length from which Svoboda's division is used; it
+// defaults to the NUMETRON_SVOBODA_DIV_THRESHOLD tunable and is an argument so that a caller (a
+// test, a benchmark) can pick the algorithm without rebuilding the world. With NUMETRON_COMPILED
+// the calls the library compiles (detail::udiv_large) go there, the rest stay inline.
+template <std::unsigned_integral LimbT, typename QOutputIteratorT, typename AllocatorT>
+LimbT udiv(LimbT uh, std::span<LimbT>& ul, LimbT dh, std::span<const LimbT> dl, QOutputIteratorT qit, AllocatorT && alloc,
+    size_t svoboda_threshold = NUMETRON_SVOBODA_DIV_THRESHOLD)
+{
+#if defined(NUMETRON_COMPILED)
+    if constexpr (std::is_same_v<LimbT, uint64_t> && std::is_same_v<QOutputIteratorT, uint64_t*>
+        && std::is_same_v<std::remove_cvref_t<AllocatorT>, std::allocator<uint64_t>>) {
+        return detail::udiv_large(uh, ul, dh, dl, qit, svoboda_threshold);
+    } else
+#endif
+    return udiv_impl<LimbT>(uh, ul, dh, dl, std::move(qit), std::forward<AllocatorT>(alloc), svoboda_threshold);
 }
 
 // prereqs: u >= d, d.back() > 0

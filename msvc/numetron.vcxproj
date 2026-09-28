@@ -93,6 +93,7 @@
     </MASM>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\udiv_large.cpp" />
     <ClCompile Include="..\src\umul_large.cpp" />
   </ItemGroup>
   <ItemGroup>

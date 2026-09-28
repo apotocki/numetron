@@ -12,7 +12,8 @@ option(NUMETRON_GMP_LGPL "Use the GMP-derived (LGPL) mul_basecase assembly" OFF)
 option(NUMETRON_USE_ASM "Build the src/arch assembly and export NUMETRON_USE_ASM" ON)
 
 # On (the default): the heavy algorithms (NUMETRON_COMPILED_SOURCES below; now the multiplication
-# chain above the basecase: Karatsuba, the Toom engine and plans, the FFT) are compiled once, into
+# chain above the basecase -- Karatsuba, the Toom engine and plans, the FFT -- and the division)
+# are compiled once, into
 # this library, and NUMETRON_COMPILED is exported, so the headers only declare them instead of
 # every translation unit that uses them compiling them. On every architecture, assembly or not.
 # Off: they are inline in the headers, as for a header-only use without this target. The
@@ -22,6 +23,7 @@ option(NUMETRON_USE_ASM "Build the src/arch assembly and export NUMETRON_USE_ASM
 option(NUMETRON_COMPILED "Compile the heavy algorithms into the numetron library" ON)
 set (NUMETRON_COMPILED_SOURCES
     ${LIBRARY_HOME}/src/umul_large.cpp
+    ${LIBRARY_HOME}/src/udiv_large.cpp
 )
 
 # The largest n the squaring basecase (src/arch/x86_64/sqr_basecase_adx.s) has straight-line code

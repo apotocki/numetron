@@ -296,6 +296,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\udiv_large.cpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\umul_large.cpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClCompile>
