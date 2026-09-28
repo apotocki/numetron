@@ -65,8 +65,17 @@ void* operator new(std::size_t sz)
     if (!p) throw std::bad_alloc();
     return p;
 }
+// GCC takes the p of a replacement operator delete as coming from the built-in operator new and
+// flags free() on it (-Wmismatched-new-delete); here it comes from the malloc() above.
+#if defined(__GNUC__) && !defined(__clang__)
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* p) noexcept { if (g_count_allocs) ++g_delete_calls; std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { if (g_count_allocs) ++g_delete_calls; std::free(p); }
+#if defined(__GNUC__) && !defined(__clang__)
+#   pragma GCC diagnostic pop
+#endif
 
 namespace numetron {
 

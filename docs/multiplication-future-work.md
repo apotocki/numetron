@@ -6,6 +6,20 @@ products 1.11–1.96 of GMP's speed, squares 1.19–1.59 (`multiplication.md` §
 was left, roughly by expected value. References of the form "§ 9 item N" are to
 `multiplication.md`, which holds the design, the measurements and what was tried.
 
+## Compile time
+
+The chain above the basecase now compiles once, into the numetron library, with
+`NUMETRON_COMPILED` (the CMake default; `multiplication.md` § 9 item 12). Left:
+- **An stb-style `NUMETRON_MUL_IMPLEMENTATION`** for header-only users without the library:
+  the chain in one unit of their own, the rest of their units with the declaration only.
+- **The FFT kernel at run time.** With the chain in the library `NUMETRON_FFT_IMPL` follows
+  the library's compiler flags; a library built without AVX2 + FMA runs the scalar kernel
+  for every user. Picking the kernel by CPUID would free the library build from `-march`.
+- **MSBuild ARM64**: the solution has no ARM64 platform; CMake builds the `.cpp` there.
+- **The span-level entry points** of the algorithms (`toom_engine_t::umul(span, span, alloc,
+  scratch_alloc)`, `umul_toom3`, `umul_karatsuba*`, `umul_fft`) are unused by the library now
+  and could go.
+
 ## Performance
 
 - **A floating-point FFT for the middle range (~500–2000 limbs).** The largest expected gain

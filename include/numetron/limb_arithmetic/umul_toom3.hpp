@@ -219,7 +219,8 @@ LimbT* umul_toom3_impl(std::span<const LimbT> u, std::span<const LimbT> v, LimbT
 // Toom-3 unsigned multiplication.
 // Preconditions: un >= vn, detail::toom3_split_fits(un, vn).
 // Allocates the result buffer via alloc; all scratch of the recursion comes from scratch_alloc,
-// which must serve allocations in LIFO order (see umul() for the one place it is chosen).
+// which must serve allocations in LIFO order (as the stack allocator of detail::umul_large_impl()
+// in umul_dispatch.hpp, the one the library's own path uses).
 // Returns {ptr, size, capacity}.
 template <std::unsigned_integral LimbT, typename AllocatorT, typename ScratchAllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)

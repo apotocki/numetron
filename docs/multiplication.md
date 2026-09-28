@@ -112,7 +112,14 @@ by `--tune`, whose single threshold was 2864 on both compilers.
 
 ## 2. The dispatch chain
 
-`umul()` / `umul_dispatch()` in `limb_arithmetic/umul.hpp`, operands normalized to un >= vn:
+`umul()` (`limb_arithmetic/umul.hpp`) allocates the result from the caller's allocator and runs
+the basecase below `basecase_limit()` (a square: below `sqr_karatsuba_threshold()`). Above that it
+calls `detail::umul_large()`, which is `umul_dispatch()` (`limb_arithmetic/umul_dispatch.hpp`)
+with all the scratch from the thread-local stack allocator. So the chain is instantiated once
+per limb type (`uint64_t`; nothing above the basecase exists for other limbs), whatever the
+caller's allocator. With `NUMETRON_COMPILED` `umul_large()` is compiled into the numetron
+library (`src/umul_large.cpp`) and the headers don't include `umul_dispatch.hpp` at all (§ 9
+item 12). `umul_dispatch()`, operands normalized to un >= vn:
 
 S. **Squares** — the same limbs on both sides (u == v, un == vn), checked first:
    `usqr_dispatch`. It tries, in order:
@@ -669,7 +676,7 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
 - **`NUMETRON_ASSERT` evaluates its argument in Release** (`((void)(expr))`) — guard expensive
   checks with `#ifndef NDEBUG`. In debug it expands to an unbraced `if` — always brace it inside
   `if constexpr ... else`.
-- **IntelliSense** reports cascades of bogus errors in `kernels.hpp`/`umul.hpp`; trust the
+- **IntelliSense** reports cascades of bogus errors in `kernels.hpp`/`umul_dispatch.hpp`; trust the
   compiler.
 - **Timing under Docker on Windows** (WSL2 VM) is noisier than native.
 - Scratch builds must use the same flags as the real ones (`/arch:AVX2` for MSVC), or kernel
@@ -1174,7 +1181,7 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
      against the linear term, which only makes cutting look less attractive than it is.
 
    **Step 8b, v transformed once** (`detail::fft_fixed_v` in `umul_fft.hpp`,
-   `detail::umul_fft_sliced` in `umul.hpp`), 2026-09-25.
+   `detail::umul_fft_sliced` in `umul_dispatch.hpp`, then `umul.hpp`), 2026-09-25.
    - **What changed.** All full pieces take the same transform length. So v is transformed once
      per prime (2·NP·L words of scratch: v's transforms and the piece's), and each piece pays for
      its own forward transform and the inverse only, two of the three. The remainder still goes
@@ -1284,7 +1291,7 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
      than to the algorithm choice.
 
    **Step 11, the FFT's fill rule** (`detail::fft_product_fills` in `umul_fft.hpp`,
-   `is_fft_applicable` in `umul.hpp`; asm builds only), 2026-09-28.
+   `is_fft_applicable` in `umul_dispatch.hpp`, then `umul.hpp`; asm builds only), 2026-09-28.
    - **Why.** The FFT's time is a staircase in the transform length (2^k or 3·2^(k−2)), the
      Toom chain's a smooth curve. One threshold (`--tune`: 2864 on both compilers) loses on
      either side of a step: it keeps 2048 × 2048 and the vn = 2048 row on the Toom chain,
@@ -1561,4 +1568,36 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
       and reference, C++ Karatsuba, Debug, straight-line squares cut to 24 and 16, LGPL) and on
       MSVC (header-only `c++ blocked` and reference, C++ Karatsuba, `c++ blocked` with the
       scalar FFT, LGPL, default).
-12. **Future work**: `docs/multiplication-future-work.md` (2026-09-28).
+12. **Compile time: the chain in the library** (`NUMETRON_COMPILED`, 2026-09-28). With the
+    Toom-4 … 8.5 plans and the FFT every translation unit that multiplied compiled the whole
+    chain. `umul.hpp` included the engine, every plan, the three Karatsuba variants and the FFT.
+    Its top-level `umul()` ran a dispatch of its own, instantiated per allocator type. Now:
+    - **The allocator is out of the chain.** `umul()` takes the result from the caller's
+      allocator and calls `detail::umul_large()` above the basecase: `umul_dispatch()` with the
+      stack allocator (`umul_large_impl`). The second dispatch in `umul()` is gone, so a plan is
+      wired in at one place (`custom-toom-plans.md`). The span-level entry points of the
+      algorithms (`toom_engine_t::umul(span, span, alloc, scratch_alloc)`, `umul_toom3`,
+      `umul_karatsuba*`, `umul_fft`) are no longer called by the library.
+    - **The heavy half has its own header**, `umul_dispatch.hpp`: the `is_*_applicable`
+      predicates, slicing, `umul_dispatch`, `usqr_dispatch` and their includes. `umul.hpp` keeps
+      the basecase entry and includes it only without `NUMETRON_COMPILED`.
+      `limb_arithmetic.hpp` no longer includes `toom/engine.hpp`. The tuner (`mul_tuning.hpp`)
+      and `tests/mul_shapes_test.cpp` include `umul_dispatch.hpp` themselves.
+    - **`NUMETRON_COMPILED`**, the general switch for the heavy algorithms compiled into the
+      library (the multiplication chain is the first), declares `detail::umul_large()` for
+      `uint64_t` limbs. The
+      numetron library defines it (`src/umul_large.cpp`, empty without the define), on every
+      architecture, asm or not. The CMake option of the same name is on by default: the target
+      is then a static library even without assembly (aarch64, `NUMETRON_USE_ASM=OFF`), and it
+      exports the define. Its asm definitions are now PUBLIC, so the `.cpp` sees the
+      configuration its users do. The MSVC `numetron` project compiles the `.cpp` with the test
+      projects' settings (`/arch:AVX2`, `NUMETRON_USE_ASM` on x64, `_ITERATOR_DEBUG_LEVEL=0`).
+      The test and bench projects define `NUMETRON_COMPILED`. `test.sh` / `bench.sh
+      --no-compiled` build without it.
+    - **Result.** A unit with one `numetron::integer` product (GCC 13, `-O3 -march=native`, asm):
+      16.4–16.7 s and a 2.1 MB object inline, 1.1 s and 27 KB with the chain in the library.
+      `numetron_bench_mul --balanced --sqr` (GCC, two runs each): compiled / inline 0.98–1.02
+      from 8 limbs up, i.e. the out-of-line call costs nothing measurable.
+    - **Tests**: the full gtest suite on GCC (asm, asm inline, no asm, no asm inline, LGPL) and on
+      MSVC (default, inline, header-only `c++ blocked`, LGPL), all passing.
+13. **Future work**: `docs/multiplication-future-work.md` (2026-09-28).

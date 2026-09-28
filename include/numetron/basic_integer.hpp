@@ -147,8 +147,8 @@ struct integer_holder : AllocatorT
         // the buffer) all read this same captured snapshot instead of each re-deriving it from
         // holder_ independently. Crucially, this snapshot is what stays valid and correct
         // through the rest of this operation even though the allocator instance itself does
-        // not: mul()/umul()/toom_engine pass their allocator argument *by value* internally
-        // (see umul()'s and toom_engine::umul()'s signatures), so the instance whose allocate()
+        // not: mul()/umul() pass their allocator argument *by value* internally (see
+        // umul()'s signature), so the instance whose allocate()
         // actually runs is a copy of this one, not this one -- any state set *during* an
         // allocate() call (on that copy) never makes it back here. State captured before the
         // call, on this original instance, is unaffected by that and remains reliable.

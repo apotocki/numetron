@@ -15,6 +15,7 @@
 #include <functional>
 
 #include "numetron/limb_arithmetic.hpp"
+#include "numetron/limb_arithmetic/umul_dispatch.hpp" // the chain it tunes and times
 #include "numetron/detail/scope_exit.hpp"
 #include "numetron/detail/stack_allocator.hpp"
 

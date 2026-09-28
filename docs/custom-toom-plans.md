@@ -294,9 +294,9 @@ static constexpr auto toom3_balanced = make_toom3_balanced();
 3. **Threshold** (`toom/thresholds.hpp`): a `NUMETRON_DEFAULT_TOOMK_THRESHOLD` per compiler, an
    overridable `NUMETRON_TOOMK_THRESHOLD`, a `min_toomK_threshold`, the atomic, and the
    getter/setter.
-4. **Dispatch** (`umul.hpp`): an `is_toomK_applicable(un, vn)`, checked in **both**
-   `umul_dispatch()` (recursion) and `umul()` (top level, where the scratch allocator is
-   created), in order from the highest algorithm down.
+4. **Dispatch** (`umul_dispatch.hpp`): an `is_toomK_applicable(un, vn)`, checked in
+   `umul_dispatch()` in order from the highest algorithm down. It is the one dispatch: the top
+   level (`umul()` in `umul.hpp`) goes there through `detail::umul_large()`.
 5. **Tuner** (`mul_tuning.hpp`): a `toomK_max` option, a result field, a tuning phase after the
    algorithm below it; print it in `bench/mul_bench.cpp` `--tune`.
 6. **Project files**: add the header to `msvc/numetron.vcxproj` and `.vcxproj.filters` (CMake

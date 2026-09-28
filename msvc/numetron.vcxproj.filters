@@ -183,6 +183,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\umul_dispatch.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\umul1.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
@@ -291,6 +294,11 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\toom\thresholds.hpp">
       <Filter>numetron\limb_arithmetic\toom</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\src\umul_large.cpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="numetron.natvis" />

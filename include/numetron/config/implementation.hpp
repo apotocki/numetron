@@ -10,6 +10,22 @@
 // Tuning numbers are separate: the multiplication thresholds are in
 // limb_arithmetic/toom/thresholds.hpp, the division ones in limb_arithmetic.hpp.
 
+// ---- Compiled parts -----------------------------------------------------------------------------
+// NUMETRON_COMPILED: off by default, and the library is then header-only: every translation unit
+// that uses a heavy algorithm compiles it. Define it to take the heavy algorithms from the
+// numetron library instead, compiled there once (src/*.cpp), which must then be linked: the
+// headers only declare their entry points. Independent of NUMETRON_USE_ASM, so it works where
+// there is no assembly (aarch64). The CMake target `numetron` builds them and exports the define
+// by default (option NUMETRON_COMPILED); the MSVC test and bench projects set it themselves. The
+// configuration of the compiled code (thresholds, NUMETRON_FFT_IMPL -- from the compiler's
+// target, so build the library with the intended -march / /arch --, the Karatsuba and Toom-3
+// implementations) then takes effect where the library is compiled, and must match what the rest
+// of the program sees. What it covers now:
+// - the multiplication chain above the basecase (Karatsuba, the Toom engine and plans, the FFT:
+//   limb_arithmetic/umul_dispatch.hpp), src/umul_large.cpp: the entry point is
+//   detail::umul_large in limb_arithmetic/umul.hpp, for uint64_t limbs (the only ones the chain
+//   exists for).
+
 // ---- Assembly ---------------------------------------------------------------------------------
 // NUMETRON_USE_ASM: off by default, and numetron is then a pure header-only library. Define it to
 // use the src/arch assembly (x86-64: mul_basecase, add/sub_n, the Karatsuba kernels); the

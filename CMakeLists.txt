@@ -18,6 +18,13 @@ enable_testing()
 # added in lib/CMakeLists.txt.
 add_subdirectory(lib)
 
+# The library's C++ (the compiled algorithms, NUMETRON_COMPILED) takes the same target flags as
+# the tests: the FFT kernel follows them.
+get_target_property(_numetron_lib_type numetron TYPE)
+if (NOT _numetron_lib_type STREQUAL "INTERFACE_LIBRARY" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(numetron PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-march=native> $<$<COMPILE_LANGUAGE:CXX>:-O3>)
+endif()
+
 # Collect test sources
 set (NUMETRON_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/float16_test.cpp

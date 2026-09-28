@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <limits>
 #include <span>
 #include <tuple>
@@ -19,7 +20,6 @@
 
 #include "limb_arithmetic/uadd.hpp"
 #include "limb_arithmetic/usub.hpp"
-#include "limb_arithmetic/toom/engine.hpp"
 #include "limb_arithmetic/umul.hpp"
 
 #ifndef NUMETRON_DC_DIV_QR_THRESHOLD

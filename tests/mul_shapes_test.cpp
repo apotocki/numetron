@@ -24,6 +24,7 @@
 #include "gmp.h"
 
 #include "numetron/limb_arithmetic.hpp"
+#include "numetron/limb_arithmetic/umul_dispatch.hpp" // umul_dispatch and the plans, called directly
 
 namespace numetron {
 

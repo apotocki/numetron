@@ -477,7 +477,7 @@
 #endif
 
 // Toom-5/4 (toom_5x4.hpp; 1.2 <= un/vn < 1.45) and Toom-5/3 (toom_5x3.hpp; 1.55 <= un/vn < 1.85):
-// from these thresholds (on vn) up to the Toom-6.5 one (umul.hpp). tune_mul_thresholds() on
+// from these thresholds (on vn) up to the Toom-6.5 one (umul_dispatch.hpp). tune_mul_thresholds() on
 // 1.3n x n and 1.7n x n (--tune-unbalanced), two runs each, 2026-09-25; the same value unless
 // noted. With the asm Karatsuba they are 0.88-0.96 of the path they replace up to the Toom-6.5
 // threshold (both compilers).

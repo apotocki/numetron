@@ -18,7 +18,7 @@
 
 namespace numetron::limb_arithmetic {
 
-// umul.hpp
+// umul_dispatch.hpp
 template <std::unsigned_integral LimbT, typename AllocatorT>
 LimbT* usqr_dispatch(const LimbT* u, size_t n, LimbT* rb, AllocatorT alloc);
 
@@ -298,7 +298,8 @@ LimbT* usqr_karatsuba_impl(LimbT const* u, size_t un, LimbT* rb, AllocatorT allo
 // Karatsuba unsigned multiplication (Toom-2).
 // Preconditions: un >= vn >= 2, un < 2*vn
 // Allocates the result buffer via alloc; all scratch of the recursion comes from scratch_alloc,
-// which must serve allocations in LIFO order (see umul() for the one place it is chosen).
+// which must serve allocations in LIFO order (as the stack allocator of detail::umul_large_impl()
+// in umul_dispatch.hpp, the one the library's own path uses).
 // Returns {ptr, size, capacity}.
 template <std::unsigned_integral LimbT, typename AllocatorT, typename ScratchAllocatorT>
 requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)

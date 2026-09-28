@@ -605,8 +605,8 @@ struct toom_engine_t
     static_assert(TraitsT::M > 1, "toom_engine requires M > 1");
 
     // Allocates the result buffer via alloc; all scratch of the recursion comes from
-    // scratch_alloc, which must serve allocations in LIFO order (see umul() in umul.hpp for the
-    // one place it is chosen).
+    // scratch_alloc, which must serve allocations in LIFO order (see detail::umul_large_impl()
+    // in umul_dispatch.hpp for the one place it is chosen).
     template <std::unsigned_integral LimbT, typename AllocatorT, typename ScratchAllocatorT>
     requires(std::is_same_v<LimbT, typename std::allocator_traits<AllocatorT>::value_type>)
     static std::tuple<LimbT*, size_t, size_t>

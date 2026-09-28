@@ -26,7 +26,7 @@ OutputIteratorT bc_get_str(std::span<LimbT> limbs, int base, std::string_view al
     using ct::W;
 
     assert(!limbs.empty());
-    assert(alphabet.size() >= base);
+    assert(base > 0 && alphabet.size() >= static_cast<size_t>(base));
     constexpr uint32_t limb_bit_count = std::numeric_limits<LimbT>::digits;
     //using limb_traits_t = uint_t<limb_bit_count>;
     
