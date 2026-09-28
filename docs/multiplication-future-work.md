@@ -8,6 +8,16 @@ was left, roughly by expected value. References of the form "§ 9 item N" are to
 
 ## Performance
 
+- **A floating-point FFT for the middle range (~500–2000 limbs).** The largest expected gain
+  and the most expensive item. YMP (Alexander Yee's library behind y-cruncher) is reported
+  2–3x ahead of GMP from ~10⁴ to ~10⁶ bits. Our figures there: 1.4 at ~160 limbs, 1.13–1.17 at
+  ~1500 limbs (Toom-6.5 / 8.5), 1.5–1.6 at ~16k limbs (the NTT). Most of that gap is likely
+  the middle, where we run Toom without SIMD. The likely source (not verified; YMP is
+  closed): an FFT over doubles, a few bits per point with a rigorous rounding-error bound.
+  Its butterflies are plain FMAs on 4–8 lanes with no modular reduction, so it overtakes Toom
+  far earlier than our exact NTT (six 49-bit primes, 2 limbs per coefficient, a CRT step),
+  which pays off only from 2048 limbs. Work: the transform, a provable error bound for the
+  chosen bits per point, AVX2 kernels, dispatch and thresholds against Toom-6.5 / 8.5.
 - **Toom node overhead at 768–3072 limbs.** Products 1.11–1.31 of GMP, squares 1.19–1.31: the
   smallest margins above 16 limbs. The node's own linear work (evaluation, interpolation) is
   14–40% of a Toom-4 … 8.5 square node (§ 9 item 10, Left). On MSVC one line of the division
@@ -21,6 +31,18 @@ was left, roughly by expected value. References of the form "§ 9 item N" are to
   each length step but can't remove the step. 3072-limb squares stay at 1.19–1.22: one lower
   bound can't take both 3072 (full length) and 3073–3519 (4096 filled 0.75–0.86). Finer
   lengths (above) would; so would a Toom-3 node over FFT children at those sizes.
+
+  FLINT 3's `fft_small` (Daniel Schultz) is the closest known design to ours: a small-prime
+  NTT with ~50-bit primes in double arithmetic with SIMD, plus a CRT. From memory, not checked
+  against its source, it differs in:
+  - **truncated transforms** (van der Hoeven's TFT): the cost follows the coefficient count,
+    not the next 2^k / 3·2^k. That removes the staircase itself, so the fill rules and the
+    fill-dependent thresholds could go, and it is worth up to a third at the worst-filled sizes;
+  - **adaptive packing**: the number of primes and the bits per coefficient are chosen per size,
+    against our fixed six primes at 2 limbs per coefficient;
+  - **cache-blocked large transforms** (Bailey-style passes) for lengths beyond L2.
+
+  Its multithreading is a separate matter. The truncated FFT is the part to take first.
 - **Header-only builds below ~1000 limbs.** MSVC products 0.70–0.88 of GMP, squares 0.44–0.83:
   no x64 inline asm, so no ADX rows and no squaring kernel. GCC with the ADX rows: 0.96–1.15.
   A C++ squaring kernel for MSVC (`_mulx_u64` rows with the doubling pass) is the obvious step;
@@ -30,6 +52,25 @@ was left, roughly by expected value. References of the form "§ 9 item N" are to
   was not measured again after the straight-line rows.
 - **`operator*` on MSVC**: ~22 ns of heap allocation per result (GCC ~6 ns). That is
   `basic_integer`'s allocator, not the multiplication.
+
+## API
+
+- **Fused `addmul` / `submul`** (`r += a·b`, `r -= a·b`; GMP's `mpz_addmul` / `mpz_submul`,
+  `mpn_addmul_1`). Neither `basic_integer` nor `limb_arithmetic` has them. A sum of products
+  (dot products, polynomial and matrix arithmetic) now builds a temporary for every product
+  and adds it in a second pass. A fused operation:
+  - needs no temporary;
+  - for 1–2 limbs, is one short chain of multiply and add;
+  - on larger sizes, adds the product into `r` as it is formed, with no extra pass.
+
+  This is where mp++ (`mppp::integer<SSize>`) gets its 3–7x over `mpz_class` in its dot-product
+  and accumulation benchmarks. The rest of that gain is values in place and no allocation,
+  which `basic_integer<LimbT, N>` already has. Its multiplication itself is GMP's
+  (`mpn_mul` above 2 limbs), so there is nothing to compare there.
+- **A small-value benchmark against mp++**, together with `addmul`: dot products of vectors of
+  1–2-limb values, numetron against `mppp::integer<1>` / `integer<2>`. It shows how far our
+  path around 1–2 limbs is from the best known one. mp++ availability in vcpkg not checked; it
+  may need a manual build.
 
 ## Tuning
 
@@ -47,6 +88,20 @@ was left, roughly by expected value. References of the form "§ 9 item N" are to
 
 ## Minor
 
+- **Searching the interpolation sequences for our cost model** (low priority). The evaluation
+  points are GMP's everywhere, and there is little room to pick better ones. Integer points
+  bring odd divisors into the Vandermonde determinant: 3 from five points on, 63 = 4³ − 1 for
+  sets of powers of 4. Points other than powers of two and their inverses cost real
+  multiplications and coefficient growth. The sequences GMP's
+  choice rests on (Bodrato & Zanoni, ISSAC 2007) are optimal in a model that counts operations:
+  proven for Toom-3, found by search for Toom-4. Toom-6.5 / 8.5 have no such result. Our cost is
+  passes over memory and carry chains rather than operations: fused shift-adds in C++ lost to
+  separate asm `add_n` + shift (§ 4, Toom-3), and Toom-8.5 went from 6 to 4 Hensel
+  divisions per half by reordering alone, the matrix unchanged. The plans are data, so a
+  search could run over orderings, `lincomb_dual` fusion and where the divisions fall. The
+  interpolation is 14–40% of a square node and less of a product node, so even 20% less linear
+  work is ~3–8% of a node. That is below the asm / AVX2 `lincomb` kernels of the first item
+  above.
 - Toom-3 `eval3` still has one `lshift1` (§ 9 item 9).
 - Explicit vs engine Toom-3 as the default (§ 9 item 4; equal speed now).
 
