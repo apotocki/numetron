@@ -10,6 +10,10 @@
 
 #if defined(NUMETRON_COMPILED)
 
+#if !defined(NUMETRON_BUILDING_LIBRARY)
+#   error "the numetron library's units are compiled with NUMETRON_BUILDING_LIBRARY"
+#endif
+
 namespace numetron::limb_arithmetic::detail {
 
 uint64_t udiv_large(uint64_t uh, std::span<uint64_t>& ul, uint64_t dh, std::span<const uint64_t> dl, uint64_t* qit,

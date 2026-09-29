@@ -38,11 +38,9 @@
 #   include <cpuid.h>  // __get_cpuid_count
 #endif
 
-// src/arch/x86_64/add_sub_n.{asm,s}: r[0..n) = u[0..n) +/- v[0..n), returning the carry/borrow
-// out. One generic x86-64 implementation (no per-CPU variants, so no dispatch through platform
-// detection). rp may coincide with up or vp, or trail them.
-extern "C" uint64_t numetron_add_n(uint64_t* rp, const uint64_t* up, const uint64_t* vp, size_t n) noexcept;
-extern "C" uint64_t numetron_sub_n(uint64_t* rp, const uint64_t* up, const uint64_t* vp, size_t n) noexcept;
+// The assembly the library's units (NUMETRON_USE_ASM, config/implementation.hpp) call directly.
+// numetron_add_n / numetron_sub_n (src/arch/x86_64/add_sub_n.{asm,s}) are declared in backend.hpp:
+// the front end calls them too.
 
 // src/arch/x86_64/karatsuba_interp.{asm,s}: the fused middle-column pass of the Karatsuba
 // interpolation (see detail::karatsuba_interp in umul_karatsuba_fused.hpp). Returns the carry into
@@ -70,15 +68,8 @@ extern "C" void numetron_mul_basecase_adx(uint64_t* rp, const uint64_t* up, size
 // doubling and the diagonal.
 extern "C" void numetron_sqr_basecase_adx(uint64_t* rp, const uint64_t* up, size_t n) noexcept;
 
-namespace numetron::limb_arithmetic::detail {
-// Below this length the inline C++ loop wins: the call itself costs about as much as the few
-// limbs it would process (measured with numetron_bench_mul --add against GMP's mpn_add_n,
-// which is also an out-of-line call: parity at 4 limbs, the call ahead from 8).
-inline constexpr size_t asm_add_sub_n_min_limbs = 8;
-}
-
 #if defined(NUMETRON_PLATFORM_AUTODETECT)
-// The runtime choice is made once, by detail::detected_mul_basecase() (umul_basecase.hpp).
+// The runtime choice is made once, by detail::init_mul_basecase() (src/backend.cpp).
 typedef void (*detect_mul_basecase_type)(uint64_t*, const uint64_t*, size_t, const uint64_t*, size_t);
 #   if NUMETRON_ASM_LICENSE == NUMETRON_ASM_LICENSE_GMP_LGPL
 // src/arch/x86_64/detect_{platform,mul_basecase}: the GMP-derived routine for the CPU, or null.

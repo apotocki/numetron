@@ -11,6 +11,7 @@
 
 #include "numetron/arithmetic.hpp"
 #include "platform.hpp"
+#include "backend.hpp" // numetron_sub_n (NUMETRON_ASM_KERNELS)
 
 namespace numetron::limb_arithmetic {
 
@@ -43,14 +44,14 @@ NUMETRON_FORCEINLINE unsigned char sub_n_x64_inline(LimbT* r, LimbT const* u, Li
     return b;
 }
 
-// r[0..n) = u[0..n) - v[0..n), returns the borrow out: the assembly numetron_sub_n from
-// asm_add_sub_n_min_limbs on, the inline kernel above below that. Force-inlined for the same
-// reason as add_n_x64() in uadd.hpp.
+// r[0..n) = u[0..n) - v[0..n), returns the borrow out: the library's assembly numetron_sub_n from
+// asm_add_sub_n_min_limbs on (NUMETRON_ASM_KERNELS), the inline kernel above below that (and
+// otherwise). Force-inlined for the same reason as add_n_x64() in uadd.hpp.
 template <std::unsigned_integral LimbT>
 requires(sizeof(LimbT) == 8)
 NUMETRON_FORCEINLINE unsigned char sub_n_x64(LimbT* r, LimbT const* u, LimbT const* v, size_t n) noexcept
 {
-#if defined(NUMETRON_USE_ASM)
+#if defined(NUMETRON_ASM_KERNELS)
     if (n >= asm_add_sub_n_min_limbs) {
         return static_cast<unsigned char>(numetron_sub_n(
             reinterpret_cast<uint64_t*>(r), reinterpret_cast<uint64_t const*>(u), reinterpret_cast<uint64_t const*>(v), n));

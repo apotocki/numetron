@@ -10,17 +10,13 @@
 // Tuning numbers are separate: the multiplication thresholds are in
 // limb_arithmetic/toom/thresholds.hpp, the division ones in limb_arithmetic.hpp.
 
-// ---- Compiled parts -----------------------------------------------------------------------------
-// NUMETRON_COMPILED: off by default, and the library is then header-only: every translation unit
-// that uses a heavy algorithm compiles it. Define it to take the heavy algorithms from the
-// numetron library instead, compiled there once (src/*.cpp), which must then be linked: the
-// headers only declare their entry points. Independent of NUMETRON_USE_ASM, so it works where
-// there is no assembly (aarch64). The CMake target `numetron` builds them and exports the define
-// by default (option NUMETRON_COMPILED); the MSVC test and bench projects set it themselves. The
-// configuration of the compiled code (thresholds, NUMETRON_FFT_IMPL -- from the compiler's
-// target, so build the library with the intended -march / /arch --, the Karatsuba and Toom-3
-// implementations) then takes effect where the library is compiled, and must match what the rest
-// of the program sees. What it covers now:
+// ---- Front end and back end ---------------------------------------------------------------------
+// An application sees one switch, NUMETRON_COMPILED. Off (the default), numetron is header-only
+// and pure C++: every translation unit that uses a heavy algorithm compiles it. Defined, the
+// headers are a front end to the numetron library (the back end), which must then be linked: the
+// heavy algorithms are compiled there once (src/*.cpp) and the headers only declare their entry
+// points. The CMake target `numetron` builds it and exports the define (option NUMETRON_COMPILED,
+// default ON); the MSVC test and bench projects set it themselves. What the library compiles:
 // - the multiplication chain above the basecase (Karatsuba, the Toom engine and plans, the FFT:
 //   limb_arithmetic/umul_dispatch.hpp), src/umul_large.cpp: the entry point is
 //   detail::umul_large in limb_arithmetic/umul.hpp, for uint64_t limbs (the only ones the chain
@@ -28,13 +24,55 @@
 // - the division (the basecase and Svoboda's: limb_arithmetic/udiv.hpp), src/udiv_large.cpp:
 //   udiv() calls detail::udiv_large for uint64_t limbs, a pointer quotient iterator and
 //   std::allocator (all the library's own calls); other limb types stay inline.
+// - the tunable thresholds and, with the assembly, the choice of the basecase kernels for the CPU
+//   (src/backend.cpp).
+//
+// NUMETRON_BACKEND_ASM: the library contains the x86-64 assembly, so the front end's inline code
+// calls its kernels (mul/sqr_basecase, add/sub_n: limb_arithmetic/backend.hpp) instead of its own
+// C++ ones. A fact about the library, not a choice: whatever builds the library says it to the
+// code that uses it -- the CMake target `numetron` exports it along with NUMETRON_COMPILED when it
+// has the assembly; the MSVC test and bench projects set it for x64. Without NUMETRON_COMPILED it
+// means nothing. The application's units, the library's (which derive it from NUMETRON_USE_ASM)
+// and NUMETRON_BACKEND_INTERNAL ones share that inline code, so all must see the same value; a
+// mismatch costs speed, not correctness (the library exports the same symbols either way).
+//
+// Everything below configures the back end: it takes effect where the library
+// is compiled (build it with the intended -march / /arch: the FFT kernel and the C++ basecase
+// follow the compiler's target) and is not the application's to set. The library's own units
+// are compiled with NUMETRON_BUILDING_LIBRARY. Code that runs the chain directly rather than
+// through the front end (the threshold tuner, limb_arithmetic/mul_tuning.hpp; tests of the
+// plans) is compiled with NUMETRON_BACKEND_INTERNAL and the library's configuration (the CMake
+// target `numetron_internal` carries both).
+#if defined(NUMETRON_BUILDING_LIBRARY) || defined(NUMETRON_BACKEND_INTERNAL)
+#   if !defined(NUMETRON_COMPILED)
+#       error "NUMETRON_BUILDING_LIBRARY / NUMETRON_BACKEND_INTERNAL: the back end is the compiled library, define NUMETRON_COMPILED"
+#   endif
+#   define NUMETRON_BACKEND_TU
+#endif
 
-// ---- Assembly ---------------------------------------------------------------------------------
-// NUMETRON_USE_ASM: off by default, and numetron is then a pure header-only library. Define it to
-// use the src/arch assembly (x86-64: mul_basecase, add/sub_n, the Karatsuba kernels); the
-// numetron static library built from src/arch must then be linked. The CMake target `numetron`
-// (lib/CMakeLists.txt) exports this define to whatever links it on x86-64; the MSVC test and bench
-// projects set it themselves.
+// ---- Assembly (back end) ----------------------------------------------------------------------
+// NUMETRON_USE_ASM, internal: the back end uses the src/arch assembly (x86-64: mul_basecase,
+// sqr_basecase, add/sub_n, the Karatsuba kernels). On by default in the library's units on
+// x86-64; build the library with NUMETRON_NO_ASM (CMake: -DNUMETRON_ASM=OFF) to do without it.
+// The header-only build and the front end never use it (the front end: NUMETRON_BACKEND_ASM).
+#if defined(NUMETRON_USE_ASM)
+#   error "NUMETRON_USE_ASM is internal: the numetron library decides it (build the library with NUMETRON_NO_ASM / -DNUMETRON_ASM=OFF to do without the assembly)"
+#endif
+#if defined(NUMETRON_BACKEND_TU) && !defined(NUMETRON_NO_ASM) && (defined(__x86_64__) || defined(_M_X64))
+#   define NUMETRON_USE_ASM
+#endif
+#if defined(NUMETRON_BACKEND_TU)
+#   if defined(NUMETRON_BACKEND_ASM) && !defined(NUMETRON_USE_ASM)
+#       error "NUMETRON_BACKEND_ASM, but the library is built without the assembly (NUMETRON_NO_ASM, or not x86-64)"
+#   elif defined(NUMETRON_USE_ASM) && !defined(NUMETRON_BACKEND_ASM)
+#       define NUMETRON_BACKEND_ASM
+#   endif
+#endif
+
+// The front end calls the library's assembly kernels (see NUMETRON_BACKEND_ASM above).
+#if defined(NUMETRON_COMPILED) && defined(NUMETRON_BACKEND_ASM) && (defined(__x86_64__) || defined(_M_X64))
+#   define NUMETRON_ASM_KERNELS
+#endif
 
 // NUMETRON_ASM_LICENSE: which assembly NUMETRON_USE_ASM may bring in, one of:
 #define NUMETRON_ASM_LICENSE_MIT      1 // numetron's own code only (MIT): the mul_basecase is
@@ -88,8 +126,9 @@
 
 // The largest n the asm squaring basecase (src/arch/x86_64/sqr_basecase_adx.*) has straight-line
 // code for, 2..32 (default 32). It is set where the assembly is built -- the CMake option of the
-// same name, or the MASM definition -- and must be the same here, as it picks the default squaring
-// thresholds (limb_arithmetic/toom/thresholds.hpp); the CMake target exports it. A smaller one
+// same name, or the MASM definition -- and must be the same in the library's C++, as it picks the
+// default squaring thresholds (limb_arithmetic/toom/thresholds.hpp); the CMake target passes it to
+// both (and to `numetron_internal`). A smaller one
 // trades speed at 17..32 limbs for code size (n = 17..32 are ~174 KB of code).
 #ifndef NUMETRON_SQR_STRAIGHT_MAX
 #   define NUMETRON_SQR_STRAIGHT_MAX 32
@@ -119,7 +158,8 @@
 #   endif
 #endif
 
-#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM \
+// (Checked where it takes effect: the front end's units don't run Karatsuba.)
+#if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_ASM && (defined(NUMETRON_BACKEND_TU) || !defined(NUMETRON_COMPILED)) \
     && !(defined(NUMETRON_USE_ASM) && (defined(__x86_64__) || defined(_M_X64)))
 #   error "NUMETRON_KARATSUBA_IMPL_ASM needs NUMETRON_USE_ASM on x86-64"
 #endif
@@ -167,9 +207,11 @@
 #   define NUMETRON_ARITHMETIC_USE_INVINT_DIV
 #endif
 
+// The choices above as text, for benchmarks and diagnostics: where they are the ones in effect
+// (the header-only build, the library's units, NUMETRON_BACKEND_INTERNAL), not in the front end.
+#if !defined(NUMETRON_COMPILED) || defined(NUMETRON_BACKEND_TU)
 namespace numetron::config {
 
-// The choices above as text, for benchmarks and diagnostics.
 inline constexpr const char* karatsuba_impl_name =
 #if NUMETRON_KARATSUBA_IMPL == NUMETRON_KARATSUBA_IMPL_CXX
     "cxx";
@@ -225,3 +267,4 @@ inline constexpr const char* mul_basecase_name =
 #endif
 
 }
+#endif

@@ -12,6 +12,7 @@
 
 #include "numetron/arithmetic.hpp"
 #include "platform.hpp"
+#include "backend.hpp" // numetron_add_n (NUMETRON_ASM_KERNELS)
 
 namespace numetron::limb_arithmetic {
 
@@ -69,17 +70,17 @@ NUMETRON_FORCEINLINE unsigned char add_n_x64_inline(LimbT* r, LimbT const* u, Li
     return c;
 }
 
-// r[0..n) = u[0..n) + v[0..n), returns the carry out. From asm_add_sub_n_min_limbs on this is
-// the assembly numetron_add_n (src/arch/x86_64/add_sub_n.*), which keeps the carry in CF across
-// the whole run; below that the inline kernel above, where the call would cost more than the
-// work. Force-inlined, like everything between the callers and the kernel, so a short run costs
-// no call at all -- otherwise the compiler may keep this dispatch out of line and a 4-limb add
-// pays for a call it was supposed to avoid.
+// r[0..n) = u[0..n) + v[0..n), returns the carry out. From asm_add_sub_n_min_limbs on, in a
+// library with the assembly (NUMETRON_ASM_KERNELS), this is its numetron_add_n (backend.hpp,
+// src/arch/x86_64/add_sub_n.*), which keeps the carry in CF across the whole run; below that, and
+// otherwise, the inline kernel above, where the call would cost more than the work. Force-inlined, like everything between the callers and the kernel, so a short
+// run costs no call at all -- otherwise the compiler may keep this dispatch out of line and a
+// 4-limb add pays for a call it was supposed to avoid.
 template <std::unsigned_integral LimbT>
 requires(sizeof(LimbT) == 8)
 NUMETRON_FORCEINLINE unsigned char add_n_x64(LimbT* r, LimbT const* u, LimbT const* v, size_t n) noexcept
 {
-#if defined(NUMETRON_USE_ASM)
+#if defined(NUMETRON_ASM_KERNELS)
     if (n >= asm_add_sub_n_min_limbs) {
         return static_cast<unsigned char>(numetron_add_n(
             reinterpret_cast<uint64_t*>(r), reinterpret_cast<uint64_t const*>(u), reinterpret_cast<uint64_t const*>(v), n));

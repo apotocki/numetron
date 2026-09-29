@@ -219,6 +219,9 @@
     <ClInclude Include="..\include\numetron\limb_arithmetic\platform.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\limb_arithmetic\backend.hpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\mul_tuning.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
@@ -296,6 +299,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\backend.cpp">
+      <Filter>numetron\limb_arithmetic</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\udiv_large.cpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClCompile>

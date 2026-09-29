@@ -6,11 +6,12 @@
 // mpz_mul across a range of operand sizes (in 64-bit limbs). Not part of the GoogleTest
 // suite -- build the numetron_bench_mul target and run the resulting executable directly.
 //
-// The library is header-only (pure C++) unless NUMETRON_USE_ASM is defined. This target links
-// the src/arch assembly and gets NUMETRON_USE_ASM with it (the CMake `numetron` target exports
-// it; msvc/numetron_bench_mul.vcxproj sets it), so it measures Numetron's best runtime-selected
-// mul_basecase implementation, not the plain C++ fallback. The other implementation choices (Karatsuba,
-// Toom-3) are defaults from the same header, overridable per build with compiler flags, e.g.
+// With NUMETRON_COMPILED this target measures the numetron library as configured (the assembly
+// unless it was built with NUMETRON_ASM off, the runtime-selected mul_basecase); it is compiled
+// with that configuration (NUMETRON_BACKEND_INTERNAL: the CMake target `numetron_internal`,
+// msvc/numetron_bench_mul.vcxproj), since the threshold tuner in it runs the chain directly.
+// Without it, the header-only library. The implementation choices (Karatsuba, Toom-3) are the
+// library's, overridable when it is built, e.g.
 // -DNUMETRON_KARATSUBA_IMPL=NUMETRON_KARATSUBA_IMPL_FUSED; the output header names the ones in use.
 //
 // Modes: --balanced (un == vn), --unbalanced (un > vn, several vn x un/vn); neither: both.

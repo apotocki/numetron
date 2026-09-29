@@ -14,8 +14,8 @@
 
 #include "detail/small_array.hpp"
 
-// NUMETRON_USE_ASM, NUMETRON_PLATFORM_*, NUMETRON_ARITHMETIC_USE_INVINT_DIV and the choice of
-// Karatsuba / Toom-3 implementation.
+// NUMETRON_COMPILED, NUMETRON_BACKEND_ASM, NUMETRON_ARITHMETIC_USE_INVINT_DIV and the back end's
+// choices (the assembly, the Karatsuba / Toom-3 implementation).
 #include "config/implementation.hpp"
 
 #include "limb_arithmetic/uadd.hpp"
@@ -410,8 +410,6 @@ inline void uxor(std::span<const LimbT> u, std::span<const LimbT> v, std::span<L
         break;
     }
 }
-
-
 
 // inplace version
 template <std::unsigned_integral LimbT>

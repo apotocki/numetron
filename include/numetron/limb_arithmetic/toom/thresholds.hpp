@@ -11,14 +11,16 @@
 #include "numetron/config/implementation.hpp" // NUMETRON_KARATSUBA_IMPL
 
 // Compile-time defaults for the runtime thresholds below; override by defining these before
-// including numetron, or retune at runtime with set_*_threshold() / tune_mul_thresholds()
+// including numetron (with NUMETRON_COMPILED: where the numetron library is compiled, which owns
+// the thresholds), or retune at runtime with set_*_threshold() / tune_mul_thresholds()
 // (numetron/limb_arithmetic/mul_tuning.hpp).
 // The defaults come from tune_mul_thresholds() on x86-64 (Alder Lake class). They depend on the
 // configuration: on the Karatsuba implementation (the asm one is faster, which moves every
 // crossover above it) and on the compiler, since the Toom evaluation and interpolation kernels
 // are compiled C++ and the compilers make rather different code of them.
 #if !defined(NUMETRON_USE_ASM)
-// Header-only (no NUMETRON_USE_ASM): the C++ basecase (NUMETRON_CXX_BASECASE) and C++ Karatsuba;
+// Without the assembly (header-only, or a library built with NUMETRON_NO_ASM; "header-only" below
+// means either): the C++ basecase (NUMETRON_CXX_BASECASE) and C++ Karatsuba;
 // tuned 2026-09-24, the median of six runs each (three with each FFT kernel; the Toom stages are
 // tuned with the FFT off, so they don't depend on it). Toom-3/4 jump between plateau values from
 // run to run.
@@ -694,62 +696,53 @@ inline constexpr size_t min_sqr_fft_threshold = 1;
 
 namespace detail {
 
-// Atomic so they can be retuned while other threads multiply; relaxed loads compile to plain
-// loads on the dispatch path. A change is picked up at the next dispatch decision, so an
-// in-flight multiplication may mix old and new values between recursion levels -- which only
-// affects its speed, never its result.
-inline std::atomic<size_t> karatsuba_threshold_value{ (std::max)(size_t{ NUMETRON_KARATSUBA_THRESHOLD }, min_karatsuba_threshold) };
-inline std::atomic<size_t> toom3_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM3_THRESHOLD }, min_toom3_threshold) };
-inline std::atomic<size_t> toom32_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM32_THRESHOLD }, min_toom32_threshold) };
-inline std::atomic<size_t> toom42_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM42_THRESHOLD }, min_toom42_threshold) };
-inline std::atomic<size_t> slicing_threshold_value{ (std::max)(size_t{ NUMETRON_SLICING_THRESHOLD }, min_slicing_threshold) };
-inline std::atomic<size_t> toom76_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM76_THRESHOLD }, min_toom76_threshold) };
-inline std::atomic<size_t> toom63_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM63_THRESHOLD }, min_toom63_threshold) };
-inline std::atomic<size_t> toom98_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM98_THRESHOLD }, min_toom98_threshold) };
-inline std::atomic<size_t> toom107_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM107_THRESHOLD }, min_toom107_threshold) };
-inline std::atomic<size_t> toom116_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM116_THRESHOLD }, min_toom116_threshold) };
-inline std::atomic<size_t> toom54_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM54_THRESHOLD }, min_toom54_threshold) };
-inline std::atomic<size_t> toom53_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM53_THRESHOLD }, min_toom53_threshold) };
-inline std::atomic<size_t> toom43_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM43_THRESHOLD }, min_toom43_threshold) };
-inline std::atomic<size_t> toom4_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold) };
-inline std::atomic<size_t> toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold) };
-inline std::atomic<size_t> toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold) };
-inline std::atomic<size_t> fft_threshold_value{ (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold) };
+// The tunable thresholds, as (name, NAME): detail::name_threshold_value starts at
+// NUMETRON_NAME_THRESHOLD, clamped to min_name_threshold.
+#define NUMETRON_DETAIL_THRESHOLDS(X) \
+    X(karatsuba, KARATSUBA) X(toom3, TOOM3) X(toom32, TOOM32) X(toom42, TOOM42) X(slicing, SLICING) \
+    X(toom76, TOOM76) X(toom63, TOOM63) X(toom98, TOOM98) X(toom107, TOOM107) X(toom116, TOOM116) \
+    X(toom54, TOOM54) X(toom53, TOOM53) X(toom43, TOOM43) X(toom4, TOOM4) X(toom6h, TOOM6H) \
+    X(toom8h, TOOM8H) X(fft, FFT) \
+    X(sqr_basecase, SQR_BASECASE) X(sqr_karatsuba, SQR_KARATSUBA) X(sqr_toom3, SQR_TOOM3) \
+    X(sqr_toom4, SQR_TOOM4) X(sqr_toom6h, SQR_TOOM6H) X(sqr_toom8h, SQR_TOOM8H) X(sqr_fft, SQR_FFT)
 
-inline std::atomic<size_t> sqr_basecase_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_BASECASE_THRESHOLD }, min_sqr_basecase_threshold) };
-inline std::atomic<size_t> sqr_karatsuba_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_KARATSUBA_THRESHOLD }, min_sqr_karatsuba_threshold) };
-inline std::atomic<size_t> sqr_toom3_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM3_THRESHOLD }, min_sqr_toom3_threshold) };
-inline std::atomic<size_t> sqr_toom4_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM4_THRESHOLD }, min_sqr_toom4_threshold) };
-inline std::atomic<size_t> sqr_toom6h_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM6H_THRESHOLD }, min_sqr_toom6h_threshold) };
-inline std::atomic<size_t> sqr_toom8h_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_TOOM8H_THRESHOLD }, min_sqr_toom8h_threshold) };
-inline std::atomic<size_t> sqr_fft_threshold_value{ (std::max)(size_t{ NUMETRON_SQR_FFT_THRESHOLD }, min_sqr_fft_threshold) };
+#define NUMETRON_DETAIL_THRESHOLD_INIT(name, NAME) (std::max)(size_t{ NUMETRON_##NAME##_THRESHOLD }, min_##name##_threshold)
 
 // The smallest vn any algorithm but the basecase starts at (the minimum of all the thresholds
 // above): below it umul() / umul_dispatch() go straight to the basecase instead of asking every
 // algorithm in turn (on MSVC that chain of checks costs ~15 ns, more than a 4 x 4 product).
 // The squaring Karatsuba threshold too: below the limit mul() and assign_mul() take a square
 // straight to usqr_basecase.
-// Recomputed by every setter; momentarily stale while another thread retunes, which can only cost
-// speed, never correctness: the basecase takes any size.
-inline std::atomic<size_t> basecase_limit_value{ (std::min)({
-    (std::max)(size_t{ NUMETRON_KARATSUBA_THRESHOLD }, min_karatsuba_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM3_THRESHOLD }, min_toom3_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM32_THRESHOLD }, min_toom32_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM42_THRESHOLD }, min_toom42_threshold),
-    (std::max)(size_t{ NUMETRON_SLICING_THRESHOLD }, min_slicing_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM76_THRESHOLD }, min_toom76_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM63_THRESHOLD }, min_toom63_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM98_THRESHOLD }, min_toom98_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM107_THRESHOLD }, min_toom107_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM116_THRESHOLD }, min_toom116_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM54_THRESHOLD }, min_toom54_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM53_THRESHOLD }, min_toom53_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM43_THRESHOLD }, min_toom43_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM4_THRESHOLD }, min_toom4_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM6H_THRESHOLD }, min_toom6h_threshold),
-    (std::max)(size_t{ NUMETRON_TOOM8H_THRESHOLD }, min_toom8h_threshold),
-    (std::max)(size_t{ NUMETRON_FFT_THRESHOLD }, min_fft_threshold),
-    (std::max)(size_t{ NUMETRON_SQR_KARATSUBA_THRESHOLD }, min_sqr_karatsuba_threshold) }) };
+#define NUMETRON_DETAIL_BASECASE_LIMIT_INIT (std::min)({ \
+    NUMETRON_DETAIL_THRESHOLD_INIT(karatsuba, KARATSUBA), NUMETRON_DETAIL_THRESHOLD_INIT(toom3, TOOM3), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(toom32, TOOM32), NUMETRON_DETAIL_THRESHOLD_INIT(toom42, TOOM42), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(slicing, SLICING), NUMETRON_DETAIL_THRESHOLD_INIT(toom76, TOOM76), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(toom63, TOOM63), NUMETRON_DETAIL_THRESHOLD_INIT(toom98, TOOM98), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(toom107, TOOM107), NUMETRON_DETAIL_THRESHOLD_INIT(toom116, TOOM116), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(toom54, TOOM54), NUMETRON_DETAIL_THRESHOLD_INIT(toom53, TOOM53), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(toom43, TOOM43), NUMETRON_DETAIL_THRESHOLD_INIT(toom4, TOOM4), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(toom6h, TOOM6H), NUMETRON_DETAIL_THRESHOLD_INIT(toom8h, TOOM8H), \
+    NUMETRON_DETAIL_THRESHOLD_INIT(fft, FFT), NUMETRON_DETAIL_THRESHOLD_INIT(sqr_karatsuba, SQR_KARATSUBA) })
+
+// Atomic so they can be retuned while other threads multiply; relaxed loads compile to plain
+// loads on the dispatch path. A change is picked up at the next dispatch decision, so an
+// in-flight multiplication may mix old and new values between recursion levels -- which only
+// affects its speed, never its result. basecase_limit_value is recomputed by every setter;
+// momentarily stale while another thread retunes, which can only cost speed, never correctness:
+// the basecase takes any size.
+#if defined(NUMETRON_COMPILED)
+// The library's (src/backend.cpp, from the defaults of its configuration), so that a retuning
+// reaches the compiled chain and every unit of the front end alike.
+#   define NUMETRON_DETAIL_THRESHOLD_DECLARE(name, NAME) extern std::atomic<size_t> name##_threshold_value;
+NUMETRON_DETAIL_THRESHOLDS(NUMETRON_DETAIL_THRESHOLD_DECLARE)
+#   undef NUMETRON_DETAIL_THRESHOLD_DECLARE
+extern std::atomic<size_t> basecase_limit_value;
+#else
+#   define NUMETRON_DETAIL_THRESHOLD_DEFINE(name, NAME) inline std::atomic<size_t> name##_threshold_value{ NUMETRON_DETAIL_THRESHOLD_INIT(name, NAME) };
+NUMETRON_DETAIL_THRESHOLDS(NUMETRON_DETAIL_THRESHOLD_DEFINE)
+#   undef NUMETRON_DETAIL_THRESHOLD_DEFINE
+inline std::atomic<size_t> basecase_limit_value{ NUMETRON_DETAIL_BASECASE_LIMIT_INIT };
+#endif
 
 inline void update_basecase_limit() noexcept;
 

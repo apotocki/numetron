@@ -12,10 +12,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 include(CTest)
 enable_testing()
 
-# Architecture-specific assembly (src/arch/*), built once as the static "numetron" library.
-# Every target that wants Numetron's full runtime speed (numetron_tests, numetron_bench_mul)
-# links against it instead of listing the .s files itself, so new asm sources only need to be
-# added in lib/CMakeLists.txt.
+# The back end (the compiled algorithms and kernels, the src/arch assembly), built once as the
+# static "numetron" library; numetron_tests and numetron_bench_mul link it instead of listing its
+# sources, so new sources only need to be added in lib/CMakeLists.txt.
 add_subdirectory(lib)
 
 # The library's C++ (the compiled algorithms, NUMETRON_COMPILED) takes the same target flags as
@@ -98,13 +97,20 @@ endif()
 # Link dependencies
 target_link_libraries(numetron_tests PRIVATE numetron ${DEPS})
 
+# The tests of the plans call the multiplication chain directly: that unit is compiled with the
+# library's configuration (numetron_internal's definitions), the others as an application.
+get_target_property(_numetron_internal_definitions numetron_internal INTERFACE_COMPILE_DEFINITIONS)
+if (_numetron_internal_definitions)
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/tests/mul_shapes_test.cpp
+    PROPERTIES COMPILE_DEFINITIONS "${_numetron_internal_definitions}")
+endif()
+
 # Add the test to CTest
 add_test(NAME numetron_tests COMMAND numetron_tests)
 
 # Define the mul benchmark executable (Numetron vs GMP, standalone, not run via ctest).
-# It links the same "numetron" asm library as numetron_tests, which (on x86-64) also defines
-# NUMETRON_USE_ASM for it, so it runs the best runtime-selected mul_basecase implementation,
-# not the plain C++ fallback the header-only default would use.
+# It links numetron_internal: the threshold tuner in it runs the multiplication chain directly,
+# with the library's configuration.
 add_executable(numetron_bench_mul ${NUMETRON_BENCH_MUL_SOURCES})
 target_include_directories(numetron_bench_mul PRIVATE include ${GMP_INCLUDE_DIR})
 
@@ -112,4 +118,4 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(numetron_bench_mul PRIVATE -Wall -Wextra -Wpedantic -march=native -O3)
 endif()
 
-target_link_libraries(numetron_bench_mul PRIVATE numetron ${DEPS_BENCH})
+target_link_libraries(numetron_bench_mul PRIVATE numetron_internal ${DEPS_BENCH})

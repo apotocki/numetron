@@ -10,6 +10,10 @@
 
 #if defined(NUMETRON_COMPILED)
 
+#if !defined(NUMETRON_BUILDING_LIBRARY)
+#   error "the numetron library's units are compiled with NUMETRON_BUILDING_LIBRARY"
+#endif
+
 #include "numetron/limb_arithmetic/umul_dispatch.hpp"
 
 namespace numetron::limb_arithmetic::detail {
