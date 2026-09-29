@@ -18,6 +18,7 @@
 // --sqr: squares u * u (the same object on both sides) against GMP, and against u * v.
 // --small: a dense grid of small operands (products n x n and un x vn, squares, add/sub; 1..32
 // limbs), where the calls around the basecase cost most; alone unless other modes are given too.
+// --max-limbs=N: --balanced and --sqr only up to N limbs.
 // --tune[=N] [--trace] retunes the thresholds first; --add benchmarks limb add/sub instead.
 // --csv=FILE: every measured point also as a row "section,shape,column,ns" in FILE (the
 // configuration first, as '#' lines), for comparing builds with tools/bench_compare.py.
@@ -740,6 +741,13 @@ int main(int argc, char** argv)
     }
     if (!balanced && !unbalanced && !sqr && !small) balanced = unbalanced = true;
 
+    // --max-limbs=N: --balanced and --sqr only up to N limbs (the large sizes take most of a run)
+    size_t max_limbs = ~size_t{ 0 };
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg.rfind("--max-limbs=", 0) == 0) max_limbs = std::stoul(arg.substr(12));
+    }
+
     std::mt19937_64 rng{ 0x5EED1234ULL };
 
     std::cout << "Numetron vs GMP multiplication benchmark\n";
@@ -765,6 +773,7 @@ int main(int argc, char** argv)
         run_tier("1*", "<=62", make_small_operands(rng, samples_per_tier), repeats_for(1));
 
         for (size_t limb_count : limb_counts) {
+            if (limb_count > max_limbs) break;
             auto operands = make_operands(rng, limb_count, limb_count, samples_per_tier);
             run_tier(std::to_string(limb_count), std::to_string(limb_count * 64), operands, repeats_for(limb_count));
         }
@@ -818,6 +827,7 @@ int main(int argc, char** argv)
                   << std::setw(12) << "mul/sqr"
                   << "\n";
         for (size_t limb_count : limb_counts) {
+            if (limb_count > max_limbs) break;
             run_sqr_tier(limb_count, make_operands(srng, limb_count, limb_count, samples_per_tier), repeats_for(limb_count));
         }
     }
