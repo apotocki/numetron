@@ -16,7 +16,11 @@
 // Modes: --balanced (un == vn), --unbalanced (un > vn, several vn x un/vn); neither: both.
 // --large: the unbalanced shapes with vn = 4096 .. 16384 (the FFT range) instead.
 // --sqr: squares u * u (the same object on both sides) against GMP, and against u * v.
+// --small: a dense grid of small operands (products n x n and un x vn, squares, add/sub; 1..32
+// limbs), where the calls around the basecase cost most; alone unless other modes are given too.
 // --tune[=N] [--trace] retunes the thresholds first; --add benchmarks limb add/sub instead.
+// --csv=FILE: every measured point also as a row "section,shape,column,ns" in FILE (the
+// configuration first, as '#' lines), for comparing builds with tools/bench_compare.py.
 
 #ifdef _WIN32
 #   pragma warning(disable : 4244 4146)
@@ -30,6 +34,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -47,6 +52,16 @@ using clock_type = std::chrono::steady_clock;
 // Written to from every timed multiplication below, so the optimizer can't prove the
 // result is dead and drop the call.
 volatile std::uint64_t g_sink = 0;
+
+// --csv=FILE: the machine-readable copy of every measured point; g_section names the table the
+// rows belong to (balanced, unbalanced, sqr, add, small_*).
+std::ofstream g_csv;
+std::string g_section;
+
+void csv_row(std::string const& shape, char const* column, double ns)
+{
+    if (g_csv.is_open()) g_csv << g_section << ',' << shape << ',' << column << ',' << ns << '\n';
+}
 
 std::string random_hex_operand(std::mt19937_64& rng, size_t limb_count)
 {
@@ -256,6 +271,10 @@ void run_tier(std::string const& limbs_label, std::string const& bits_label, std
         best_gmp_ns = std::min(best_gmp_ns, time_gmp_mul(operands, repeats));
     }
 
+    if (with_plain) csv_row(limbs_label, "plain", best_numetron_ns);
+    csv_row(limbs_label, "reuse", best_reuse_ns);
+    csv_row(limbs_label, "gmp", best_gmp_ns);
+
     std::cout << std::setw(label_width) << limbs_label
                << std::setw(12) << bits_label;
     if (with_plain) std::cout << std::setw(16) << std::fixed << std::setprecision(3) << ns_to_us(best_numetron_ns);
@@ -308,27 +327,31 @@ double time_gmp_sqr(std::vector<operand_pair> const& operands, int repeats)
     return std::chrono::duration<double, std::nano>(finish - start).count() / (double(repeats) * double(ops.size()));
 }
 
+// The squares u * u of the operands' u against GMP (the u * v products are checked by
+// verify_against_gmp()).
+void verify_sqr_against_gmp(size_t limbs, std::vector<operand_pair> const& operands)
+{
+    using integer = numetron::integer;
+    mpz_t g, r;
+    mpz_inits(g, r, nullptr);
+    for (auto const& o : operands) {
+        integer u{ o.u_hex, 16 };
+        integer p;
+        p.assign_mul(u, u);
+        mpz_set_str(g, o.u_hex.c_str(), 16);
+        mpz_mul(r, g, g);
+        std::unique_ptr<char, void(*)(void*)> gmp_hex(mpz_get_str(nullptr, 16, r), [](void* q) { std::free(q); });
+        if (to_string(p, 16, false) != gmp_hex.get()) {
+            std::cerr << "MISMATCH for the square of a " << limbs << "-limb operand\n";
+            std::exit(1);
+        }
+    }
+    mpz_clears(g, r, nullptr);
+}
+
 void run_sqr_tier(size_t limbs, std::vector<operand_pair> const& operands, int repeats)
 {
-    // the squares against GMP (the u * v products are checked by run_tier's verification)
-    {
-        using integer = numetron::integer;
-        mpz_t g, r;
-        mpz_inits(g, r, nullptr);
-        for (auto const& o : operands) {
-            integer u{ o.u_hex, 16 };
-            integer p;
-            p.assign_mul(u, u);
-            mpz_set_str(g, o.u_hex.c_str(), 16);
-            mpz_mul(r, g, g);
-            std::unique_ptr<char, void(*)(void*)> gmp_hex(mpz_get_str(nullptr, 16, r), [](void* q) { std::free(q); });
-            if (to_string(p, 16, false) != gmp_hex.get()) {
-                std::cerr << "MISMATCH for the square of a " << limbs << "-limb operand\n";
-                std::exit(1);
-            }
-        }
-        mpz_clears(g, r, nullptr);
-    }
+    verify_sqr_against_gmp(limbs, operands);
 
     double sqr = std::numeric_limits<double>::infinity(), gsqr = sqr, mul = sqr, gmul = sqr;
     for (int attempt = 0; attempt < attempts; ++attempt) {
@@ -337,6 +360,11 @@ void run_sqr_tier(size_t limbs, std::vector<operand_pair> const& operands, int r
         mul = std::min(mul, time_numetron_mul_reuse(operands, repeats));
         gmul = std::min(gmul, time_gmp_mul(operands, repeats));
     }
+    const std::string shape = std::to_string(limbs);
+    csv_row(shape, "sqr", sqr);
+    csv_row(shape, "gmp_sqr", gsqr);
+    csv_row(shape, "mul", mul);
+    csv_row(shape, "gmp_mul", gmul);
     std::cout << std::setw(10) << limbs << std::fixed
               << std::setw(14) << std::setprecision(3) << ns_to_us(sqr)
               << std::setw(14) << ns_to_us(gsqr)
@@ -369,6 +397,7 @@ void run_add_bench()
 {
     static constexpr size_t sizes[] = { 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
     std::mt19937_64 rng{ 0xADD5EEDULL };
+    g_section = "add";
 
     std::cout << "In-place add/sub, ns per limb (best of 5)\n\n"
               << std::right
@@ -389,6 +418,12 @@ void run_add_bench()
         double sub = best_ns_per_limb(n, [&] { g_sink ^= numetron::limb_arithmetic::usub_inplace(u.data(), v.data(), v.data() + n); });
         double gsub = best_ns_per_limb(n, [&] { g_sink ^= mpn_sub_n(gu.data(), gu.data(), gv.data(), gn); });
 
+        const std::string shape = std::to_string(n);
+        csv_row(shape, "add", add);
+        csv_row(shape, "gmp_add", gadd);
+        csv_row(shape, "sub", sub);
+        csv_row(shape, "gmp_sub", gsub);
+
         std::cout << std::setw(8) << n << std::fixed << std::setprecision(3)
                   << std::setw(14) << add << std::setw(12) << gadd << std::setw(10) << std::setprecision(2) << (add / gadd)
                   << std::setw(14) << std::setprecision(3) << sub << std::setw(12) << gsub << std::setw(10) << std::setprecision(2) << (sub / gsub)
@@ -398,12 +433,105 @@ void run_add_bench()
               << "(sink: " << g_sink << ")\n";
 }
 
+// --small: every size 1..32 rather than the powers of two of the other tables, times in ns --
+// the range below and around basecase_limit(), where the path from basic_integer to the basecase
+// kernel (inlined calls, the kernel's dispatch) is a large part of the cost. More attempts than
+// the other tables: differences of a fraction of a nanosecond are what it is for.
+void run_small_bench()
+{
+    static constexpr size_t max_limbs = 32;
+    static constexpr size_t samples = 6;
+    static constexpr int small_attempts = 5;
+    std::mt19937_64 rng{ 0x5A11EEDULL }; // own seed: the same operands whatever else runs
+
+    auto best_of = [](auto&& timed) {
+        double best = std::numeric_limits<double>::infinity();
+        for (int attempt = 0; attempt < small_attempts; ++attempt) best = std::min(best, timed());
+        return best;
+    };
+
+    // products: plain operator*, assign_mul into a reused result, GMP's mpz_mul
+    auto mul_table = [&](char const* section, char const* title, auto&& shapes) {
+        g_section = section;
+        std::cout << "\n" << title << "\n\n" << std::right
+                  << std::setw(10) << "un x vn" << std::setw(14) << "plain(ns)" << std::setw(14) << "reuse(ns)"
+                  << std::setw(14) << "gmp(ns)" << std::setw(12) << "gmp/reuse" << "\n";
+        for (auto [un, vn] : shapes) {
+            auto operands = make_operands(rng, un, vn, samples);
+            verify_against_gmp(operands);
+            const int repeats = repeats_for(un, vn);
+            const double plain = best_of([&] { return time_numetron_mul(operands, repeats); });
+            const double reuse = best_of([&] { return time_numetron_mul_reuse(operands, repeats); });
+            const double gmp = best_of([&] { return time_gmp_mul(operands, repeats); });
+            const std::string shape = un == vn ? std::to_string(un) : std::to_string(un) + "x" + std::to_string(vn);
+            csv_row(shape, "plain", plain);
+            csv_row(shape, "reuse", reuse);
+            csv_row(shape, "gmp", gmp);
+            std::cout << std::setw(10) << shape << std::fixed << std::setprecision(2)
+                      << std::setw(14) << plain << std::setw(14) << reuse << std::setw(14) << gmp
+                      << std::setw(12) << (gmp / reuse) << "\n";
+        }
+    };
+
+    std::vector<std::pair<size_t, size_t>> square_shapes, rect_shapes;
+    for (size_t n = 1; n <= max_limbs; ++n) square_shapes.emplace_back(n, n);
+    // un x vn with a short vn: the fixed-size kernels (3..4 x 1..3) and the rows of the basecase
+    for (size_t un = 3; un <= 16; ++un) {
+        for (size_t vn = 1; vn <= 4 && vn < un; ++vn) rect_shapes.emplace_back(un, vn);
+    }
+    mul_table("small_mul", "small products (un == vn)", square_shapes);
+    mul_table("small_rect", "small products (un > vn)", rect_shapes);
+
+    g_section = "small_sqr";
+    std::cout << "\nsmall squares (assign_mul(u, u) into a reused result vs mpz_mul(r, u, u))\n\n" << std::right
+              << std::setw(10) << "limbs" << std::setw(14) << "sqr(ns)" << std::setw(14) << "gmp sqr(ns)"
+              << std::setw(12) << "gmp/sqr" << "\n";
+    for (size_t n = 1; n <= max_limbs; ++n) {
+        auto operands = make_operands(rng, n, n, samples);
+        verify_sqr_against_gmp(n, operands);
+        const int repeats = repeats_for(n);
+        const double sqr = best_of([&] { return time_numetron_sqr_reuse(operands, repeats); });
+        const double gsqr = best_of([&] { return time_gmp_sqr(operands, repeats); });
+        csv_row(std::to_string(n), "sqr", sqr);
+        csv_row(std::to_string(n), "gmp_sqr", gsqr);
+        std::cout << std::setw(10) << n << std::fixed << std::setprecision(2)
+                  << std::setw(14) << sqr << std::setw(14) << gsqr << std::setw(12) << (gsqr / sqr) << "\n";
+    }
+
+    // in-place add/sub per call (not per limb as --add): the inline kernel below
+    // asm_add_sub_n_min_limbs, the out-of-line one from there
+    g_section = "small_add";
+    std::cout << "\nsmall in-place add/sub, ns per call\n\n" << std::right
+              << std::setw(10) << "limbs" << std::setw(14) << "uadd(ns)" << std::setw(14) << "mpn_add(ns)"
+              << std::setw(14) << "usub(ns)" << std::setw(14) << "mpn_sub(ns)" << "\n";
+    for (size_t n = 1; n <= max_limbs; ++n) {
+        std::vector<std::uint64_t> u(n), v(n);
+        for (auto& x : u) x = rng();
+        for (auto& x : v) x = rng();
+        std::vector<mp_limb_t> gu(u.begin(), u.end()), gv(v.begin(), v.end());
+        const auto gn = static_cast<mp_size_t>(n);
+        const double dn = double(n);
+
+        const double add = dn * best_ns_per_limb(n, [&] { g_sink ^= numetron::limb_arithmetic::uadd_inplace(u.data(), v.data(), v.data() + n); });
+        const double gadd = dn * best_ns_per_limb(n, [&] { g_sink ^= mpn_add_n(gu.data(), gu.data(), gv.data(), gn); });
+        const double sub = dn * best_ns_per_limb(n, [&] { g_sink ^= numetron::limb_arithmetic::usub_inplace(u.data(), v.data(), v.data() + n); });
+        const double gsub = dn * best_ns_per_limb(n, [&] { g_sink ^= mpn_sub_n(gu.data(), gu.data(), gv.data(), gn); });
+        const std::string shape = std::to_string(n);
+        csv_row(shape, "add", add);
+        csv_row(shape, "gmp_add", gadd);
+        csv_row(shape, "sub", sub);
+        csv_row(shape, "gmp_sub", gsub);
+        std::cout << std::setw(10) << n << std::fixed << std::setprecision(2)
+                  << std::setw(14) << add << std::setw(14) << gadd << std::setw(14) << sub << std::setw(14) << gsub << "\n";
+    }
+}
+
 // Which implementations this build runs (numetron/config/implementation.hpp) and the thresholds
 // in effect, so bench outputs of different builds can be told apart.
-void print_configuration()
+void print_configuration(std::ostream& os)
 {
     namespace la = numetron::limb_arithmetic;
-    std::cout << "implementations: karatsuba " << numetron::config::karatsuba_impl_name
+    os << "implementations: karatsuba " << numetron::config::karatsuba_impl_name
               << ", toom3 " << numetron::config::toom3_impl_name
               << ", fft " << numetron::config::fft_impl_name
               << ", mul_basecase " << numetron::config::mul_basecase_name << "\n"
@@ -424,17 +552,29 @@ void print_configuration()
               << ", toom43 " << la::toom43_threshold()
               << ", slicing " << la::slicing_threshold()
               << ", fft ";
-    if (la::fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
-    else std::cout << la::fft_threshold() << "\n";
-    std::cout << "squares: basecase " << la::sqr_basecase_threshold()
+    if (la::fft_threshold() == ~size_t{ 0 }) os << "off\n";
+    else os << la::fft_threshold() << "\n";
+    os << "squares: basecase " << la::sqr_basecase_threshold()
               << ", karatsuba " << la::sqr_karatsuba_threshold()
               << ", toom3 " << la::sqr_toom3_threshold()
               << ", toom4 " << la::sqr_toom4_threshold()
               << ", toom6h " << la::sqr_toom6h_threshold()
               << ", toom8h " << la::sqr_toom8h_threshold()
               << ", fft ";
-    if (la::sqr_fft_threshold() == ~size_t{ 0 }) std::cout << "off\n";
-    else std::cout << la::sqr_fft_threshold() << "\n";
+    if (la::sqr_fft_threshold() == ~size_t{ 0 }) os << "off\n";
+    else os << la::sqr_fft_threshold() << "\n";
+}
+
+// The configuration on stdout and, with --csv, as '#' lines at the top of the file.
+void report_configuration()
+{
+    std::ostringstream text;
+    print_configuration(text);
+    std::cout << text.str();
+    if (g_csv.is_open()) {
+        std::istringstream lines{ text.str() };
+        for (std::string line; std::getline(lines, line);) g_csv << "# " << line << '\n';
+    }
 }
 
 } // namespace
@@ -446,7 +586,19 @@ int main(int argc, char** argv)
     std::cout << std::unitbuf;
 
     for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg.rfind("--csv=", 0) != 0) continue;
+        g_csv.open(arg.substr(6));
+        if (!g_csv) {
+            std::cerr << "can't open " << arg.substr(6) << " for writing\n";
+            return 1;
+        }
+        g_csv << std::setprecision(9);
+    }
+
+    for (int i = 1; i < argc; ++i) {
         if (std::string{ argv[i] } == "--add") {
+            report_configuration();
             run_add_bench();
             return 0;
         }
@@ -576,23 +728,28 @@ int main(int argc, char** argv)
     // unbalanced_ratios. Neither given: both, balanced first. --large: the unbalanced shapes over
     // unbalanced_large_v_limbs (the FFT range) instead.
     // --sqr: squares u * u over limb_counts (alone unless --balanced / --unbalanced are given too).
-    bool balanced = false, unbalanced = false, large = false, sqr = false;
+    // --small: run_small_bench() (alone unless other modes are given too).
+    bool balanced = false, unbalanced = false, large = false, sqr = false, small = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--balanced") balanced = true;
         else if (arg == "--unbalanced") unbalanced = true;
         else if (arg == "--large") large = true;
         else if (arg == "--sqr") sqr = true;
+        else if (arg == "--small") small = true;
     }
-    if (!balanced && !unbalanced && !sqr) balanced = unbalanced = true;
+    if (!balanced && !unbalanced && !sqr && !small) balanced = unbalanced = true;
 
     std::mt19937_64 rng{ 0x5EED1234ULL };
 
     std::cout << "Numetron vs GMP multiplication benchmark\n";
     std::cout << "(" << samples_per_tier << " random operand pairs per tier, best of " << attempts << " attempts)\n";
-    print_configuration();
+    report_configuration();
+
+    if (small) run_small_bench();
 
     if (balanced) {
+        g_section = "balanced";
         std::cout << "\nbalanced (un == vn)\n\n";
         std::cout << std::right
                    << std::setw(10) << "limbs"
@@ -623,6 +780,7 @@ int main(int argc, char** argv)
         static constexpr double unbalanced_ratios[] = { 1.25, 1.35, 1.5, 1.75, 1.9, 2, 3, 4, 8, 16, 32 };
 
         std::mt19937_64 urng{ 0x0B1A5EEDULL }; // own seed: the same operands with or without --balanced
+        g_section = large ? "unbalanced_large" : "unbalanced";
 
         std::cout << "\nunbalanced (un > vn)\n\n";
         std::cout << std::right
@@ -647,6 +805,7 @@ int main(int argc, char** argv)
 
     if (sqr) {
         std::mt19937_64 srng{ 0x5A0A5EEDULL }; // own seed: the same operands whatever else runs
+        g_section = "sqr";
         std::cout << "\nsquares (u * u, the same object on both sides; reuse vs GMP's mpz_mul(r, u, u))\n\n"
                   << std::right
                   << std::setw(10) << "limbs"
