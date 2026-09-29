@@ -8,6 +8,11 @@ All timings are from one x86-64 machine (Alder Lake class), Release builds: MSVC
 `/arch:AVX2` (as `msvc/numetron_bench_mul.vcxproj`) and GCC 13.3 with `-O3 -march=native` (as
 CMake). They are good for comparing variants, not as absolute numbers.
 
+"With `NUMETRON_USE_ASM`" below names the configuration with the src/arch assembly. Since
+2026-09-29 that macro is internal to the numetron library: the library is built with the assembly
+(CMake option `NUMETRON_ASM`, default on) and tells the headers so with `NUMETRON_BACKEND_ASM`;
+without `NUMETRON_COMPILED` there is no assembly (§ 9 item 13).
+
 ---
 
 ## 1. Where things stand
@@ -654,6 +659,15 @@ When a run is asked for, this was the procedure:
   plan variants on the same kernels by keeping a copy of the old plan under another name. Then
   `numetron_bench_mul --tune` for the end-to-end picture. Run-to-run noise is about ±3%; never
   decide on a single point.
+- **Before / after comparisons of a build change** (§ 9 item 13): `numetron_bench_mul --small`
+  (every size 1..32, products, squares, add/sub, in ns) plus `--balanced --sqr --max-limbs=1024`
+  and `--add`, each with `--csv=FILE`, default thresholds; several runs per configuration,
+  alternating the configurations; then `tools/bench_compare.py --before ... --after ...`: the
+  median of the runs per point, after / before per size group, the points above a threshold. The
+  GMP columns show the machine's own drift. A single point moves by up to 5–7% between identical
+  builds (1–2 limbs ±3%), group medians by ±1%; decide on those. A difference with identical
+  instructions is code placement: compare the disassembly (MSVC: `dumpbin /disasm`) before
+  blaming the change.
 - VTune (run as administrator) was used for the uop-cache and store-forwarding findings in
   § 3.3.
 
@@ -1600,4 +1614,41 @@ comparison with `mpz_import`/`mpz_mul`, and a timing loop over `umul_dispatch` /
       from 8 limbs up, i.e. the out-of-line call costs nothing measurable.
     - **Tests**: the full gtest suite on GCC (asm, asm inline, no asm, no asm inline, LGPL) and on
       MSVC (default, inline, header-only `c++ blocked`, LGPL), all passing.
-13. **Future work**: `docs/multiplication-future-work.md` (2026-09-28).
+    - The asm half of this (exported asm definitions, asm with the chain inline) changed on
+      2026-09-29, item 13.
+13. **Front end and back end: the assembly is the library's** (2026-09-29). The application used
+    to define `NUMETRON_USE_ASM` (CMake exported it) and with it the whole asm configuration
+    (license, platform, `NUMETRON_SQR_STRAIGHT_MAX`) had to reach every unit. Now:
+    - **The application sees `NUMETRON_COMPILED` only.** The library decides the rest:
+      `NUMETRON_USE_ASM` is derived in its own units (`NUMETRON_BUILDING_LIBRARY`; `#error` if
+      defined from outside), CMake option `NUMETRON_ASM` (`NUMETRON_NO_ASM` for MSBuild) to build
+      without the assembly; the license, `NUMETRON_PLATFORM_*`, `NUMETRON_SQR_STRAIGHT_MAX`, the
+      Karatsuba / Toom-3 implementations and the thresholds' defaults stay private to it. The
+      thresholds are variables of the library (`src/backend.cpp`), so a retuning reaches every
+      unit. Without `NUMETRON_COMPILED` no assembly: the header-only build is pure C++.
+    - **`NUMETRON_BACKEND_ASM`**: a library with the assembly exports it (CMake PUBLIC; the MSVC
+      test and bench projects set it for x64). The headers' inline code (`umul_basecase`,
+      `usqr_basecase`, `add_n_x64` / `sub_n_x64`) tests `NUMETRON_ASM_KERNELS` (`COMPILED` +
+      `BACKEND_ASM` + x86-64) where it tested `NUMETRON_USE_ASM` + x86-64, so it compiles to the
+      same code as before in every configuration. The choice of the kernel for the CPU (CPUID, the
+      license, a pinned platform) moved into the library (`init_mul_basecase`,
+      `init_sqr_kernel_state`, `NUMETRON_NOINLINE`); the call sites still load a pointer / a state
+      and call. A pinned platform now goes through the pointer too (it was a direct call). A
+      front end compiled with `NUMETRON_BACKEND_ASM` against a library without the assembly still
+      links and computes right (the library then defines C++ versions of those symbols).
+    - **Code that runs the chain directly** (the tuner in `numetron_bench_mul`,
+      `tests/mul_shapes_test.cpp`) is compiled with `NUMETRON_BACKEND_INTERNAL` and the library's
+      configuration: CMake target `numetron_internal`, per file for the test.
+    - **Rejected on the way** (each measured, then undone): deciding in the front end at run
+      time -- a flag of the library for "inline C++ basecase" (GCC tests it on every small
+      product), the add/sub call threshold as a variable of the library (GCC reloads it after
+      every call: +6..7% at 9..16 limbs); the C++ fallbacks out of line behind the same calls
+      (+33..45% add/sub at 15..32 limbs, +18..30% products at 8..10 without the assembly); and
+      64-byte alignment of the asm entry points, meant to make the layout reproducible (squares
+      17..32 limbs +4% on GCC). An `init_*` without `NUMETRON_NOINLINE` was inlined by MSVC's
+      `/GL`, CPUID and all, into `basic_integer::assign_mul`: +20% on every small product there.
+    - **Result** against the previous commit (`numetron_bench_mul --small` 1..32 limbs three runs
+      each, `--balanced --sqr` up to 1024 and `--add` once; GCC asm, MSVC asm, GCC without the
+      assembly, header-only, GCC LGPL): every size group within ±1%, the run-to-run noise of the
+      method (the header-only build, unchanged code, ±0.5%). Tests passing in all five.
+14. **Future work**: `docs/multiplication-future-work.md` (2026-09-28).

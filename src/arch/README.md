@@ -24,20 +24,29 @@ By default (`NUMETRON_ASM_LICENSE_MIT`) only the MIT files are used: the CMake `
 is built from them alone, and the mul_basecase is `mul_basecase_adx` on CPUs with BMI2 + ADX (the
 C++ basecase on older ones). The GMP-derived (LGPL) mul_basecase routines are opt-in: the CMake
 option `NUMETRON_GMP_LGPL=ON` builds them (with `detect_platform.*` / `detect_mul_basecase.*`)
-into the library and exports `NUMETRON_USE_GMP_LGPL`; without CMake, define
-`NUMETRON_USE_GMP_LGPL` and link them. The MSVC project `msvc/numetron.vcxproj` assembles all
-files into its static library, but only referenced objects are linked from it, so an MIT build
-does not pull the LGPL ones in.
+into the library and compiles its C++ with `NUMETRON_USE_GMP_LGPL` (the choice is the library's,
+nothing is exported); without CMake, define `NUMETRON_USE_GMP_LGPL` where the library's `.cpp`
+files are compiled. The MSVC project `msvc/numetron.vcxproj` assembles all files into its static
+library, but only referenced objects are linked from it, so an MIT build does not pull the LGPL
+ones in.
 
 ## Compilation Dependencies
 
-The compilation and linking dependencies related to these assembly files are **optional** and controlled by the `NUMETRON_USE_ASM` compilation flag.
+The assembly is **optional** and part of the compiled numetron library (the back end of the
+headers, `NUMETRON_COMPILED`; see `include/numetron/config/implementation.hpp`):
 
-### Usage
-- When `NUMETRON_USE_ASM` is **enabled**: Assembly optimizations are included in the build
-- When `NUMETRON_USE_ASM` is **disabled**: Pure C++ implementations are used instead
+- The library uses it by default on x86-64. Build the library without it with the CMake option
+  `NUMETRON_ASM=OFF` (MSBuild: define `NUMETRON_NO_ASM` in the `numetron` project and leave the
+  `.asm` files out); its C++ fallbacks run instead.
+- A library with the assembly tells the code that uses it so with `NUMETRON_BACKEND_ASM` (the
+  CMake target `numetron` exports it; the MSVC test and bench projects set it for x64): the
+  headers' inline code then calls the kernels (`mul_basecase`, `sqr_basecase`, `add_n` / `sub_n`)
+  directly. The application doesn't choose anything here; `NUMETRON_USE_ASM` is internal to the
+  library's own units.
+- Without `NUMETRON_COMPILED` (header-only use) no assembly is used: the headers are pure C++.
 
-This allows the project to be built with or without assembly optimizations depending on the target platform and requirements.
+Which routine runs on a given CPU (CPUID, the license, a pinned `NUMETRON_PLATFORM_*`) is decided
+inside the library, `src/backend.cpp`.
 
 ## Directory Structure
 
