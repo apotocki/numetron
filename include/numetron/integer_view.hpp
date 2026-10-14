@@ -271,7 +271,7 @@ public:
         std::span<const_limb_t> limbs{ data(), size() };
         if (!ctl_.skip_bits) {
             return ftor(limbs, sgn());
-        } else if (size() << basic_integer_view_auto_buffer_size) {
+        } else if (size() <= basic_integer_view_auto_buffer_size) {
             LimbT buff[basic_integer_view_auto_buffer_size];
             std::memcpy(buff, limbs_, size() * sizeof(LimbT));
             buff[size() - 1] &= last_significand_limb_mask();
