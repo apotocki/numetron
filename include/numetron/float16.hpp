@@ -1,6 +1,6 @@
-//  Sonia.one framework (c) by Alexander A Pototskiy
-//  Sonia.one is licensed under the terms of the Open Source GPL 3.0 license.
-//  For a license to use the Sonia.one software under conditions other than those described here, please contact me at admin@sonia.one
+// Numetron — Compile-time and runtime arbitrary-precision arithmetic
+// (c) 2025 Alexander Pototskiy
+// Licensed under the MIT License. See LICENSE file for details.
 
 #pragma once
 #include <cstdint>

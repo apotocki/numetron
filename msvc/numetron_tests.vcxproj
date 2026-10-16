@@ -32,6 +32,7 @@
     <ClInclude Include="..\include\numetron\detail\small_array.hpp" />
     <ClInclude Include="..\include\numetron\external\dragonbox.h" />
     <ClInclude Include="..\include\numetron\float16.hpp" />
+    <ClInclude Include="..\include\numetron\float_format.hpp" />
     <ClInclude Include="..\include\numetron\integer_view.hpp" />
     <ClInclude Include="..\include\numetron\integer_view_arithmetic.hpp" />
     <ClInclude Include="..\include\numetron\limbs_from_decimal_string.hpp" />
@@ -67,6 +68,7 @@
       <PreprocessorDefinitions>NUMETRON_BACKEND_INTERNAL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ClCompile Include="..\tests\float16_test.cpp" />
+    <ClCompile Include="..\tests\float_format_test.cpp" />
     <ClCompile Include="..\tests\mpn_mul_test.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</ExcludedFromBuild>

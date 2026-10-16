@@ -71,4 +71,8 @@ void test_float16_floating_point_three_way_comparison();
 void test_float16_floating_point_three_way_comparison_special_values();
 void test_float16_floating_point_three_way_comparison_precision();
 void test_float16_floating_point_three_way_comparison_derived_operators();
+
+void test_hex_float_string();
+void test_general_string();
+void test_fancy_print_min_digits();
 }

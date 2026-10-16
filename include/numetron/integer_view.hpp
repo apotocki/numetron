@@ -484,8 +484,10 @@ std::basic_ostream<Elem, Traits>& operator <<(std::basic_ostream<Elem, Traits>& 
     return os;
 }
 
+// min_digits: the magnitude is left padded with zeros up to that many digits (before the grouping, so the padding
+// zeros are grouped too: a 32-bit value in hex as "0x0000 0001")
 template <typename Elem, typename Traits, std::unsigned_integral LimbT>
-std::basic_ostream<Elem, Traits> & fancy_print(std::basic_ostream<Elem, Traits> &os, basic_integer_view<LimbT> const &iv, unsigned int base = 10, uint8_t group_sz = 3, std::basic_string_view<Elem> group_sep = " ", bool showbase = false)
+std::basic_ostream<Elem, Traits> & fancy_print(std::basic_ostream<Elem, Traits> &os, basic_integer_view<LimbT> const &iv, unsigned int base = 10, uint8_t group_sz = 3, std::basic_string_view<Elem> group_sep = " ", bool showbase = false, size_t min_digits = 0)
 {
     std::vector<Elem> result;
 
@@ -496,6 +498,9 @@ std::basic_ostream<Elem, Traits> & fancy_print(std::basic_ostream<Elem, Traits> 
             std::reverse(result.begin(), result.end());
         }
     });
+    if (result.size() < min_digits) {
+        result.insert(result.begin(), min_digits - result.size(), Elem('0'));
+    }
 
     if (iv.is_negative()) {
         os << '-';

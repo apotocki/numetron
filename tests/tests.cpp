@@ -57,6 +57,9 @@ TEST(NumetronTest, float16_floating_point_three_way_comparison) { test_float16_f
 TEST(NumetronTest, float16_floating_point_three_way_comparison_special_values) { test_float16_floating_point_three_way_comparison_special_values(); }
 TEST(NumetronTest, float16_floating_point_three_way_comparison_precision) { test_float16_floating_point_three_way_comparison_precision(); }
 TEST(NumetronTest, float16_floating_point_three_way_comparison_derived_operators) { test_float16_floating_point_three_way_comparison_derived_operators(); }
+TEST(NumetronTest, hex_float_string) { test_hex_float_string(); }
+TEST(NumetronTest, general_string) { test_general_string(); }
+TEST(NumetronTest, fancy_print_min_digits) { test_fancy_print_min_digits(); }
 
 TEST(NumetronTest, basic_integer) { basic_integer_test0(); }
 TEST(NumetronTest, basic_decimal) { basic_decimal_test0(); }

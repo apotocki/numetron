@@ -84,6 +84,9 @@
     <ClInclude Include="..\include\numetron\float16.hpp">
       <Filter>numetron</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\numetron\float_format.hpp">
+      <Filter>numetron</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\numetron\limb_arithmetic\udiv.hpp">
       <Filter>numetron\limb_arithmetic</Filter>
     </ClInclude>
@@ -126,6 +129,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="..\tests\float16_test.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tests\float_format_test.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="..\tests\udiv_test.cpp">

@@ -27,6 +27,7 @@ endif()
 # Collect test sources
 set (NUMETRON_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/float16_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/float_format_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/basic_integer_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/basic_decimal_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ct_test.cpp
