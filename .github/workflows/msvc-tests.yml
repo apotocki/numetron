@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # the otok release to install, e.g. 0.5.14; empty: the latest release (never a release candidate)
+  OTOK_VERSION: ''
+  # otok's cache (downloads, recipe trees, built libraries) where actions/cache keeps it
+  OTOK_CACHE_DIR: ${{ github.workspace }}\.otok-cache
+
 jobs:
   build-and-test:
     runs-on: windows-2025-vs2026
@@ -15,13 +21,31 @@ jobs:
         uses: actions/checkout@v4
         with:
             submodules: recursive
-                
-      - name: Clone vcpkg
-        run: git clone https://github.com/microsoft/vcpkg.git vcpkg
 
-      - name: Bootstrap vcpkg
-        run: .\vcpkg\bootstrap-vcpkg.bat
-        
+      - name: Install otok
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+            $version = $env:OTOK_VERSION
+            if (-not $version) {
+                # GitHub's latest release: drafts and prereleases (the -rc tags) are never it
+                $version = (gh release view --repo otok-dev/otok --json tagName -q .tagName).TrimStart('v')
+                if (-not $version) { throw "otok: cannot find the latest release" }
+            }
+            Write-Output "otok $version"
+            $name = "otok-$version-windows-x64"
+            $dir = Join-Path $env:RUNNER_TEMP otok
+            $url = "https://github.com/otok-dev/otok/releases/download/v$version/$name.zip"
+            Invoke-WebRequest $url -OutFile "$dir.zip"
+            # to a file: GitHub serves the .sha256 as application/octet-stream, whose .Content is bytes, not text
+            Invoke-WebRequest "$url.sha256" -OutFile "$dir.zip.sha256"
+            $expected = ((Get-Content -Raw "$dir.zip.sha256").Trim() -split '\s+')[0].ToLowerInvariant()
+            if ((Get-FileHash -Algorithm SHA256 "$dir.zip").Hash.ToLowerInvariant() -ne $expected) { throw "otok: sha256 mismatch" }
+            Expand-Archive "$dir.zip" -DestinationPath $dir
+            $exe = Get-ChildItem $dir -Recurse -Filter otok.exe | Select-Object -First 1
+            $exe.DirectoryName >> $env:GITHUB_PATH
+
       - name: Get MSVC version
         id: msvc
         shell: pwsh
@@ -36,28 +60,42 @@ jobs:
             $version = (Get-ChildItem $msvcDir | Sort-Object Name -Descending | Select-Object -First 1).Name
 
             "version=$version" >> $env:GITHUB_OUTPUT
-        
-      - name: Cache vcpkg
+
+      - name: Cache otok
         uses: actions/cache@v4
         with:
-            path: |
-              ${{ github.workspace }}/vcpkg_installed
-            key: vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-${{ hashFiles('vcpkg.json', 'vcpkg-lock.json', 'triplets/x64-windows-cpp23.cmake') }}
+            path: ${{ env.OTOK_CACHE_DIR }}
+            key: otok-${{ runner.os }}-${{ steps.msvc.outputs.version }}-${{ hashFiles('otok.toml', 'otok.lock') }}
             restore-keys: |
-              vcpkg-${{ runner.os }}-${{ steps.msvc.outputs.version }}-
-              vcpkg-${{ runner.os }}-
-              
+              otok-${{ runner.os }}-${{ steps.msvc.outputs.version }}-
+              otok-${{ runner.os }}-
+
+      # a failed build keeps its whole work directory in failed/ (OTOK_KEEP_BUILD_DIRS), for the files uploaded below
       - name: Install Dependencies
-        run: .\vcpkg\vcpkg.exe install --triplet x64-windows-cpp23 --overlay-triplets="triplets"
-                  
+        env:
+          OTOK_KEEP_BUILD_DIRS: 1
+        run: otok install --locked --progress plain
+
+      # the whole logs of failed builds (otok prints only their end) and what the sandbox refused
+      - name: Upload logs of failed builds
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+            name: otok-failed-builds
+            path: |
+              ${{ env.OTOK_CACHE_DIR }}/failed/*/build.log
+              ${{ env.OTOK_CACHE_DIR }}/failed/*/key.txt
+              ${{ env.OTOK_CACHE_DIR }}/failed/*/sandbox.log
+            if-no-files-found: ignore
+
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
       - name: Build solution
-        run: msbuild numetron.slnx /p:Configuration=Release
+        run: msbuild numetron.slnx /p:Configuration=Release /p:Platform=x64
 
+      # gtest and GMP are static: nothing to put on the PATH
       - name: Run tests
         run: |
           cd x64/Release
-          $env:PATH += ";${{ github.workspace }}\vcpkg_installed\x64-windows-cpp23\bin"
           .\numetron_tests.exe

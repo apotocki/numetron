@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <_ParentDirectoryBuildPropsFile>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))</_ParentDirectoryBuildPropsFile>
+  </PropertyGroup>
+  <Import Project="$(_ParentDirectoryBuildPropsFile)" Condition="'$(_ParentDirectoryBuildPropsFile)' != ''" />
+
+  <!--
+    The libraries otok installs into Otok/ (otok.toml, `otok install`), when numetron is built alone: a solution above
+    with an otok.props of its own (annium-lang, PotoHEX) has set OtokDir already, and its libraries are used.
+    Directory.Build.targets imports the matching Otok/otok.targets.
+  -->
+  <PropertyGroup Condition="'$(OtokDir)' == ''">
+    <NumetronOwnOtok>true</NumetronOwnOtok>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)Otok\otok.props" Condition="'$(NumetronOwnOtok)' == 'true'" />
+</Project>

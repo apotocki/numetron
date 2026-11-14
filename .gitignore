@@ -2,8 +2,10 @@
 /**/x64
 /**/Release
 /**/Debug
-/vcpkg_installed
-/vcpkg
+# the libraries otok installs (otok.toml); otok.lock is committed
+/Otok/
+# this machine's working trees for dev builds (otok.dev.toml), never committed
+/otok.dev.toml
 /build
 /plans
 /testdata

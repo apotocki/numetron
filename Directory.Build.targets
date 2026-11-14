@@ -1,27 +1,13 @@
 <Project>
   <!--
-    The Directory.Build.targets of a solution above, when this library is a module of one (PotoHEX: the headers and
-    libraries of Otok/ through its otok.targets); then, when the library is built alone (its own solution: no OtokDir of
-    a workspace's otok.props), those of its vcpkg_installed/, after the projects' own directories.
+    The Directory.Build.targets of a solution above, when this library is a module of one (annium-lang, PotoHEX: the
+    headers and libraries of its Otok/ through its otok.targets); then, when numetron is built alone (Directory.Build.props
+    imported Otok/otok.props), the headers and libraries of its own Otok/ (otok.toml).
   -->
   <PropertyGroup>
     <_ParentDirectoryBuildTargetsFile>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</_ParentDirectoryBuildTargetsFile>
   </PropertyGroup>
   <Import Project="$(_ParentDirectoryBuildTargetsFile)" Condition="'$(_ParentDirectoryBuildTargetsFile)' != ''" />
 
-  <PropertyGroup Condition="'$(OtokDir)' == ''">
-    <LibraryVcpkgTriplet Condition="'$(Platform)' == 'Win32'">x86-windows</LibraryVcpkgTriplet>
-    <LibraryVcpkgTriplet Condition="'$(Platform)' != 'Win32'">x64-windows-cpp23</LibraryVcpkgTriplet>
-    <LibraryVcpkgDir>$(MSBuildThisFileDirectory)vcpkg_installed\$(LibraryVcpkgTriplet)\</LibraryVcpkgDir>
-    <LibraryVcpkgLibDir Condition="$(Configuration.StartsWith('Debug'))">$(LibraryVcpkgDir)debug\lib</LibraryVcpkgLibDir>
-    <LibraryVcpkgLibDir Condition="!$(Configuration.StartsWith('Debug'))">$(LibraryVcpkgDir)lib</LibraryVcpkgLibDir>
-  </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(OtokDir)' == ''">
-    <ClCompile>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(LibraryVcpkgDir)include</AdditionalIncludeDirectories>
-    </ClCompile>
-    <Link>
-      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories);$(LibraryVcpkgLibDir)</AdditionalLibraryDirectories>
-    </Link>
-  </ItemDefinitionGroup>
+  <Import Project="$(MSBuildThisFileDirectory)Otok\otok.targets" Condition="'$(NumetronOwnOtok)' == 'true'" />
 </Project>

@@ -1,0 +1,27 @@
+# The native libraries of numetron's tests and benchmark on Windows, built by otok into Otok/<library>/ (include/,
+# lib/<arch>/ for Release, debug/lib/<arch>/ for Debug) instead of vcpkg. Directory.Build.props and
+# Directory.Build.targets give them to every project through Otok/otok.props and Otok/otok.targets; when numetron is a
+# module of a solution with an otok.props of its own (annium-lang, PotoHEX), that solution's Otok/ is used instead.
+# Install with `otok install` in this directory. The library itself needs nothing: GMP is the tests' and the benchmark's
+# oracle only.
+[otok]
+format = 1
+
+[windows]
+build-on = ["windows/msvc"]
+architectures = { windows = ["x86_64"] }
+configurations = ["debug", "release"]
+linkage = "static"
+# stdcpplatest of the projects
+cxx-standard = 23
+# the projects define it in every configuration: the static gtest must agree, or the link fails on its mismatch check
+cxxflags = ["-D_ITERATOR_DEBUG_LEVEL=0"]
+
+# numetron_tests links gtest.lib (its own main in tests/tests.cpp) and gmp.lib, numetron_bench_mul gmp.lib
+[deps.googletest]
+recipe = "apotocki/googletest"
+version = "~> 1.18"
+
+[deps.gmp]
+recipe = "apotocki/gmp"
+version = "~> 6.3"
